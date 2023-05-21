@@ -1,0 +1,47 @@
+# This file contains metadata for your plugin.
+
+# This file should be included when you package your plugin.# Mandatory items:
+
+[general]
+name=Map Segmenter
+qgisMinimumVersion=3.0
+description=This plugin segments the map into discrete buckets
+version=0.1
+author=Joshua Herrera
+email=joshua.herrera@quantcivil.ai
+
+about=The purpose of this plugin is to provide the user with the tools to segment parts of the map into different buckets. That is, tree coverage vs impermeable surface coverage vs etc..
+
+tracker=https://github.com/sirebellum/qgis-segmentation/issues
+repository=https://github.com/sirebellum/qgis-segmentation
+# End of mandatory metadata
+
+# Recommended items:
+
+hasProcessingProvider=no
+# Uncomment the following line and add your changelog:
+# changelog=
+
+# Tags are comma separated with spaces allowed
+tags=python
+
+homepage=http://www.quantcivil.ai/segmentation-qgis
+category=Plugins
+icon=icon.png
+# experimental flag
+experimental=True
+
+# deprecated flag (applies to the whole plugin, not just a single version)
+deprecated=False
+
+# Since QGIS 3.8, a comma separated list of plugins to be installed
+# (or upgraded) can be specified.
+# Check the documentation for more information.
+# plugin_dependencies=
+
+Category of the plugin: Raster, Vector, Database or Web
+# category=
+
+# If the plugin can run on QGIS Server.
+server=False
+

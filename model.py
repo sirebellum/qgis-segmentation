@@ -1,33 +1,102 @@
-import keras
-from keras import layers
+import torch
+from torchvision import transforms
+from math import log2, sqrt
 
-def autoencoder(shape=(512,512,3)):
-    input_img = keras.Input(shape=shape)
 
-    x = layers.Conv2D(128, (3, 3), activation='relu', padding='same')(input_img)
-    x = layers.MaxPooling2D((2, 2), padding='same')(x)
-    x = layers.Conv2D(64, (3, 3), activation='relu', padding='same')(x)
-    x = layers.MaxPooling2D((2, 2), padding='same')(x)
-    x = layers.Conv2D(32, (3, 3), activation='relu', padding='same')(x)
-    x = layers.MaxPooling2D((2, 2), padding='same')(x)
-    x = layers.Conv2D(32, (3, 3), activation='relu', padding='same')(x)
-    x = layers.MaxPooling2D((2, 2), padding='same')(x)
-    x = layers.Conv2D(32, (3, 3), activation='relu', padding='same')(x)
-    encoded = layers.MaxPooling2D((2, 2), padding='same')(x)
+class AE(torch.nn.Module):
+    def __init__(self, **kwargs):
+        super(AE, self).__init__()
 
-    # at this point the representation is (4, 4, 8) i.e. 128-dimensional
+        assert (
+            kwargs["input_shape"][0] % kwargs["pixel_size"] == 0
+        ), "Granularity must be a factor of tile size."
+        assert (
+            kwargs["pixel_size"] < kwargs["input_shape"][0]
+        ), "Granularity must be less than tile size"
 
-    x = layers.Conv2D(32, (3, 3), activation='relu', padding='same')(encoded)
-    x = layers.UpSampling2D((2, 2))(x)
-    x = layers.Conv2D(32, (3, 3), activation='relu', padding='same')(x)
-    x = layers.UpSampling2D((2, 2))(x)
-    x = layers.Conv2D(32, (3, 3), activation='relu', padding='same')(x)
-    x = layers.UpSampling2D((2, 2))(x)
-    x = layers.Conv2D(64, (3, 3), activation='relu', padding='same')(x)
-    x = layers.UpSampling2D((2, 2))(x)
-    x = layers.Conv2D(128, (3, 3), activation='relu', padding='same')(x)
-    x = layers.UpSampling2D((2, 2))(x)
-    decoded = layers.Conv2D(shape[-1], (3, 3), activation='relu', padding='same')(x)
+        n_pixels = kwargs["input_shape"][0] // kwargs["pixel_size"]
+        self.n_layers = int(log2(kwargs["input_shape"][0] // n_pixels))
+        self.decode = kwargs["decode"]
+        assert self.n_layers < 10
+        self.channel_mult = 16 * (10 - self.n_layers)
 
-    autoencoder = keras.Model(input_img, decoded)
-    return autoencoder
+        # Encoder
+        self.encoder_layers = []
+        for n in range(self.n_layers):
+            self.encoder_layers.append(
+                torch.nn.Conv2d(
+                    in_channels=kwargs["in_channels"]
+                    if n == 0
+                    else self.channel_mult * n,
+                    kernel_size=(3, 3),
+                    out_channels=self.channel_mult * (n + 1),
+                    padding="valid",
+                    dtype=torch.float32,
+                )
+            )
+            self.encoder_layers.append(torch.nn.ReLU())
+            self.encoder_layers.append(
+                torch.nn.MaxPool2d(
+                    kernel_size=(2, 2),
+                )
+            )
+        self.encoder = torch.nn.Sequential(*self.encoder_layers)
+
+        # Encoded Vector
+        self.encoded = torch.nn.Sequential(
+            torch.nn.Conv2d(
+                in_channels=self.channel_mult * (self.n_layers),
+                kernel_size=(3, 3),
+                out_channels=self.n_layers * 32,
+                padding="valid",
+                dtype=torch.float32,
+            ),
+            torch.nn.Sigmoid(),
+        )
+
+        # Decoder
+        self.decoder_layers = []
+        for n in range(self.n_layers):
+            self.decoder_layers.append(torch.nn.Upsample(scale_factor=(2, 2)))
+            self.decoder_layers.append(
+                torch.nn.Conv2d(
+                    in_channels=self.n_layers * 32
+                    if n == 0
+                    else self.channel_mult * (self.n_layers - n + 1),
+                    kernel_size=(3, 3),
+                    out_channels=self.channel_mult * (self.n_layers - n),
+                    padding="same",
+                    dtype=torch.float32,
+                )
+            )
+            self.decoder_layers.append(torch.nn.ReLU())
+        self.decoder = torch.nn.Sequential(*self.decoder_layers)
+
+        # Decoded image
+        self.decoded = torch.nn.Sequential(
+            torch.nn.Conv2d(
+                in_channels=self.channel_mult,
+                kernel_size=(3, 3),
+                out_channels=kwargs["in_channels"],
+                padding="same",
+                dtype=torch.float32,
+            ),
+            torch.nn.Sigmoid(),
+            transforms.CenterCrop(kwargs["input_shape"]),
+        )
+
+    def forward(self, x):
+        # Encode
+        x = self.encoder(x)
+
+        # Vector
+        x = self.encoded(x)
+
+        if self.decode:
+            # Decode
+            x = self.decoder(x)
+
+            # Vector
+            x = self.decoded(x)
+
+        return x
