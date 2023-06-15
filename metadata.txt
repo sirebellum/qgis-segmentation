@@ -7,10 +7,10 @@ name=Map Segmenter
 qgisMinimumVersion=3.0
 description=This plugin segments the map into discrete buckets
 version=0.1
-author=Joshua Herrera
-email=joshua.herrera@quantcivil.ai
+author=Quant Civil
+email=help@quantcivil.ai
 
-about=The purpose of this plugin is to provide the user with the tools to segment parts of the map into different buckets. That is, tree coverage vs impermeable surface coverage vs etc..
+about=The purpose of this plugin is to provide the user with the tools to segment parts of the map into different buckets. That is, trees vs asphalt roads vs buildings etc. More details along with installation instructions can be found on the github repository.
 
 tracker=https://github.com/sirebellum/qgis-segmentation/issues
 repository=https://github.com/sirebellum/qgis-segmentation
@@ -23,7 +23,7 @@ hasProcessingProvider=no
 # changelog=
 
 # Tags are comma separated with spaces allowed
-tags=python
+tags=python, land coverage, machine learning, segmenting
 
 homepage=http://www.quantcivil.ai/segmentation-qgis
 category=Plugins
