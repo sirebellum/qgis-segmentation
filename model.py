@@ -52,10 +52,9 @@ class AE(torch.nn.Module):
                 dtype=torch.float32,
             ),
             torch.nn.Sigmoid(),
-            torch.nn.AvgPool2d(
+            torch.nn.MaxPool2d(
                 kernel_size=(3,3),
                 stride=(1,1),
-                padding=(1,1)
             ),
         )
 

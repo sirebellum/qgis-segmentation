@@ -63,9 +63,6 @@ from .model import AE
 from .keygen import activate_license
 import torch
 
-from threading import Thread
-
-
 class Trainer(QObject):
     finished = pyqtSignal()
 
