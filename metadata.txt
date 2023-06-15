@@ -5,7 +5,7 @@
 [general]
 name=Map Segmenter
 qgisMinimumVersion=3.0
-description=This plugin segments the map into discrete buckets
+description=Uses machine learning to segment a map into ares of interest.
 version=0.1
 author=Quant Civil
 email=help@quantcivil.ai
@@ -29,7 +29,7 @@ homepage=http://www.quantcivil.ai/segmentation-qgis
 category=Plugins
 icon=icon.png
 # experimental flag
-experimental=True
+experimental=False
 
 # deprecated flag (applies to the whole plugin, not just a single version)
 deprecated=False
