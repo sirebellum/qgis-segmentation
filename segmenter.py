@@ -354,7 +354,11 @@ class Segmenter:
         return img
 
     def finished_remote_train(self):
-        self.dlg.inputKey.setPlainText(f"Finished uploading to {self.trainer.ip}!")
+
+        if self.trainer.ip == -1:
+            self.dlg.inputKey.setPlainText(f"Bees are busy, try again in a moment.")
+        else:
+            self.dlg.inputKey.setPlainText(f"Finished uploading to {self.trainer.ip}!")
         self.tthread = None
 
     def update_progress(self):
@@ -385,7 +389,7 @@ class Segmenter:
         elif progress < 30:
             self.dlg.inputKey.setPlainText("Entering low earth orbit 🌎")
         elif progress < 40:
-            self.dlg.inputKey.setPlainText("Setting up datacenters 👩‍💻")
+            self.dlg.inputKey.setPlainText("Readying the bits 👩‍💻")
         elif progress < 50:
             self.dlg.inputKey.setPlainText("Performing experiments 🔬")
         elif progress < 60:

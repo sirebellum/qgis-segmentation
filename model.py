@@ -52,6 +52,11 @@ class AE(torch.nn.Module):
                 dtype=torch.float32,
             ),
             torch.nn.Sigmoid(),
+            torch.nn.AvgPool2d(
+                kernel_size=(3,3),
+                stride=(1,1),
+                padding=(1,1)
+            ),
         )
 
         # Decoder
@@ -65,7 +70,7 @@ class AE(torch.nn.Module):
                     else self.channel_mult * (self.n_layers - n + 1),
                     kernel_size=(3, 3),
                     out_channels=self.channel_mult * (self.n_layers - n),
-                    padding="same",
+                    padding=(2, 2),
                     dtype=torch.float32,
                 )
             )
@@ -78,7 +83,7 @@ class AE(torch.nn.Module):
                 in_channels=self.channel_mult,
                 kernel_size=(3, 3),
                 out_channels=kwargs["in_channels"],
-                padding="same",
+                padding=(2, 2),
                 dtype=torch.float32,
             ),
             torch.nn.Sigmoid(),
