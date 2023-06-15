@@ -114,7 +114,7 @@ class Trainer(QObject):
         package["key"] = self.key
 
         url = "http://m0rd0r.asuscomm.com:5000/train"
-        response = requests.post(url, json=package)
+        response = requests.post(url, json=package, timeout=1e6)
         if response.status_code == 200:
             self.ip = response.text
         else:
@@ -180,7 +180,7 @@ class Predictor(QObject):
         package["key"] = self.key
 
         url = "http://m0rd0r.asuscomm.com:5000/predict"
-        response = requests.post(url, json=package)
+        response = requests.post(url, json=package, timeout=1e6)
         if response.status_code == 200:
             self.ip = response.text
         else:
