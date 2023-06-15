@@ -36,7 +36,7 @@ pip.main(["install", "torch", "torchvision", "--index-url", "https://download.py
 pip.main(["install", "scikit-learn", "opencv-python", "qimage2ndarray"])
 ```
 
-If the above install does not work, or if you have other questions, please contact help@quantcivil,ai.
+If the above install does not work, or if you have other questions, please contact help@quantcivil.ai.
 
 Below are some screenshots of the tool's handywork. Enjoy!
 
