@@ -1,5 +1,5 @@
 # QGIS Segmentation
-A Quant Civil product
+A [Quant Civil](https://www.quantcivil.ai) product
 
 ![image](https://github.com/sirebellum/qgis-segmentation/assets/25124443/898b5b91-830f-47b1-9300-ca173fe093de)
 
@@ -26,7 +26,7 @@ a license. To inquire about a license, please contact sales@quantcivil.ai.
 
 ## Dependencies
 
-If you are using this tool for free without a license, an nvidia gpu is highly recommended (required).
+If you are using this tool for free without a license, an nvidia gpu is highly recommended.
 To install the dependencies required by the tool, open your python console in QGIS and enter the following
 lines:
 
@@ -40,6 +40,6 @@ If the above install does not work, or if you have other questions, please conta
 
 Below are some screenshots of the tool's handywork. Enjoy!
 
+
 <img width="1000" alt="image" src="https://github.com/sirebellum/qgis-segmentation/assets/25124443/051d0f14-ea68-4d30-8578-cedf2f7487a1">
 <img width="1000" alt="image" src="https://github.com/sirebellum/qgis-segmentation/assets/25124443/80971a81-71f6-4561-a9a7-c42187efc9ab">
-<img width="1000" alt="image" src="https://github.com/sirebellum/qgis-segmentation/assets/25124443/0b86f99e-08ef-4163-93e5-83b55333a3a5">
