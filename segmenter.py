@@ -458,7 +458,7 @@ class Segmenter:
 
         # Set up model stuff
         epochs = time_enum[self.dlg.inputTrainingTime.currentText()]
-        optimizer = torch.optim.Adam(self.model.parameters(), lr=1e-3)
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=1e-5)
         criterion = torch.nn.L1Loss()
 
         # Render and tile map
@@ -702,7 +702,7 @@ class Segmenter:
                 batch = tiles[yy, xx : xx + batch_size]
                 batch = torch.tensor(batch, dtype=torch.float32).to(self.device)
                 vectors[yy, xx : xx + batch_size] = (
-                    self.encoder.forward(batch / 255).cpu().detach().numpy() * 255 
+                    self.encoder.forward(batch / 255).cpu().detach().numpy() * 255
                 )
 
         # K means clustering
