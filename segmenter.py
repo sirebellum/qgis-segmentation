@@ -458,7 +458,7 @@ class Segmenter:
         criterion = torch.nn.L1Loss()
 
         # Render and tile map
-        self.dlg.inputKey.setPlainText("Rendering map...")
+        self.dlg.inputKey.setPlainText("Rendering map...\nPlease don't move the canvas.")
         map_tiles = np.empty(
             (y_tiles * x_tiles, self.tile_size, self.tile_size, 3), dtype="uint8"
         )
@@ -632,7 +632,7 @@ class Segmenter:
         self.bounding_box = QgsRectangle(upper_left, lower_right)
 
         # Render and tile map
-        self.dlg.inputKey.setPlainText("Rendering map...")
+        self.dlg.inputKey.setPlainText("Rendering map...\nPlease don't move the canvas")
         tiles = np.empty(
             (y_tiles, x_tiles, self.tile_size, self.tile_size, 3), dtype="uint8"
         )
