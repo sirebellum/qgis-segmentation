@@ -63,6 +63,7 @@ from .model import AE
 from .keygen import activate_license
 import torch
 
+# Class for training thread
 class Trainer(QObject):
     finished = pyqtSignal()
 
@@ -120,6 +121,7 @@ class Trainer(QObject):
         self.finished.emit()
 
 
+# Class for segmenting thread
 class Predictor(QObject):
     finished = pyqtSignal()
 
@@ -334,6 +336,7 @@ class Segmenter:
             self.iface.removePluginMenu(self.tr("&Map Segmenter"), action)
             self.iface.removeToolBarIcon(action)
 
+    # Get the map image within the bounding box provided
     def get_input(self, bounding_box):
         settings = self.iface.mapCanvas().mapSettings()
         settings.setExtent(bounding_box)
@@ -351,13 +354,13 @@ class Segmenter:
         return img
 
     def finished_remote_train(self):
-
         if self.trainer.ip == -1:
             self.dlg.inputKey.setPlainText(f"Bees are busy, try again in a moment.")
         else:
             self.dlg.inputKey.setPlainText(f"Finished uploading to {self.trainer.ip}!")
         self.tthread = None
 
+    # Refresh button
     def update_progress(self):
 
         if self.worker is None:
@@ -427,6 +430,7 @@ class Segmenter:
 
             self.worker.ip == -1
 
+    # Train model on map data
     def train(self):
         time_enum = {
             "very short": 5,
@@ -559,6 +563,7 @@ class Segmenter:
 
         return
 
+    # Write 2d raster layer to canvas
     def write_raster_layer(self, raster_data, bounding_box):
         channels = 1
         raster_data = np.expand_dims(raster_data, axis=-1)
@@ -605,6 +610,7 @@ class Segmenter:
         self.dlg.inputKey.setPlainText(f"Finished uploading to {self.predictor.ip}!")
         self.pthread = None
 
+    # Create raster layer from prediction
     def predict(self):
         message = ""
         if self.device == torch.device("cpu"):
@@ -755,6 +761,7 @@ class Segmenter:
 
         return
 
+    # Download model from keygen
     def keygen_model(self, model_name, key):
         # Get license activation token
         url = "https://api.keygen.sh/v1/accounts/{}/me".format(self.keygen_account_id)
@@ -784,6 +791,7 @@ class Segmenter:
 
         return BytesIO(file_data)
 
+    # Set model paramters
     def reset_model(self):
         res_enum = {"low": 64, "medium": 32, "high": 16, "high+": 8, "very high": 4}
 
@@ -810,10 +818,12 @@ class Segmenter:
 
         self.dlg.inputKey.setPlainText("Model reset!")
 
+    # Set model weights
     def set_model(self, state_dict):
         self.model.load_state_dict(state_dict)
         self.encoder.load_state_dict(state_dict)
 
+    # Process user input box
     def submit(self):
         res_enum = {"low": 64, "medium": 32, "high": 16, "high+": 8, "very high": 4}
         input_res = self.dlg.inputResolution.currentText()
@@ -868,6 +878,7 @@ class Segmenter:
         for model in models:
             self.dlg.inputLoadModel.addItem(os.path.basename(model).replace(".torch", ""))
 
+    # Download model from repo
     def download_model(self, model_path):
         # Download all remote models
         if self.key != "nokey":
@@ -906,11 +917,13 @@ class Segmenter:
 
         self.dlg.inputKey.setPlainText(f"{model_name} loaded!")
 
+    # Save model to local disk
     def save_model(self):
         model_path = self.dlg.inputSaveModel.toPlainText() + ".torch"
         torch.save(self.model, os.path.join(self.plugin_dir, model_path))
         self.dlg.inputKey.setPlainText(f"Saved model {model_path}")
 
+    # Check to see if server is up
     def check_server(self):
 
         url = "http://qgis.quantcivil.ai:5000/buzz"
@@ -966,10 +979,16 @@ class Segmenter:
             self.render_models()
             self.reset_model()
 
+            # Set gpu message
+            gpu_msg = "GPU available."
+            if self.device == torch.device("cpu"):
+                gpu_msg = "GPU not available. Using CPU instead."
+
+            # Set up license
             self.license_path = os.path.join(self.plugin_dir, "qgis_key")
             self.key = "nokey"
             if not os.path.exists(self.license_path):
-                self.dlg.inputKey.setPlainText("Please input key with dashes")
+                self.dlg.inputKey.setPlainText(f"Please input key with dashes\n{gpu_msg}")
             else:
                 # Check license
                 with open(self.license_path, "r") as f:
@@ -978,7 +997,7 @@ class Segmenter:
                 if not act:
                     os.remove(self.license_path)
                     self.key = "nokey"
-                self.dlg.inputKey.setPlainText(f"{msg}")
+                self.dlg.inputKey.setPlainText(f"{msg}\n{gpu_msg}")
 
             # Render logo
             img_path = os.path.join(self.plugin_dir, "logo.png")
