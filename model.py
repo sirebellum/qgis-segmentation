@@ -1,6 +1,6 @@
 import torch
 from torchvision import transforms
-from math import log2, sqrt
+from math import log2
 
 
 class AE(torch.nn.Module):
@@ -53,7 +53,7 @@ class AE(torch.nn.Module):
             ),
             torch.nn.ReLU(),
             torch.nn.AvgPool2d(
-                kernel_size=(int(n_pixels/8),int(n_pixels/8)),
+                kernel_size=(log2(n_pixels),log2(n_pixels)),
                 stride=(1,1),
             ),
             torch.nn.Softmax(dim=1),
