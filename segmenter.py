@@ -110,7 +110,7 @@ class Trainer(QObject):
         package["pixel_size"] = self.pixel_size
         package["key"] = self.key
 
-        url = "http://m0rd0r.asuscomm.com:5000/train"
+        url = "http://qgis.quantcivil.ai:5000/train"
         response = requests.post(url, json=package, timeout=1e6)
         if response.status_code == 200:
             self.ip = response.text
@@ -176,7 +176,7 @@ class Predictor(QObject):
         package["clusters"] = self.clusters
         package["key"] = self.key
 
-        url = "http://m0rd0r.asuscomm.com:5000/predict"
+        url = "http://qgis.quantcivil.ai:5000/predict"
         response = requests.post(url, json=package, timeout=1e6)
         if response.status_code == 200:
             self.ip = response.text
@@ -372,7 +372,7 @@ class Segmenter:
             self.worker = None
             return
 
-        url = "http://m0rd0r.asuscomm.com:5000/watcher/" + self.worker.ip
+        url = "http://qgis.quantcivil.ai:5000/watcher/" + self.worker.ip
         progress = int(requests.get(url).text)
         self.dlg.progressBar.setValue(progress)
 
@@ -403,7 +403,7 @@ class Segmenter:
             self.dlg.inputKey.setPlainText("The eagle has landed 🦅")
 
         if progress == 100:
-            url = "http://m0rd0r.asuscomm.com:5000/payload/" + self.worker.ip
+            url = "http://qgis.quantcivil.ai:5000/payload/" + self.worker.ip
             payload = requests.get(url)
             if payload.status_code == 400:
                 self.dlg.inputKey.setPlainText("Error, try again.")
@@ -913,7 +913,7 @@ class Segmenter:
 
     def check_server(self):
 
-        url = "http://m0rd0r.asuscomm.com:5000/buzz"
+        url = "http://qgis.quantcivil.ai:5000/buzz"
         available = True
         try:
             response = requests.get(url)
