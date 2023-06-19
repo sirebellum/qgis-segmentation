@@ -69,16 +69,10 @@ However, when we apply the model trained for 5 minutes to a new map area...
 <img width="400" alt="image" src="https://github.com/sirebellum/qgis-segmentation/assets/25124443/de9a869c-0d92-42b6-90b8-3da2c4635349">
 
 
-It doesn't generalize well outside of the area it was trained in. Now if we apply the model trained for two days:
-
-<img width="400" alt="image" src="https://github.com/sirebellum/qgis-segmentation/assets/25124443/4341a50e-94f7-4020-9e40-123d1e88b7d2">
-<img width="400" alt="image" src="https://github.com/sirebellum/qgis-segmentation/assets/25124443/de9a869c-0d92-42b6-90b8-3da2c4635349">
-
-
-Because it was trained on a larger area for much longer, this model performed better. If we fine-tune for another 5 minutes on this area though...
+It doesn't generalize well outside of the area it was trained in. If we fine-tune for another 5 minutes on this area though...
 
 <img width="400" alt="image" src="https://github.com/sirebellum/qgis-segmentation/assets/25124443/669f5305-1922-43d2-9b91-4c7cf645ebc6">
 <img width="400" alt="image" src="https://github.com/sirebellum/qgis-segmentation/assets/25124443/de9a869c-0d92-42b6-90b8-3da2c4635349">
 
 
-Fine-tuning the model for your area of the map will always render the best results.
+Fine-tuning the model for your area of the map will always render the best results. The models available for download are only a best-guess at segmentation.
