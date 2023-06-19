@@ -427,11 +427,10 @@ class Segmenter:
         # Get user specified resolution
         resolution = resolution_map[self.dlg.inputRes.currentText()]
 
-        # Pad to resolution
-        channel_pad = (0, 0)
-        height_pad = (0, array.shape[1] % resolution)
-        width_pad = (0, array.shape[2] % resolution)
-        array_padded = np.pad(array, (channel_pad, height_pad, width_pad), mode="constant")
+        # Set up model stuff
+        epochs = time_enum[self.dlg.inputTrainingTime.currentText()]
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=1e-5)
+        criterion = torch.nn.L1Loss()
 
         # Reshape into 2d
         array_2d = array_padded.reshape(
@@ -631,11 +630,94 @@ class Segmenter:
         # Get user specified num segments
         num_segments = int(self.dlg.inputSegments.text())
 
-        # Perform prediction based on model selected
-        if self.model == "kmeans":
-            coverage = self.predict_kmeans(
-                map_array,
-                num_segments=num_segments
+        y = self.canvas.extent().yMaximum()
+        x = self.canvas.extent().xMinimum()
+        upper_left = QgsPointXY(x, y)
+        y = y - self.processing_scale * y_tiles
+        x = x + self.processing_scale * x_tiles
+        lower_right = QgsPointXY(x, y)
+        self.bounding_box = QgsRectangle(upper_left, lower_right)
+
+        # Render and tile map
+        self.dlg.inputKey.setPlainText("Rendering map...\nPlease don't move the canvas")
+        tiles = np.empty(
+            (y_tiles, x_tiles, self.tile_size, self.tile_size, 3), dtype="uint8"
+        )
+        for y_tile in range(y_tiles):
+            self.dlg.progressBar.setValue(100 * y_tile // y_tiles)
+            for x_tile in range(x_tiles):
+                # Render and tile map
+                y = self.canvas.extent().yMaximum() - y_tile * self.processing_scale
+                x = self.canvas.extent().xMinimum() + x_tile * self.processing_scale
+                upper_left = QgsPointXY(x, y)
+                y = y - self.processing_scale
+                x = x + self.processing_scale
+                lower_right = QgsPointXY(x, y)
+                bounding_box = QgsRectangle(upper_left, lower_right)
+                tiles[y_tile, x_tile] = self.get_input(bounding_box)
+        self.dlg.progressBar.setValue(100)
+
+        # If client requests online prediction
+        if self.dlg.inputUseServer.isChecked():
+            if self.key == "nokey":
+                self.dlg.inputKey.setPlainText(
+                    "Offload feature requires key\nPlease input key with dashes."
+                )
+                return
+            if self.pthread is None:
+                self.dlg.inputKey.setPlainText("Uploading assets...")
+                self.pthread = QThread()
+                self.predictor = Predictor(
+                    self.model,
+                    tiles,
+                    self.tile_size,
+                    self.pixel_size,
+                    y_tiles,
+                    x_tiles,
+                    self.device,
+                    clusters,
+                    self.key,
+                )
+                self.predictor.moveToThread(self.pthread)
+                self.worker = self.predictor
+                self.pthread.started.connect(self.predictor.run)
+                self.predictor.finished.connect(self.pthread.quit)
+                self.predictor.finished.connect(self.predictor.deleteLater)
+                self.pthread.finished.connect(self.pthread.deleteLater)
+                self.pthread.finished.connect(self.finished_remote_predict)
+                self.pthread.start()
+                return
+
+        # Execute network
+        tiles = np.swapaxes(tiles, -1, -2)
+        tiles = np.swapaxes(tiles, -2, -3)
+        self.dlg.inputKey.setPlainText("Encoding... {}".format(message))
+        batch_size = 1
+        test_vector = self.encoder.forward(
+            torch.tensor(tiles[0, 0], dtype=torch.float32).to(self.device)
+        )
+        vectors = np.empty((y_tiles, x_tiles, *test_vector.shape[-3:]), dtype="uint8")
+        for yy in range(0, y_tiles):
+            self.dlg.progressBar.setValue(100 * yy // y_tiles)
+            for xx in range(0, x_tiles, batch_size):
+                batch = tiles[yy, xx : xx + batch_size]
+                batch = torch.tensor(batch, dtype=torch.float32).to(self.device)
+                vectors[yy, xx : xx + batch_size] = (
+                    self.encoder.forward(batch / 255).cpu().detach().numpy() * 255
+                )
+
+        # K means clustering
+        self.dlg.inputKey.setPlainText("Segmenting...")
+        self.dlg.progressBar.setValue(0)
+        kmeans = cluster.KMeans(n_clusters=clusters)
+        vectors = np.swapaxes(vectors, -3, -2)
+        vectors = np.swapaxes(vectors, -2, -1)
+        kmeans.fit(
+            vectors.reshape(
+                (
+                    vectors.shape[-3] * vectors.shape[-2] * y_tiles * x_tiles,
+                    vectors.shape[-1],
+                )
             )
         elif self.model == "cnn":
             # Verify key
