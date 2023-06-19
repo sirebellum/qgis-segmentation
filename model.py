@@ -53,7 +53,7 @@ class AE(torch.nn.Module):
             ),
             torch.nn.ReLU(),
             torch.nn.AvgPool2d(
-                kernel_size=(log2(n_pixels),log2(n_pixels)),
+                kernel_size=(int(log2(n_pixels)),int(log2(n_pixels))),
                 stride=(1,1),
             ),
             torch.nn.Softmax(dim=1),
