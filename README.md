@@ -1,4 +1,4 @@
-# QGIS Segmentation
+# QGIS Map Segmentation
 A [Quant Civil](https://www.quantcivil.ai) product
 
 ![image](https://github.com/sirebellum/qgis-segmentation/assets/25124443/898b5b91-830f-47b1-9300-ca173fe093de)
@@ -38,8 +38,47 @@ pip.main(["install", "scikit-learn", "opencv-python", "qimage2ndarray"])
 
 If the above install does not work, or if you have other questions, please contact help@quantcivil.ai.
 
-Below are some screenshots of the tool's handywork. Enjoy!
+## Instructions
+There are two "modes" in the tool, training and segmenting. Training is for tuning a model to satelite imagery that you provide, while segmenting uses that trained model to produce a map of the different types of land cover.
+Below are the steps for a basic segmentation:
+1. Load a map into qgis, the tool will process everything within the canvas extent (everything you can see).
+2. Choose an area slightly larger than the area that you want to segment. This is for training.
+3. Choose a training time and resolution. Training time dictates how "good" the model is allowed to get. Resolution dictates how big the pixels are in the final raster map.
+4. (Optional) Choose a pretrained model based on your chosen resolution.
+5. (Optional) Hit the offload button to send the job to a server with a dedicated gpu and lots of ram. It'll get the job done in no time, and it'll even report its status if you hit refresh!
+6. Hit train and watch the magic happen. Depending on your chosen settings and the size of the area you are processing, it can take anywhere from 5 minutes to several days to complete. As a general rule of thumb, training will take a lot longer than segmenting. You will be limited by your available RAM here. The tool will not let you exceed your available ram. NOTE: if you are running without a gpu, your training times will be upwards of weeks. It is NOT RECOMMENDED to use this tool without a gpu. Like mentioned earlier, servers are available to offload your jobs if you find your computer can not process maps quickly enough.
+7. If you are training locally, the image in the toolbox will show the status of the model. If the image looks like a piece of the map, it's doing a good job. If it looks like a solid color or some weird pattern, something is wrong! Please contact us if this occurs. If you are training in offload mode, the status bar will display an accurate status of the process on the remote server. Once it is done, pressing the refresh button will download the result.
+8. Once trained, you can segment any area of the map using the segment button. It will produce a raster of the visible canvas extent. Use the Num Segments box to indicate to the tool how many different types of landcover you expect in the image. The tool isn't perfect, so it may take some tinkering with this value to get something usable. A value somewhere in the range 3-9 is typically most useful.
+9. (Optional) Save your model so you can use it later.
+
+Below are some screenshots of the tool's handywork. The settings used were high+ resolution with 6 segments. The model was trained for two days on 200 square miles of data.
+
+<img width="400" alt="image" src="https://github.com/sirebellum/qgis-segmentation/assets/25124443/d4e6555b-b3aa-4138-98e2-f9f25a97dca4">
+<img width="400" alt="image" src="https://github.com/sirebellum/qgis-segmentation/assets/25124443/4ba5ce87-bc01-4323-aa1a-11445e9b42df">
 
 
-<img width="1000" alt="image" src="https://github.com/sirebellum/qgis-segmentation/assets/25124443/051d0f14-ea68-4d30-8578-cedf2f7487a1">
-<img width="1000" alt="image" src="https://github.com/sirebellum/qgis-segmentation/assets/25124443/80971a81-71f6-4561-a9a7-c42187efc9ab">
+Here is the same area processed by a model of the same settings, but the model has only been trained for 5 minutes on this area specifically. Pretty good!
+
+<img width="400" alt="image" src="https://github.com/sirebellum/qgis-segmentation/assets/25124443/df85ddcc-89c2-4425-860e-96e4716f6e1d">
+<img width="400" alt="image" src="https://github.com/sirebellum/qgis-segmentation/assets/25124443/4ba5ce87-bc01-4323-aa1a-11445e9b42df">
+
+
+However, when we apply the model trained for 5 minutes to a new map area...
+
+<img width="400" alt="image" src="https://github.com/sirebellum/qgis-segmentation/assets/25124443/c8e64df2-fb37-4147-8759-dc416bd77d69">
+<img width="400" alt="image" src="https://github.com/sirebellum/qgis-segmentation/assets/25124443/de9a869c-0d92-42b6-90b8-3da2c4635349">
+
+
+It doesn't generalize well outside of the area it was trained in. Now if we apply the model trained for two days:
+
+<img width="400" alt="image" src="https://github.com/sirebellum/qgis-segmentation/assets/25124443/4341a50e-94f7-4020-9e40-123d1e88b7d2">
+<img width="400" alt="image" src="https://github.com/sirebellum/qgis-segmentation/assets/25124443/de9a869c-0d92-42b6-90b8-3da2c4635349">
+
+
+Because it was trained on a larger area for much longer, this model performed better. If we fine-tune for another 5 minutes on this area though...
+
+<img width="400" alt="image" src="https://github.com/sirebellum/qgis-segmentation/assets/25124443/669f5305-1922-43d2-9b91-4c7cf645ebc6">
+<img width="400" alt="image" src="https://github.com/sirebellum/qgis-segmentation/assets/25124443/de9a869c-0d92-42b6-90b8-3da2c4635349">
+
+
+Fine-tuning the model for your area of the map will always render the best results.
