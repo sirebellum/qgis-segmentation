@@ -50,6 +50,6 @@ class SegmenterDialog(QtWidgets.QDialog, FORM_CLASS):
             ["very short", "short", "medium", "long", "very long"]
         )
         self.inputResolution.addItems(["low", "medium", "high", "high+", "very high"])
-        self.inputTrainingTime.setCurrentText("medium")
-        self.inputResolution.setCurrentText("high+")
+        self.inputTrainingTime.setCurrentText("very short")
+        self.inputResolution.setCurrentText("high")
         self.inputSegments.setText("4")

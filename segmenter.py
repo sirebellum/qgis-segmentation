@@ -47,7 +47,7 @@ from pathlib import Path
 from io import BytesIO
 import requests
 from hashlib import sha256
-from osgeo import gdal as osgdal  # Adapt the import to fit yor environement.
+from osgeo import gdal as osgdal
 import tempfile
 import socket
 import pickle
@@ -696,7 +696,7 @@ class Segmenter:
                 batch = tiles[yy, xx : xx + batch_size]
                 batch = torch.tensor(batch, dtype=torch.float32).to(self.device)
                 vectors[yy, xx : xx + batch_size] = (
-                    self.encoder.forward(batch / 255).cpu().detach().numpy() * 255
+                    self.encoder.forward(batch / 255).cpu().detach().numpy() * 255 
                 )
 
         # K means clustering
@@ -748,7 +748,6 @@ class Segmenter:
                     yy * self.tile_size : yy * self.tile_size + self.tile_size,
                     xx * self.tile_size : xx * self.tile_size + self.tile_size,
                 ] = segments[yy, xx]
-        self.dlg.progressBar.setValue(90)
 
         self.write_raster_layer(raster_data, self.bounding_box)
         self.dlg.progressBar.setValue(100)
@@ -855,11 +854,10 @@ class Segmenter:
 
     # Get local and remote models and display in dropdown
     def render_models(self):
-        res_list = ["medium", "high", "high+", "very_high"]
-        # res_list = []
+        res_list = ["high", "high+", "very_high"]
         local_models = glob(self.plugin_dir + "/*.torch")
         remote_models = [
-            os.path.join(self.plugin_dir, f"model_{model_id}.torch")
+            os.path.join(self.plugin_dir, f"{model_id}.torch")
             for model_id in res_list
         ]
 
@@ -868,14 +866,18 @@ class Segmenter:
         # Add to dropdown
         self.dlg.inputLoadModel.clear()
         for model in models:
-            self.dlg.inputLoadModel.addItem(os.path.basename(model))
+            self.dlg.inputLoadModel.addItem(os.path.basename(model).replace(".torch", ""))
 
     def download_model(self, model_path):
         # Download all remote models
         if self.key != "nokey":
-            model_buffer = self.keygen_model(
-                os.path.basename(model_path), self.key
-            )
+            try:
+                model_buffer = self.keygen_model(
+                    os.path.basename(model_path), self.key
+                )
+            except ValueError as e:
+                self.dlg.inputKey.setPlainText(f"Downloading models failed\n{e}")
+                return
             with open(model_path, "wb") as f:
                 f.write(model_buffer.read())
         else:
@@ -883,7 +885,7 @@ class Segmenter:
 
     # Load selected model from local disk or repo
     def load_model(self):
-        model_name = self.dlg.inputLoadModel.currentText()
+        model_name = self.dlg.inputLoadModel.currentText() + ".torch"
 
         model_path = os.path.join(self.plugin_dir, model_name)
         if not os.path.exists(model_path):
@@ -961,6 +963,9 @@ class Segmenter:
             else:
                 self.device = torch.device("cpu")
 
+            self.render_models()
+            self.reset_model()
+
             self.license_path = os.path.join(self.plugin_dir, "qgis_key")
             self.key = "nokey"
             if not os.path.exists(self.license_path):
@@ -974,9 +979,6 @@ class Segmenter:
                     os.remove(self.license_path)
                     self.key = "nokey"
                 self.dlg.inputKey.setPlainText(f"{msg}")
-
-            self.render_models()
-            self.reset_model()
 
             # Render logo
             img_path = os.path.join(self.plugin_dir, "logo.png")

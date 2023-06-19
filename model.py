@@ -1,6 +1,6 @@
 import torch
 from torchvision import transforms
-from math import log2, sqrt
+from math import log2
 
 
 class AE(torch.nn.Module):
@@ -17,8 +17,8 @@ class AE(torch.nn.Module):
         n_pixels = kwargs["input_shape"][0] // kwargs["pixel_size"]
         self.n_layers = int(log2(kwargs["input_shape"][0] // n_pixels))
         self.decode = kwargs["decode"]
-        assert self.n_layers < 10
-        self.channel_mult = 16 * (10 - self.n_layers)
+        assert self.n_layers < 9
+        self.channel_mult = 9 - self.n_layers
 
         # Encoder
         self.encoder_layers = []
@@ -27,9 +27,9 @@ class AE(torch.nn.Module):
                 torch.nn.Conv2d(
                     in_channels=kwargs["in_channels"]
                     if n == 0
-                    else self.channel_mult * n,
+                    else 2**self.channel_mult * n,
                     kernel_size=(3, 3),
-                    out_channels=self.channel_mult * (n + 1),
+                    out_channels=2**self.channel_mult * (n + 1),
                     padding="valid",
                     dtype=torch.float32,
                 )
@@ -43,16 +43,22 @@ class AE(torch.nn.Module):
         self.encoder = torch.nn.Sequential(*self.encoder_layers)
 
         # Encoded Vector
-        self.encoded = torch.nn.Sequential(
+        self.encoded_layers = [
             torch.nn.Conv2d(
-                in_channels=self.channel_mult * (self.n_layers),
+                in_channels=2**self.channel_mult * (self.n_layers),
                 kernel_size=(3, 3),
-                out_channels=self.n_layers * 32,
+                out_channels=2**self.n_layers * 8,
                 padding="valid",
                 dtype=torch.float32,
             ),
-            torch.nn.Sigmoid(),
-        )
+            torch.nn.ReLU(),
+            torch.nn.AvgPool2d(
+                kernel_size=(int(log2(n_pixels)),int(log2(n_pixels))),
+                stride=(1,1),
+            ),
+            torch.nn.Softmax(dim=1),
+        ]
+        self.encoded = torch.nn.Sequential(*self.encoded_layers)
 
         # Decoder
         self.decoder_layers = []
@@ -60,11 +66,11 @@ class AE(torch.nn.Module):
             self.decoder_layers.append(torch.nn.Upsample(scale_factor=(2, 2)))
             self.decoder_layers.append(
                 torch.nn.Conv2d(
-                    in_channels=self.n_layers * 32
+                    in_channels=2**self.n_layers * 8
                     if n == 0
-                    else self.channel_mult * (self.n_layers - n + 1),
+                    else 2**self.channel_mult * (self.n_layers - n + 1),
                     kernel_size=(3, 3),
-                    out_channels=self.channel_mult * (self.n_layers - n),
+                    out_channels=2**self.channel_mult * (self.n_layers - n),
                     padding=(2, 2),
                     dtype=torch.float32,
                 )
@@ -75,7 +81,7 @@ class AE(torch.nn.Module):
         # Decoded image
         self.decoded = torch.nn.Sequential(
             torch.nn.Conv2d(
-                in_channels=self.channel_mult,
+                in_channels=2**self.channel_mult,
                 kernel_size=(3, 3),
                 out_channels=kwargs["in_channels"],
                 padding=(2, 2),
