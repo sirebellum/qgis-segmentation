@@ -34,135 +34,12 @@ from io import BytesIO
 import requests
 from osgeo import gdal
 
+from .model import AE
 from .keygen import activate_license
 import torch
 from sklearn.cluster import KMeans
-import numpy as np
-import cv2
 
-# Class for training thread
-class Trainer(QObject):
-    finished = pyqtSignal()
-
-    def __init__(
-        self, model, epochs, data, tile_size, pixel_size, y_tiles, x_tiles, device, key
-    ):
-        super().__init__()
-        self.model = model
-        self.epochs = epochs
-        self.data = data
-        self.tile_size = tile_size
-        self.pixel_size = pixel_size
-        self.y_tiles = y_tiles
-        self.x_tiles = x_tiles
-        self.device = device
-        self.key = key
-        self.ip = "0.0.0.0"
-
-    def run(self):
-        # Format package
-        package = {}
-
-        # Create image for transmission
-        image_data = np.empty(
-            (self.tile_size * self.y_tiles, self.tile_size * self.x_tiles, 3),
-            dtype="uint8",
-        )
-        for yy in range(self.y_tiles):
-            for xx in range(self.x_tiles):
-                image_data[
-                    yy * self.tile_size : yy * self.tile_size + self.tile_size,
-                    xx * self.tile_size : xx * self.tile_size + self.tile_size,
-                ] = self.data[xx + yy * self.x_tiles]
-        data_buffer = cv2.imencode(".jpg", image_data)[1]
-        package["data"] = data_buffer.tobytes().decode("latin-1")
-
-        # Rest of the stuff
-        model_buffer = BytesIO()
-        torch.save(self.model.state_dict(), model_buffer)
-        package["model_state"] = model_buffer.getvalue().decode("latin-1")
-        package["epochs"] = self.epochs
-        package["tile_size"] = self.tile_size
-        package["x_tiles"] = self.x_tiles
-        package["y_tiles"] = self.y_tiles
-        package["pixel_size"] = self.pixel_size
-        package["key"] = self.key
-
-        url = "http://qgis.quantcivil.ai:5000/train"
-        response = requests.post(url, json=package, timeout=1e6)
-        if response.status_code == 200:
-            self.ip = response.text
-        else:
-            self.ip = -1
-
-        self.finished.emit()
-
-
-# Class for segmenting thread
-class Predictor(QObject):
-    finished = pyqtSignal()
-
-    def __init__(
-        self,
-        model,
-        data,
-        tile_size,
-        pixel_size,
-        y_tiles,
-        x_tiles,
-        device,
-        clusters,
-        key,
-    ):
-        super().__init__()
-        self.model = model
-        self.data = data
-        self.tile_size = tile_size
-        self.pixel_size = pixel_size
-        self.y_tiles = y_tiles
-        self.x_tiles = x_tiles
-        self.device = device
-        self.clusters = clusters
-        self.key = key
-        self.ip = "0.0.0.0"
-
-    def run(self):
-        # Format package
-        package = {}
-
-        # Create image for transmission
-        image_data = np.empty(
-            (self.tile_size * self.y_tiles, self.tile_size * self.x_tiles, 3),
-            dtype="uint8",
-        )
-        for yy in range(self.y_tiles):
-            for xx in range(self.x_tiles):
-                image_data[
-                    yy * self.tile_size : yy * self.tile_size + self.tile_size,
-                    xx * self.tile_size : xx * self.tile_size + self.tile_size,
-                ] = self.data[yy, xx]
-        data_buffer = cv2.imencode(".jpg", image_data)[1]
-        package["data"] = data_buffer.tobytes().decode("latin-1")
-
-        # Rest of the stuff
-        model_buffer = BytesIO()
-        torch.save(self.model.state_dict(), model_buffer)
-        package["model_state"] = model_buffer.getvalue().decode("latin-1")
-        package["tile_size"] = self.tile_size
-        package["x_tiles"] = self.x_tiles
-        package["y_tiles"] = self.y_tiles
-        package["pixel_size"] = self.pixel_size
-        package["clusters"] = self.clusters
-        package["key"] = self.key
-
-        url = "http://qgis.quantcivil.ai:5000/predict"
-        response = requests.post(url, json=package, timeout=1e6)
-        if response.status_code == 200:
-            self.ip = response.text
-        else:
-            self.ip = -1
-
-        self.finished.emit()
+TILE_SIZE = 512
 
 
 
@@ -314,127 +191,31 @@ class Segmenter:
             self.iface.removePluginMenu(self.tr("&Map Segmenter"), action)
             self.iface.removeToolBarIcon(action)
 
-    # Get the map image within the bounding box provided
-    def get_input(self, bounding_box):
-        settings = self.iface.mapCanvas().mapSettings()
-        settings.setExtent(bounding_box)
-        settings.setOutputSize(QSize(self.tile_size, self.tile_size))
-        renderer = QgsMapRendererParallelJob(settings)
-
-        event_loop = QEventLoop()
-        renderer.finished.connect(event_loop.quit)
-        renderer.start()
-        event_loop.exec_()
-
-        img = renderer.renderedImage()
-        img = qimage2ndarray.rgb_view(img)
-        img = cv2.resize(img, (self.tile_size, self.tile_size))
-        return img
-
-    def finished_remote_train(self):
-        if self.trainer.ip == -1:
-            self.dlg.inputKey.setPlainText(f"Bees are busy, try again in a moment.")
-        else:
-            self.dlg.inputKey.setPlainText(f"Finished uploading to {self.trainer.ip}!")
-        self.tthread = None
-
-    # Refresh button
-    def update_progress(self):
-
-        if self.worker is None:
-            self.dlg.inputKey.setPlainText("Nothing offloaded, try offloading a job.")
-            return
-
-        if self.worker.ip == "0.0.0.0":
-            self.dlg.inputKey.setPlainText("Hold your horses 🐴\nWe're still uploading.")
-            return
-        elif self.worker.ip == -1:
-            self.dlg.inputKey.setPlainText("Bees are busy, try again in a moment.")
-            self.worker = None
-            return
-
-        url = "http://qgis.quantcivil.ai:5000/watcher/" + self.worker.ip
-        progress = int(requests.get(url).text)
-        self.dlg.progressBar.setValue(progress)
-
-        # Fun little progress updates
-        if progress == 0:
-            self.dlg.inputKey.setPlainText("Annihilating the launchpad 🚀")
-        elif progress < 10:
-            self.dlg.inputKey.setPlainText("Fighting gravity 🍎")
-        elif progress < 20:
-            self.dlg.inputKey.setPlainText("Avoiding a deathspiral 💀")
-        elif progress < 30:
-            self.dlg.inputKey.setPlainText("Entering low earth orbit 🌎")
-        elif progress < 40:
-            self.dlg.inputKey.setPlainText("Readying the bits 👩‍💻")
-        elif progress < 50:
-            self.dlg.inputKey.setPlainText("Performing experiments 🔬")
-        elif progress < 60:
-            self.dlg.inputKey.setPlainText("Fighting thermal fallout ☢")
-        elif progress < 70:
-            self.dlg.inputKey.setPlainText("Crunching numbers 🔢")
-        elif progress < 80:
-            self.dlg.inputKey.setPlainText("Packing up 📦")
-        elif progress < 90:
-            self.dlg.inputKey.setPlainText("Beaming down 🖖")
-        elif progress < 100:
-            self.dlg.inputKey.setPlainText("Wrapping up 🎁")
-        else:
-            self.dlg.inputKey.setPlainText("The eagle has landed 🦅")
-
-        if progress == 100:
-            url = "http://qgis.quantcivil.ai:5000/payload/" + self.worker.ip
-            payload = requests.get(url)
-            if payload.status_code == 400:
-                self.dlg.inputKey.setPlainText("Error, try again.")
-                self.worker.ip = -1
-                return
-            elif payload.status_code == 201:  # model
-                state_dict = torch.load(
-                    BytesIO(payload.text.encode("latin-1")),
-                    weights_only=True,
-                    map_location=self.device,
-                )
-                self.set_model(state_dict)
-                self.dlg.inputKey.setPlainText("Mission success ✅\nModel loaded")
-            elif payload.status_code == 200:  # raster
-                data = np.asarray(
-                    bytearray(payload.text.encode("latin-1")), dtype="uint8"
-                )
-                data = cv2.imdecode(data, cv2.IMREAD_GRAYSCALE)
-                self.write_raster_layer(data, self.bounding_box)
-                self.dlg.inputKey.setPlainText("Mission success ✅\nRaster loaded")
-
-            self.worker.ip == -1
-
-    # Train model on map data
-    def train(self):
-        time_enum = {
-            "very short": 5,
-            "short": 25,
-            "medium": 50,
-            "long": 100,
-            "very long": 500,
-        }
+    # Predict coverage map using kmeans
+    def predict_kmeans(self, array):
+        
+        # Get user specified num segments
+        num_segments = self.dlg.sliderSegments.value()
 
         # Instantiate kmeans model
         kmeans = KMeans(n_clusters=num_segments)
 
         # Get user specified resolution
-        resolution = resolution_map[self.dlg.inputRes.currentText()]
+        resolution = self.dlg.sliderResolution.value()
 
-        # Set up model stuff
-        epochs = time_enum[self.dlg.inputTrainingTime.currentText()]
-        optimizer = torch.optim.Adam(self.model.parameters(), lr=1e-5)
-        criterion = torch.nn.L1Loss()
+        # Crop to resolution
+        array = array[
+            :,
+            : array.shape[1] - array.shape[1] % resolution,
+            : array.shape[2] - array.shape[2] % resolution,
+        ]
 
         # Reshape into 2d
-        array_2d = array_padded.reshape(
-            array_padded.shape[0],
-            array_padded.shape[1] // resolution,
+        array_2d = array.reshape(
+            array.shape[0],
+            array.shape[1] // resolution,
             resolution,
-            array_padded.shape[2] // resolution,
+            array.shape[2] // resolution,
             resolution,
         )
         array_2d = array_2d.transpose(1, 3, 0, 2, 4)
@@ -458,13 +239,6 @@ class Segmenter:
             array.shape[1] // resolution,
             array.shape[2] // resolution,
         )
-
-        # Get rid of padding
-        clusters = clusters[
-            :, :, : array.shape[1] // resolution, : array.shape[2] // resolution
-        ]
-
-        # Upsample to original size
         clusters = torch.tensor(clusters).to(self.device)
         clusters = torch.nn.Upsample(
             size=(array.shape[-2], array.shape[-1]), mode="nearest"
@@ -474,112 +248,14 @@ class Segmenter:
         return clusters.cpu().numpy()
 
     # Predict coverage map using cnn
-    def predict_cnn(self, array, num_segments, resolution):
-        # Print message about gpu
-        if self.device == torch.device("cpu"):
-            self.dlg.inputBox.setPlainText(
-                "WARNING: GPU not available. Using CPU instead."
-            )
-
-        assert array.shape[0] == 3, f"Invalid array shape! \n{array.shape}"
-
-        # Download and load model
-        model_bytes = self.keygen_model(resolution, self.key)
-        cnn_model = torch.jit.load(model_bytes).to(self.device)
-        cnn_model.eval()
-
-        # Pad to tile_size
-        channel_pad = (0, 0)
-        height_pad = (0, TILE_SIZE - array.shape[1] % TILE_SIZE)
-        width_pad = (0, TILE_SIZE - array.shape[2] % TILE_SIZE)
-        array_padded = np.pad(
-            array,
-            (channel_pad, height_pad, width_pad),
-            mode="constant",
-        )
-
-        # Reshape into tiles
-        tiles = array_padded.reshape(
-            3,
-            array_padded.shape[1] // TILE_SIZE,
-            TILE_SIZE,
-            array_padded.shape[2] // TILE_SIZE,
-            TILE_SIZE,
-        )
-        tiles = tiles.transpose(1, 3, 0, 2, 4)
-        tiles = tiles.reshape(
-            tiles.shape[0] * tiles.shape[1],
-            3,
-            TILE_SIZE,
-            TILE_SIZE,
-        )
-
-        # Convert to float range [0, 1]
-        tiles = tiles.astype("float32") / 255
-
-        # Convert to torch
-        tiles = torch.from_numpy(tiles).to(self.device)
-
-        # Predict vectors
-        batch_size = 1
-        coverage_map = []
-        for i in range(0, tiles.shape[0], batch_size):
-            with torch.no_grad():
-                vectors = cnn_model.forward(tiles[i : i + batch_size])
-            coverage_map.append(vectors)
-        coverage_map = torch.concatenate(coverage_map, dim=0)
-        coverage_map = coverage_map.cpu().numpy()
-
-        # Convert from tiles to one big map
-        coverage_map = coverage_map.reshape(
-            array_padded.shape[1] // TILE_SIZE,
-            array_padded.shape[2] // TILE_SIZE,
-            coverage_map.shape[1],
-            coverage_map.shape[2],
-            coverage_map.shape[3],
-        )
-        coverage_map = coverage_map.transpose(2, 0, 3, 1, 4)
-        coverage_map = coverage_map.reshape(
-            coverage_map.shape[0],
-            coverage_map.shape[1] * coverage_map.shape[2],
-            coverage_map.shape[3] * coverage_map.shape[4],
-        )
-
-        # Perform kmeans to get num_segments clusters
-        coverage_map = self.predict_kmeans(
-            coverage_map,
-            num_segments=num_segments,
-            resolution=1,
-        )
-
-        # Upsample
-        coverage_map = torch.tensor(coverage_map).to(self.device)
-        coverage_map = torch.unsqueeze(coverage_map, dim=0)
-        coverage_map = torch.nn.Upsample(
-            size=(array_padded.shape[-2], array_padded.shape[-1]), mode="nearest"
-        )(coverage_map.byte())
-
-        # Get rid of padding
-        coverage_map = coverage_map[0, :, : array.shape[1], : array.shape[2]]
-
-        return coverage_map.cpu().numpy()
-
-        # Transfer weights to encoder
-        self.encoder.load_state_dict(self.model.state_dict())
-
-        self.dlg.progressBar.setValue(100)
-        self.dlg.inputKey.setPlainText("Model trained!")
-
-        return
-
-    # Write 2d raster layer to canvas
-    def write_raster_layer(self, raster_data, bounding_box):
-        channels = 1
-        raster_data = np.expand_dims(raster_data, axis=-1)
-
-        driver = osgdal.GetDriverByName("GTiff")
+    def predict_cnn(self, array):
+        raise NotImplementedError
+    
+    # Render raster from array
+    def render_raster(self, array, bounding_box):
+        driver = gdal.GetDriverByName("GTiff")
         dataset = driver.Create(
-            os.path.join(gettempdir(), layer_name + ".tif"),
+            os.path.join(gettempdir(), "seg.tif"),
             array.shape[2],
             array.shape[1],
             array.shape[0],
@@ -603,21 +279,19 @@ class Segmenter:
         )
 
         for c in range(array.shape[0]):
-            dataset.GetRasterBand(c + 1).WriteArray(array[c, :, :])
+            dataset.GetRasterBand(c + 1).WriteArray(
+                array[c, :, :]
+            )  # Remove "T" if it's inverted.
         dataset = None
 
         raster_layer = QgsRasterLayer(
-            os.path.join(gettempdir(), layer_name + ".tif"), layer_name
+            os.path.join(gettempdir(), "seg.tif"), "segmentation-map"
         )
         raster_layer.renderer().setOpacity(0.5)
 
         QgsProject.instance().addMapLayer(raster_layer, True)
 
-    def finished_remote_predict(self):
-        self.dlg.inputKey.setPlainText(f"Finished uploading to {self.predictor.ip}!")
-        self.pthread = None
-
-    # Create raster layer from prediction
+    # Predict coverage map
     def predict(self):
         # Load user specified raster
         layer_name = self.dlg.inputLayer.currentText()
@@ -626,158 +300,14 @@ class Segmenter:
         raster = gdal.Open(layer.source())
         map_array = raster.ReadAsArray()
 
-        # Get user specified num segments
-        num_segments = int(self.dlg.inputSegments.text())
-
-        y = self.canvas.extent().yMaximum()
-        x = self.canvas.extent().xMinimum()
-        upper_left = QgsPointXY(x, y)
-        y = y - self.processing_scale * y_tiles
-        x = x + self.processing_scale * x_tiles
-        lower_right = QgsPointXY(x, y)
-        self.bounding_box = QgsRectangle(upper_left, lower_right)
-
-        # Render and tile map
-        self.dlg.inputKey.setPlainText("Rendering map...\nPlease don't move the canvas")
-        tiles = np.empty(
-            (y_tiles, x_tiles, self.tile_size, self.tile_size, 3), dtype="uint8"
-        )
-        for y_tile in range(y_tiles):
-            self.dlg.progressBar.setValue(100 * y_tile // y_tiles)
-            for x_tile in range(x_tiles):
-                # Render and tile map
-                y = self.canvas.extent().yMaximum() - y_tile * self.processing_scale
-                x = self.canvas.extent().xMinimum() + x_tile * self.processing_scale
-                upper_left = QgsPointXY(x, y)
-                y = y - self.processing_scale
-                x = x + self.processing_scale
-                lower_right = QgsPointXY(x, y)
-                bounding_box = QgsRectangle(upper_left, lower_right)
-                tiles[y_tile, x_tile] = self.get_input(bounding_box)
-        self.dlg.progressBar.setValue(100)
-
-        # If client requests online prediction
-        if self.dlg.inputUseServer.isChecked():
-            if self.key == "nokey":
-                self.dlg.inputKey.setPlainText(
-                    "Offload feature requires key\nPlease input key with dashes."
-                )
-                return
-            if self.pthread is None:
-                self.dlg.inputKey.setPlainText("Uploading assets...")
-                self.pthread = QThread()
-                self.predictor = Predictor(
-                    self.model,
-                    tiles,
-                    self.tile_size,
-                    self.pixel_size,
-                    y_tiles,
-                    x_tiles,
-                    self.device,
-                    clusters,
-                    self.key,
-                )
-                self.predictor.moveToThread(self.pthread)
-                self.worker = self.predictor
-                self.pthread.started.connect(self.predictor.run)
-                self.predictor.finished.connect(self.pthread.quit)
-                self.predictor.finished.connect(self.predictor.deleteLater)
-                self.pthread.finished.connect(self.pthread.deleteLater)
-                self.pthread.finished.connect(self.finished_remote_predict)
-                self.pthread.start()
-                return
-
-        # Execute network
-        tiles = np.swapaxes(tiles, -1, -2)
-        tiles = np.swapaxes(tiles, -2, -3)
-        self.dlg.inputKey.setPlainText("Encoding... {}".format(message))
-        batch_size = 1
-        test_vector = self.encoder.forward(
-            torch.tensor(tiles[0, 0], dtype=torch.float32).to(self.device)
-        )
-        vectors = np.empty((y_tiles, x_tiles, *test_vector.shape[-3:]), dtype="uint8")
-        for yy in range(0, y_tiles):
-            self.dlg.progressBar.setValue(100 * yy // y_tiles)
-            for xx in range(0, x_tiles, batch_size):
-                batch = tiles[yy, xx : xx + batch_size]
-                batch = torch.tensor(batch, dtype=torch.float32).to(self.device)
-                vectors[yy, xx : xx + batch_size] = (
-                    self.encoder.forward(batch / 255).cpu().detach().numpy() * 255
-                )
-
-        # K means clustering
-        self.dlg.inputKey.setPlainText("Segmenting...")
-        self.dlg.progressBar.setValue(0)
-        kmeans = cluster.KMeans(n_clusters=clusters)
-        vectors = np.swapaxes(vectors, -3, -2)
-        vectors = np.swapaxes(vectors, -2, -1)
-        kmeans.fit(
-            vectors.reshape(
-                (
-                    vectors.shape[-3] * vectors.shape[-2] * y_tiles * x_tiles,
-                    vectors.shape[-1],
-                )
-            )
+        # Perform prediction based on model selected
+        if self.model == "kmeans":
+            coverage = self.predict_kmeans(map_array)
         elif self.model == "cnn":
-            # Verify key
-            if self.key == "nokey":
-                self.dlg.inputBox.setPlainText(
-                    "Please input key with dashes to use CNN model"
-                )
-                return
-            coverage = self.predict_cnn(
-                map_array,
-                num_segments=num_segments,
-                resolution=self.dlg.inputRes.currentText(),
-            )
-        else:
-            self.dlg.inputBox.setPlainText("Please select a model")
-            return
-
-        # Render coverage map with descriptive name
-        layer_name += f"_{self.model}_{num_segments}_{self.dlg.inputRes.currentText()}"
-        self.render_raster(coverage, layer.extent(), layer_name)
-
-        # Get mask from kmeans
-        self.dlg.inputKey.setPlainText("Processing...")
-        masks = np.zeros(
-            (clusters, y_tiles * x_tiles * vectors.shape[-3] * vectors.shape[-2]),
-            dtype="uint8",
-        )
-        for c in range(clusters):
-            masks[c][kmeans.labels_ == c] = 255
-        masks = masks.reshape((clusters, y_tiles, x_tiles, *vectors.shape[-3:-1]))
-
-        # Process segment map
-        segments = np.zeros(
-            (y_tiles, x_tiles, self.tile_size, self.tile_size), dtype="uint8"
-        )
-        for y in range(y_tiles):
-            for x in range(x_tiles):
-                for c in range(clusters):
-                    upscaled = cv2.resize(
-                        masks[c, y, x],
-                        (self.tile_size, self.tile_size),
-                        cv2.INTER_LINEAR,
-                    )
-                    segments[y, x][upscaled > 0] = c * (255 // clusters)
-
-        # Consolidate tiles into one big raster
-        raster_data = np.empty(
-            (self.tile_size * y_tiles, self.tile_size * x_tiles), dtype="uint8"
-        )
-        for yy in range(y_tiles):
-            for xx in range(x_tiles):
-                raster_data[
-                    yy * self.tile_size : yy * self.tile_size + self.tile_size,
-                    xx * self.tile_size : xx * self.tile_size + self.tile_size,
-                ] = segments[yy, xx]
-
-        self.write_raster_layer(raster_data, self.bounding_box)
-        self.dlg.progressBar.setValue(100)
-        self.dlg.inputKey.setPlainText("Map segmented!")
-
-        return
+            self.predict_cnn(map_array)
+        
+        # Render coverage map
+        self.render_raster(coverage, layer.extent())
 
     # Download model from keygen
     def keygen_model(self, model_name, key):
@@ -809,38 +339,6 @@ class Segmenter:
 
         return BytesIO(file_data)
 
-    # Set model paramters
-    def reset_model(self):
-        res_enum = {"low": 64, "medium": 32, "high": 16, "high+": 8, "very high": 4}
-
-        if self.tthread is not None or self.pthread is not None:
-            self.dlg.inputKey.setPlainText("Please don't alter model settings mid-run!")
-            return
-
-        input_res = self.dlg.inputResolution.currentText()
-        self.pixel_size = res_enum[input_res]
-        self.tile_size = 512
-
-        self.model = AE(
-            input_shape=(self.tile_size, self.tile_size),
-            in_channels=3,
-            pixel_size=self.pixel_size,
-            decode=True,
-        ).to(self.device)
-        self.encoder = AE(
-            input_shape=(self.tile_size, self.tile_size),
-            in_channels=3,
-            pixel_size=self.pixel_size,
-            decode=False,
-        ).to(self.device)
-
-        self.dlg.inputKey.setPlainText("Model reset!")
-
-    # Set model weights
-    def set_model(self, state_dict):
-        self.model.load_state_dict(state_dict)
-        self.encoder.load_state_dict(state_dict)
-
     # Process user input box
     def submit(self):
         key = self.dlg.inputBox.toPlainText()
@@ -870,10 +368,10 @@ class Segmenter:
         if activated:
             with open(license_key, "x") as f:
                 f.write(key)
-            self.dlg.inputBox.setPlainText(f"Valid: {msg}")
+            self.dlg.inputBox.setPlainText(msg)
             self.key = key
         else:
-            self.dlg.inputBox.setPlainText(f"Invalid: {msg}")
+            self.dlg.inputBox.setPlainText(msg)
             self.key = "nokey"
 
     #  Display models in dropdown
@@ -883,71 +381,20 @@ class Segmenter:
         for model in model_list:
             self.dlg.inputLoadModel.addItem(model)
 
-    # Download model from repo
-    def download_model(self, model_path):
-        # Download all remote models
-        if self.key != "nokey":
-            try:
-                model_buffer = self.keygen_model(
-                    os.path.basename(model_path), self.key
-                )
-            except ValueError as e:
-                self.dlg.inputKey.setPlainText(f"Downloading models failed\n{e}")
-                return
-            with open(model_path, "wb") as f:
-                f.write(model_buffer.read())
-        else:
-            self.dlg.inputKey.setPlainText(f"Downloading models requires key.")
-
-    # Display resolutions in dropdown
-    def render_resolutions(self):
-        res_list = ["very high", "high", "medium", "low"]
-        self.dlg.inputRes.clear()
-        for res in res_list:
-            self.dlg.inputRes.addItem(str(res))
-
-        model_path = os.path.join(self.plugin_dir, model_name)
-        if not os.path.exists(model_path):
-            self.download_model(model_path)
-
-        model = torch.load(
-            model_path, map_location=self.device
-        )
-
-        try:
-            self.set_model(model.state_dict())
-        except RuntimeError:
-            self.dlg.inputKey.setPlainText(
-                f"Oops! Something went wrong. Try selecting a different resolution for this model."
-            )
-            self.render_models()
-            return
-
-        self.dlg.inputKey.setPlainText(f"{model_name} loaded!")
-
-    # Save model to local disk
-    def save_model(self):
-        model_path = self.dlg.inputSaveModel.toPlainText() + ".torch"
-        torch.save(self.model, os.path.join(self.plugin_dir, model_path))
-        self.dlg.inputKey.setPlainText(f"Saved model {model_path}")
-
-    # Check to see if server is up
-    def check_server(self):
-
-        url = "http://qgis.quantcivil.ai:5000/buzz"
-        available = True
-        try:
-            response = requests.get(url)
-            if response.status_code != 200:
-                available = False
-        except:
-            available = False
-        
-        if not available:
-            self.dlg.inputKey.setPlainText("Offload server offline.")
-            self.dlg.inputUseServer.clicked.disconnect()
-            self.dlg.inputUseServer.setChecked(0)
-            self.dlg.inputUseServer.clicked.connect(self.check_server)     
+    # Display layers in dropdown
+    def render_layers(self):
+        layer_list = [layer.name() for layer in self.canvas.layers()]
+        self.dlg.inputLayer.clear()
+        for layer in layer_list:
+            self.dlg.inputLayer.addItem(layer)
+    
+    # Set model based on selected dropdown
+    def set_model(self):
+        model = self.dlg.inputLoadModel.currentText()
+        if model == "K-Means":
+            self.model = "kmeans"
+        elif model == "CNN":
+            self.model = "cnn"
 
     def run(self):
         """Run method that performs all the real work"""
@@ -970,7 +417,6 @@ class Segmenter:
             # Populate drop down menus
             self.render_models()
             self.render_layers()
-            self.render_resolutions()
 
             # Set gpu message
             gpu_msg = "GPU available."
@@ -981,7 +427,7 @@ class Segmenter:
             self.license_path = os.path.join(self.plugin_dir, "qgis_key")
             self.key = "nokey"
             if not os.path.exists(self.license_path):
-                self.dlg.inputKey.setPlainText(f"Please input key with dashes\n{gpu_msg}")
+                self.dlg.inputBox.setPlainText(f"Please input key with dashes\n{gpu_msg}")
             else:
                 # Check license
                 with open(self.license_path, "r") as f:
@@ -990,7 +436,13 @@ class Segmenter:
                 if not act:
                     os.remove(self.license_path)
                     self.key = "nokey"
-                self.dlg.inputKey.setPlainText(f"{msg}\n{gpu_msg}")
+                self.dlg.inputBox.setPlainText(f"{msg}\n{gpu_msg}")
+
+            # Attach inputs
+            self.dlg.inputBox.textChanged.connect(self.submit)
+            self.dlg.buttonPredict.clicked.connect(self.predict)
+            self.dlg.inputLoadModel.currentIndexChanged.connect(self.set_model)
+            self.dlg.inputLayer.currentIndexChanged.connect(self.render_layers)
 
             # Render logo
             img_path = os.path.join(self.plugin_dir, "logo.png")
