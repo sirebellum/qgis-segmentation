@@ -34,12 +34,11 @@ from io import BytesIO
 import requests
 from osgeo import gdal
 
-from .model import AE
 from .keygen import activate_license
 import torch
 from sklearn.cluster import KMeans
-
-TILE_SIZE = 512
+import numpy as np
+import cv2
 
 
 
@@ -192,30 +191,34 @@ class Segmenter:
             self.iface.removeToolBarIcon(action)
 
     # Predict coverage map using kmeans
-    def predict_kmeans(self, array):
-        
-        # Get user specified num segments
-        num_segments = self.dlg.sliderSegments.value()
+    def predict_kmeans(self, array, num_segments=16):
+
+        resolution_map = {
+            "original": 1,
+            "very high": 2,
+            "high": 4,
+            "medium": 8,
+            "low": 16,
+        }
 
         # Instantiate kmeans model
         kmeans = KMeans(n_clusters=num_segments)
 
         # Get user specified resolution
-        resolution = self.dlg.sliderResolution.value()
+        resolution = resolution_map[self.dlg.inputRes.currentText()]
 
-        # Crop to resolution
-        array = array[
-            :,
-            : array.shape[1] - array.shape[1] % resolution,
-            : array.shape[2] - array.shape[2] % resolution,
-        ]
+        # Pad to resolution
+        channel_pad = (0, 0)
+        height_pad = (0, array.shape[1] % resolution)
+        width_pad = (0, array.shape[2] % resolution)
+        array_padded = np.pad(array, (channel_pad, height_pad, width_pad), mode="constant")
 
         # Reshape into 2d
-        array_2d = array.reshape(
-            array.shape[0],
-            array.shape[1] // resolution,
+        array_2d = array_padded.reshape(
+            array_padded.shape[0],
+            array_padded.shape[1] // resolution,
             resolution,
-            array.shape[2] // resolution,
+            array_padded.shape[2] // resolution,
             resolution,
         )
         array_2d = array_2d.transpose(1, 3, 0, 2, 4)
@@ -239,6 +242,11 @@ class Segmenter:
             array.shape[1] // resolution,
             array.shape[2] // resolution,
         )
+
+        # Get rid of padding
+        clusters = clusters[:, :, :array.shape[1] // resolution, :array.shape[2] // resolution]
+
+        # Upsample to original size
         clusters = torch.tensor(clusters).to(self.device)
         clusters = torch.nn.Upsample(
             size=(array.shape[-2], array.shape[-1]), mode="nearest"
@@ -249,13 +257,110 @@ class Segmenter:
 
     # Predict coverage map using cnn
     def predict_cnn(self, array):
-        raise NotImplementedError
-    
+
+        resolution_map = {
+            "original": 1,
+            "very high": 2,
+            "high": 4,
+            "medium": 8,
+            "low": 16,
+        }
+
+        # Print message about gpu
+        if self.device == torch.device("cpu"):
+            self.dlg.inputBox.setPlainText("WARNING: GPU not available. Using CPU instead.")
+
+        assert array.shape[0] == 3, f"Invalid array shape! \n{array.shape}"
+
+        # Download and load model
+        model_bytes = self.keygen_model(
+            self.dlg.inputRes.currentText(),
+            self.key
+        )
+        cnn_model = torch.jit.load(model_bytes).to(self.device)
+
+        # Pad to tile_size
+        channel_pad = (0, 0)
+        height_pad = (0, TILE_SIZE - array.shape[1] % TILE_SIZE)
+        width_pad = (0, TILE_SIZE - array.shape[2] % TILE_SIZE)
+        array_padded = np.pad(
+            array,
+            (channel_pad, height_pad, width_pad),
+            mode="constant",
+        )
+
+        # Reshape into tiles
+        tiles = array_padded.reshape(
+            3,
+            array_padded.shape[1] // TILE_SIZE,
+            TILE_SIZE,
+            array_padded.shape[2] // TILE_SIZE,
+            TILE_SIZE,
+        )
+        tiles = tiles.transpose(1, 3, 0, 2, 4)
+        tiles = tiles.reshape(
+            tiles.shape[0] * tiles.shape[1],
+            3,
+            TILE_SIZE,
+            TILE_SIZE,
+        )
+
+        # Convert to float range [0, 1]
+        tiles = tiles.astype("float32") / 255
+
+        # Convert to torch
+        tiles = torch.from_numpy(tiles).to(self.device)
+        
+        # Write some tiles to disk
+        # for i in range(0, tiles.shape[0], 100):
+        #     tile = tiles[i]
+        #     tile = tile.cpu().numpy()
+        #     tile = tile.transpose(1, 2, 0)
+        #     tile = tile * 255
+        #     tile = tile.astype("uint8")
+        #     cv2.imwrite(f"/Volumes/storage/gits/quant-civil/segmenter/images/tile_{i}.png", tile)
+
+        # Predict classes
+        batch_size = 16
+        coverage_map = []
+        for i in range(0, tiles.shape[0], batch_size):
+            vectors = cnn_model.forward(tiles[i:i+batch_size])
+            vectors = torch.exp(vectors)
+            indices = torch.argmax(vectors, dim=1).type(torch.uint8)
+            coverage_map.append(indices)
+        coverage_map = torch.concatenate(coverage_map, dim=0)
+        coverage_map = coverage_map.cpu().numpy()
+
+        # Convert from tiles to one big map
+        coverage_map = coverage_map.reshape(
+            array_padded.shape[1] // TILE_SIZE,
+            array_padded.shape[2] // TILE_SIZE,
+            coverage_map.shape[1],
+            coverage_map.shape[2],
+        )
+        coverage_map = coverage_map.transpose(0, 2 ,1, 3)
+        coverage_map = coverage_map.reshape(
+            1, 1,
+            coverage_map.shape[0] * coverage_map.shape[1],
+            coverage_map.shape[2] * coverage_map.shape[3],
+        )
+
+        # Convert to torch for gpu
+        coverage_map = torch.from_numpy(coverage_map).to(self.device)
+
+        # Upsample to original size
+        coverage_map = torch.nn.Upsample(size=(array_padded.shape[-2], array_padded.shape[-1]), mode="nearest")(coverage_map)
+
+        # Get rid of padding
+        coverage_map = coverage_map[0, :, :array.shape[1], :array.shape[2]]
+
+        return coverage_map.cpu().numpy()
+
     # Render raster from array
-    def render_raster(self, array, bounding_box):
+    def render_raster(self, array, bounding_box, layer_name):
         driver = gdal.GetDriverByName("GTiff")
         dataset = driver.Create(
-            os.path.join(gettempdir(), "seg.tif"),
+            os.path.join(gettempdir(), layer_name+".tif"),
             array.shape[2],
             array.shape[1],
             array.shape[0],
@@ -281,15 +386,19 @@ class Segmenter:
         for c in range(array.shape[0]):
             dataset.GetRasterBand(c + 1).WriteArray(
                 array[c, :, :]
-            )  # Remove "T" if it's inverted.
+            )
         dataset = None
 
         raster_layer = QgsRasterLayer(
-            os.path.join(gettempdir(), "seg.tif"), "segmentation-map"
+            os.path.join(gettempdir(), layer_name+".tif"), layer_name
         )
         raster_layer.renderer().setOpacity(0.5)
 
         QgsProject.instance().addMapLayer(raster_layer, True)
+
+    def reduce_classes(self, coverage, num_segments):
+        
+        return coverage
 
     # Predict coverage map
     def predict(self):
@@ -300,14 +409,32 @@ class Segmenter:
         raster = gdal.Open(layer.source())
         map_array = raster.ReadAsArray()
 
+        # Get user specified num segments
+        num_segments = int(self.dlg.inputSegments.currentText())
+
         # Perform prediction based on model selected
         if self.model == "kmeans":
-            coverage = self.predict_kmeans(map_array)
+            coverage = self.predict_kmeans(
+                map_array,
+                num_segments=num_segments
+            )
         elif self.model == "cnn":
-            self.predict_cnn(map_array)
-        
+            # Verify key
+            if self.key == "nokey":
+                self.dlg.inputBox.setPlainText("Please input key with dashes to use CNN model")
+                return
+            vectors = self.predict_cnn(map_array)
+            coverage = self.reduce_classes(vectors, num_segments)
+        else:
+            self.dlg.inputBox.setPlainText("Please select a model")
+            return
+
         # Render coverage map
-        self.render_raster(coverage, layer.extent())
+        self.render_raster(
+            coverage,
+            layer.extent(),
+            layer_name+"_coverage"
+        )
 
     # Download model from keygen
     def keygen_model(self, model_name, key):
@@ -368,10 +495,10 @@ class Segmenter:
         if activated:
             with open(license_key, "x") as f:
                 f.write(key)
-            self.dlg.inputBox.setPlainText(msg)
+            self.dlg.inputBox.setPlainText(f"Valid: {msg}")
             self.key = key
         else:
-            self.dlg.inputBox.setPlainText(msg)
+            self.dlg.inputBox.setPlainText(f"Invalid: {msg}")
             self.key = "nokey"
 
     #  Display models in dropdown
@@ -387,6 +514,20 @@ class Segmenter:
         self.dlg.inputLayer.clear()
         for layer in layer_list:
             self.dlg.inputLayer.addItem(layer)
+
+    # Display resolutions in dropdown
+    def render_resolutions(self):
+        res_list = ["original", "very high", "high", "medium", "low"]
+        self.dlg.inputRes.clear()
+        for res in res_list:
+            self.dlg.inputRes.addItem(str(res))
+
+    # Display segments in dropdown
+    def render_segments(self):
+        seg_list = list(range(2, 17))
+        self.dlg.inputSegments.clear()
+        for seg in seg_list:
+            self.dlg.inputSegments.addItem(str(seg))
     
     # Set model based on selected dropdown
     def set_model(self):
@@ -417,6 +558,8 @@ class Segmenter:
             # Populate drop down menus
             self.render_models()
             self.render_layers()
+            self.render_resolutions()
+            self.render_segments()
 
             # Set gpu message
             gpu_msg = "GPU available."
