@@ -44,6 +44,8 @@ from sklearn.cluster import KMeans
 import numpy as np
 import cv2
 
+TILE_SIZE = 512
+NUM_SEGMENTS = 32
 
 class Segmenter:
     """QGIS Plugin Implementation."""
@@ -197,7 +199,6 @@ class Segmenter:
     def predict_kmeans(self, array, num_segments=16):
 
         resolution_map = {
-            "original": 1,
             "very high": 2,
             "high": 4,
             "medium": 8,
@@ -255,14 +256,6 @@ class Segmenter:
 
     # Predict coverage map using cnn
     def predict_cnn(self, array):
-
-        resolution_map = {
-            "original": 1,
-            "very high": 2,
-            "high": 4,
-            "medium": 8,
-            "low": 16,
-        }
 
         # Print message about gpu
         if self.device == torch.device("cpu"):
@@ -394,10 +387,6 @@ class Segmenter:
 
         QgsProject.instance().addMapLayer(raster_layer, True)
 
-    def reduce_classes(self, coverage, num_segments):
-        
-        return coverage
-
     # Predict coverage map
     def predict(self):
 
@@ -409,7 +398,7 @@ class Segmenter:
         map_array = raster.ReadAsArray()
 
         # Get user specified num segments
-        num_segments = int(self.dlg.inputSegments.currentText())
+        num_segments = int(self.dlg.inputSegments.text())
 
         # Perform prediction based on model selected
         if self.model == "kmeans":
@@ -423,7 +412,7 @@ class Segmenter:
                 self.dlg.inputBox.setPlainText("Please input key with dashes to use CNN model")
                 return
             vectors = self.predict_cnn(map_array)
-            coverage = self.reduce_classes(vectors, num_segments)
+            coverage = self.predict_kmeans(vectors, num_segments=num_segments)
         else:
             self.dlg.inputBox.setPlainText("Please select a model")
             return
@@ -517,18 +506,11 @@ class Segmenter:
 
     # Display resolutions in dropdown
     def render_resolutions(self):
-        res_list = ["original", "very high", "high", "medium", "low"]
+        res_list = ["very high", "high", "medium", "low"]
         self.dlg.inputRes.clear()
         for res in res_list:
             self.dlg.inputRes.addItem(str(res))
 
-    # Display segments in dropdown
-    def render_segments(self):
-        seg_list = list(range(2, 17))
-        self.dlg.inputSegments.clear()
-        for seg in seg_list:
-            self.dlg.inputSegments.addItem(str(seg))
-    
     # Set model based on selected dropdown
     def set_model(self):
         model = self.dlg.inputLoadModel.currentText()
@@ -559,7 +541,6 @@ class Segmenter:
             self.render_models()
             self.render_layers()
             self.render_resolutions()
-            self.render_segments()
 
             # Set gpu message
             gpu_msg = "GPU available."
