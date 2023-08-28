@@ -32,9 +32,3 @@ Below are the steps for a basic segmentation:
 3. Choose a resolution. Higher resolutions will result in a more detailed segmentation map. Lower resolutions will be less noisy.
 4. Choose number of segments. This will determine how many segments are generated. You should choose the number based on how "complex" the raster is. That is, if there 4 different kinds of land cover on your map (trees, roads, buildings, water, etc.), you should set the number of segments to something slightly higher than 4, between 6 and 8.
 5. Segment! A raster layer will be produced overlaying the input with the different segments.
-
-Below are some screenshots of the tool's handywork. 
-
-<img width="400" alt="image" src="https://github.com/sirebellum/qgis-segmentation/assets/25124443/d4e6555b-b3aa-4138-98e2-f9f25a97dca4">
-<img width="400" alt="image" src="https://github.com/sirebellum/qgis-segmentation/assets/25124443/4ba5ce87-bc01-4323-aa1a-11445e9b42df">
-
