@@ -32,7 +32,7 @@ def activate_license(license_key, keygen_account_id):
     # If the license is valid for the current machine, that means it has
     # already been activated. We can return early.
     if validation["meta"]["valid"]:
-        return True, "license has already been activated on this machine"
+        return True, "license already activated on this machine"
 
     # Otherwise, we need to determine why the current license is not valid,
     # because in our case it may be invalid because another machine has

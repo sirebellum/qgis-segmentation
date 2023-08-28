@@ -42,14 +42,3 @@ class SegmenterDialog(QtWidgets.QDialog, FORM_CLASS):
         # http://qt-project.org/doc/qt-4.8/designer-using-a-ui-file.html
         # #widgets-and-dialogs-with-auto-connect
         self.setupUi(self)
-
-        self.progressBar.setValue(0)
-
-        # Process and populate user input defaults
-        self.inputTrainingTime.addItems(
-            ["very short", "short", "medium", "long", "very long"]
-        )
-        self.inputResolution.addItems(["low", "medium", "high", "high+", "very high"])
-        self.inputTrainingTime.setCurrentText("very short")
-        self.inputResolution.setCurrentText("high")
-        self.inputSegments.setText("4")

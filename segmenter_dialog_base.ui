@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>371</width>
-    <height>413</height>
+    <width>384</width>
+    <height>292</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -22,25 +22,12 @@
   <property name="whatsThis">
    <string/>
   </property>
-  <widget class="QLabel" name="labelKmeans">
-   <property name="geometry">
-    <rect>
-     <x>240</x>
-     <y>83</y>
-     <width>101</width>
-     <height>18</height>
-    </rect>
-   </property>
-   <property name="text">
-    <string comment="Number of segments to divide input into">Num Segments</string>
-   </property>
-  </widget>
   <widget class="QPushButton" name="buttonPredict">
    <property name="geometry">
     <rect>
-     <x>60</x>
-     <y>218</y>
-     <width>88</width>
+     <x>50</x>
+     <y>155</y>
+     <width>141</width>
      <height>34</height>
     </rect>
    </property>
@@ -51,126 +38,11 @@
     <string>Segment</string>
    </property>
   </widget>
-  <widget class="QPushButton" name="buttonTrain">
-   <property name="geometry">
-    <rect>
-     <x>60</x>
-     <y>178</y>
-     <width>88</width>
-     <height>34</height>
-    </rect>
-   </property>
-   <property name="toolTip">
-    <string>Train a model on the current canvas extent.</string>
-   </property>
-   <property name="text">
-    <string>Train</string>
-   </property>
-  </widget>
-  <widget class="QLabel" name="labelTrainingTime">
+  <widget class="QPlainTextEdit" name="inputBox">
    <property name="geometry">
     <rect>
      <x>40</x>
-     <y>83</y>
-     <width>91</width>
-     <height>18</height>
-    </rect>
-   </property>
-   <property name="text">
-    <string comment="Number of segments to divide input into">Training Time</string>
-   </property>
-  </widget>
-  <widget class="QLineEdit" name="inputSegments">
-   <property name="geometry">
-    <rect>
-     <x>245</x>
-     <y>103</y>
-     <width>81</width>
-     <height>31</height>
-    </rect>
-   </property>
-   <property name="text">
-    <string comment="Number of segments to divide input into"/>
-   </property>
-  </widget>
-  <widget class="QProgressBar" name="progressBar">
-   <property name="geometry">
-    <rect>
-     <x>35</x>
-     <y>310</y>
-     <width>141</width>
-     <height>21</height>
-    </rect>
-   </property>
-   <property name="styleSheet">
-    <string notr="true"/>
-   </property>
-   <property name="value">
-    <number>0</number>
-   </property>
-  </widget>
-  <widget class="QLabel" name="labelResolution">
-   <property name="geometry">
-    <rect>
-     <x>150</x>
-     <y>83</y>
-     <width>71</width>
-     <height>20</height>
-    </rect>
-   </property>
-   <property name="text">
-    <string comment="Number of segments to divide input into">Resolution</string>
-   </property>
-  </widget>
-  <widget class="QComboBox" name="inputResolution">
-   <property name="geometry">
-    <rect>
-     <x>140</x>
-     <y>103</y>
-     <width>87</width>
-     <height>32</height>
-    </rect>
-   </property>
-   <property name="toolTip">
-    <string/>
-   </property>
-   <property name="statusTip">
-    <string/>
-   </property>
-   <property name="whatsThis">
-    <string>test</string>
-   </property>
-   <property name="currentText">
-    <string/>
-   </property>
-   <property name="placeholderText">
-    <string>medium</string>
-   </property>
-  </widget>
-  <widget class="QComboBox" name="inputTrainingTime">
-   <property name="geometry">
-    <rect>
-     <x>40</x>
-     <y>103</y>
-     <width>87</width>
-     <height>32</height>
-    </rect>
-   </property>
-   <property name="toolTip">
-    <string>How long to train the model.</string>
-   </property>
-   <property name="currentText">
-    <string/>
-   </property>
-   <property name="placeholderText">
-    <string>average</string>
-   </property>
-  </widget>
-  <widget class="QPlainTextEdit" name="inputKey">
-   <property name="geometry">
-    <rect>
-     <x>40</x>
-     <y>350</y>
+     <y>220</y>
      <width>291</width>
      <height>51</height>
     </rect>
@@ -186,13 +58,13 @@
     <bool>false</bool>
    </property>
   </widget>
-  <widget class="QLabel" name="imageTraining">
+  <widget class="QLabel" name="imageLarge">
    <property name="geometry">
     <rect>
-     <x>200</x>
-     <y>165</y>
+     <x>240</x>
+     <y>80</y>
      <width>121</width>
-     <height>121</height>
+     <height>119</height>
     </rect>
    </property>
    <property name="styleSheet">
@@ -202,44 +74,12 @@
     <string/>
    </property>
   </widget>
-  <widget class="QCheckBox" name="inputUseServer">
-   <property name="geometry">
-    <rect>
-     <x>70</x>
-     <y>260</y>
-     <width>71</width>
-     <height>22</height>
-    </rect>
-   </property>
-   <property name="toolTip">
-    <string>Upload model/map to server for remote processing.</string>
-   </property>
-   <property name="text">
-    <string>Offload</string>
-   </property>
-  </widget>
-  <widget class="QPushButton" name="buttonRefresh">
-   <property name="geometry">
-    <rect>
-     <x>210</x>
-     <y>310</y>
-     <width>101</width>
-     <height>21</height>
-    </rect>
-   </property>
-   <property name="toolTip">
-    <string/>
-   </property>
-   <property name="text">
-    <string>Refresh</string>
-   </property>
-  </widget>
   <widget class="QComboBox" name="inputLoadModel">
    <property name="geometry">
     <rect>
-     <x>40</x>
+     <x>20</x>
      <y>30</y>
-     <width>87</width>
+     <width>101</width>
      <height>32</height>
     </rect>
    </property>
@@ -250,7 +90,7 @@
     <string/>
    </property>
    <property name="placeholderText">
-    <string>average</string>
+    <string>K-Means</string>
    </property>
   </widget>
   <widget class="QLabel" name="labelLoadModel">
@@ -263,58 +103,55 @@
     </rect>
    </property>
    <property name="text">
-    <string comment="Number of segments to divide input into">Load Model</string>
+    <string comment="Number of segments to divide input into">Model</string>
    </property>
   </widget>
-  <widget class="QPushButton" name="buttonSaveModel">
+  <widget class="QLabel" name="labelSegments">
    <property name="geometry">
     <rect>
-     <x>280</x>
-     <y>30</y>
-     <width>51</width>
-     <height>31</height>
+     <x>50</x>
+     <y>85</y>
+     <width>161</width>
+     <height>18</height>
     </rect>
    </property>
-   <property name="toolTip">
-    <string>Train a model on the current canvas extent.</string>
-   </property>
    <property name="text">
-    <string>Save</string>
+    <string comment="Number of segments to divide input into">Number of Segments</string>
    </property>
   </widget>
   <widget class="Line" name="line">
    <property name="geometry">
     <rect>
-     <x>45</x>
-     <y>283</y>
-     <width>121</width>
-     <height>16</height>
-    </rect>
-   </property>
-   <property name="orientation">
-    <enum>Qt::Horizontal</enum>
-   </property>
-  </widget>
-  <widget class="Line" name="line_2">
-   <property name="geometry">
-    <rect>
-     <x>35</x>
-     <y>160</y>
-     <width>20</width>
-     <height>131</height>
+     <x>210</x>
+     <y>80</y>
+     <width>16</width>
+     <height>121</height>
     </rect>
    </property>
    <property name="orientation">
     <enum>Qt::Vertical</enum>
    </property>
   </widget>
+  <widget class="Line" name="line_2">
+   <property name="geometry">
+    <rect>
+     <x>20</x>
+     <y>70</y>
+     <width>200</width>
+     <height>20</height>
+    </rect>
+   </property>
+   <property name="orientation">
+    <enum>Qt::Horizontal</enum>
+   </property>
+  </widget>
   <widget class="Line" name="line_3">
    <property name="geometry">
     <rect>
-     <x>45</x>
-     <y>153</y>
-     <width>121</width>
-     <height>16</height>
+     <x>19</x>
+     <y>190</y>
+     <width>200</width>
+     <height>20</height>
     </rect>
    </property>
    <property name="orientation">
@@ -324,52 +161,91 @@
   <widget class="Line" name="line_4">
    <property name="geometry">
     <rect>
-     <x>155</x>
-     <y>160</y>
-     <width>20</width>
-     <height>131</height>
+     <x>10</x>
+     <y>80</y>
+     <width>16</width>
+     <height>121</height>
     </rect>
    </property>
    <property name="orientation">
     <enum>Qt::Vertical</enum>
    </property>
   </widget>
+  <widget class="QComboBox" name="inputLayer">
+   <property name="geometry">
+    <rect>
+     <x>140</x>
+     <y>30</y>
+     <width>101</width>
+     <height>32</height>
+    </rect>
+   </property>
+   <property name="toolTip">
+    <string/>
+   </property>
+   <property name="currentText">
+    <string/>
+   </property>
+   <property name="placeholderText">
+    <string/>
+   </property>
+  </widget>
   <widget class="QLabel" name="labelLoadModel_2">
    <property name="geometry">
     <rect>
-     <x>210</x>
+     <x>160</x>
      <y>10</y>
      <width>81</width>
      <height>18</height>
     </rect>
    </property>
    <property name="text">
-    <string comment="Number of segments to divide input into">Save Model</string>
+    <string comment="Number of segments to divide input into">Input Layer</string>
    </property>
   </widget>
-  <widget class="QPlainTextEdit" name="inputSaveModel">
+  <widget class="QLabel" name="labelLoadModel_3">
    <property name="geometry">
     <rect>
-     <x>170</x>
-     <y>30</y>
-     <width>111</width>
-     <height>31</height>
+     <x>270</x>
+     <y>10</y>
+     <width>81</width>
+     <height>18</height>
     </rect>
    </property>
-   <property name="verticalScrollBarPolicy">
-    <enum>Qt::ScrollBarAlwaysOff</enum>
+   <property name="accessibleDescription">
+    <string/>
    </property>
-   <property name="horizontalScrollBarPolicy">
-    <enum>Qt::ScrollBarAlwaysOff</enum>
+   <property name="text">
+    <string comment="Number of segments to divide input into">Resolution</string>
    </property>
-   <property name="plainText">
-    <string>model_name</string>
+  </widget>
+  <widget class="QComboBox" name="inputRes">
+   <property name="geometry">
+    <rect>
+     <x>260</x>
+     <y>30</y>
+     <width>101</width>
+     <height>32</height>
+    </rect>
    </property>
-   <property name="overwriteMode">
-    <bool>false</bool>
+   <property name="toolTip">
+    <string>Higher resolution means more detailed segment map.</string>
    </property>
-   <property name="backgroundVisible">
-    <bool>false</bool>
+   <property name="currentText">
+    <string/>
+   </property>
+   <property name="placeholderText">
+    <string/>
+   </property>
+  </widget>
+  <widget class="QLineEdit" name="inputSegments">
+   <property name="geometry">
+    <rect>
+     <x>60</x>
+     <y>110</y>
+     <width>113</width>
+     <height>32</height>
+    </rect>
    </property>
   </widget>
  </widget>
