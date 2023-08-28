@@ -221,11 +221,13 @@ class Segmenter:
             array_2d.shape[2] * resolution * resolution
         )
 
-        # Fit kmeans model
-        kmeans = kmeans.fit(array_2d)
+        # Fit kmeans model to random subset
+        size = 10000 if array_2d.shape[0] > 10000 else array_2d.shape[0]
+        idx = np.random.randint(0, array_2d.shape[0], size=size)
+        kmeans = kmeans.fit(array_2d[idx])
 
         # Get clusters
-        clusters = kmeans.labels_
+        clusters = kmeans.predict(array_2d)
 
         # Reshape clusters to match map
         clusters = clusters.reshape(
