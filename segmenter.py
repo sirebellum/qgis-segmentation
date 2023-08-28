@@ -193,20 +193,10 @@ class Segmenter:
             self.iface.removeToolBarIcon(action)
 
     # Predict coverage map using kmeans
-    def predict_kmeans(self, array, num_segments=16):
-
-        resolution_map = {
-            "very high": 2,
-            "high": 4,
-            "medium": 8,
-            "low": 16,
-        }
+    def predict_kmeans(self, array, num_segments=16, resolution=16):
 
         # Instantiate kmeans model
         kmeans = KMeans(n_clusters=num_segments)
-
-        # Get user specified resolution
-        resolution = resolution_map[self.dlg.inputRes.currentText()]
 
         # Pad to resolution
         channel_pad = (0, 0)
@@ -257,7 +247,7 @@ class Segmenter:
         return clusters.cpu().numpy()
 
     # Predict coverage map using cnn
-    def predict_cnn(self, array):
+    def predict_cnn(self, array, num_segments, resolution):
 
         # Print message about gpu
         if self.device == torch.device("cpu"):
@@ -267,10 +257,11 @@ class Segmenter:
 
         # Download and load model
         model_bytes = self.keygen_model(
-            self.dlg.inputRes.currentText(),
+            resolution,
             self.key
         )
         cnn_model = torch.jit.load(model_bytes).to(self.device)
+        cnn_model.eval()
 
         # Pad to tile_size
         channel_pad = (0, 0)
@@ -303,24 +294,14 @@ class Segmenter:
 
         # Convert to torch
         tiles = torch.from_numpy(tiles).to(self.device)
-        
-        # Write some tiles to disk
-        # for i in range(0, tiles.shape[0], 100):
-        #     tile = tiles[i]
-        #     tile = tile.cpu().numpy()
-        #     tile = tile.transpose(1, 2, 0)
-        #     tile = tile * 255
-        #     tile = tile.astype("uint8")
-        #     cv2.imwrite(f"/Volumes/storage/gits/quant-civil/segmenter/images/tile_{i}.png", tile)
 
-        # Predict classes
-        batch_size = 16
+        # Predict vectors
+        batch_size = 1
         coverage_map = []
         for i in range(0, tiles.shape[0], batch_size):
-            vectors = cnn_model.forward(tiles[i:i+batch_size])
-            vectors = torch.exp(vectors)
-            indices = torch.argmax(vectors, dim=1).type(torch.uint8)
-            coverage_map.append(indices)
+            with torch.no_grad():
+                vectors = cnn_model.forward(tiles[i:i+batch_size])
+            coverage_map.append(vectors)
         coverage_map = torch.concatenate(coverage_map, dim=0)
         coverage_map = coverage_map.cpu().numpy()
 
@@ -330,18 +311,25 @@ class Segmenter:
             array_padded.shape[2] // TILE_SIZE,
             coverage_map.shape[1],
             coverage_map.shape[2],
+            coverage_map.shape[3],
         )
-        coverage_map = coverage_map.transpose(0, 2 ,1, 3)
+        coverage_map = coverage_map.transpose(2, 0, 3 ,1, 4)
         coverage_map = coverage_map.reshape(
-            1, 1,
-            coverage_map.shape[0] * coverage_map.shape[1],
-            coverage_map.shape[2] * coverage_map.shape[3],
+            coverage_map.shape[0],
+            coverage_map.shape[1] * coverage_map.shape[2],
+            coverage_map.shape[3] * coverage_map.shape[4],
         )
 
-        # Convert to torch for gpu
-        coverage_map = torch.from_numpy(coverage_map).to(self.device)
+        # Perform kmeans to get num_segments clusters
+        coverage_map = self.predict_kmeans(
+            coverage_map,
+            num_segments=num_segments,
+            resolution=1,
+        )
 
-        # Upsample to original size
+        # Upsample
+        coverage_map = torch.tensor(coverage_map).to(self.device)
+        coverage_map = torch.unsqueeze(coverage_map, dim=0)
         coverage_map = torch.nn.Upsample(size=(array_padded.shape[-2], array_padded.shape[-1]), mode="nearest")(coverage_map)
 
         # Get rid of padding
@@ -401,19 +389,30 @@ class Segmenter:
         # Get user specified num segments
         num_segments = int(self.dlg.inputSegments.text())
 
+        resolution_map = {
+            "very high": 2,
+            "high": 4,
+            "medium": 8,
+            "low": 16,
+        }
+
         # Perform prediction based on model selected
         if self.model == "kmeans":
             coverage = self.predict_kmeans(
                 map_array,
-                num_segments=num_segments
+                num_segments=num_segments,
+                resolution=resolution_map[self.dlg.inputRes.currentText()],
             )
         elif self.model == "cnn":
             # Verify key
             if self.key == "nokey":
                 self.dlg.inputBox.setPlainText("Please input key with dashes to use CNN model")
                 return
-            vectors = self.predict_cnn(map_array)
-            coverage = self.predict_kmeans(vectors, num_segments=num_segments)
+            coverage = self.predict_cnn(
+                map_array,
+                num_segments=num_segments,
+                resolution=self.dlg.inputRes.currentText()
+            )
         else:
             self.dlg.inputBox.setPlainText("Please select a model")
             return
