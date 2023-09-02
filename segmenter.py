@@ -385,6 +385,8 @@ class Segmenter:
         layer_name = self.dlg.inputLayer.currentText()
         layer = QgsProject.instance().mapLayersByName(layer_name)[0]
         assert layer.isValid(), f"Invalid raster layer! \n{layer_name}"
+        raster = gdal.Open(layer.source())
+        layer_array = raster.ReadAsArray()
 
         # Get user specified num segments
         num_segments = int(self.dlg.inputSegments.text())
@@ -399,15 +401,26 @@ class Segmenter:
         # Get user specified resolution
         resolution = resolution_map[self.dlg.inputRes.currentText()]
 
-        # Perform prediction based on model selected (in the background)
-        task = self.SegmenterTask(
-            self.iface,
-            self.model,
-            num_segments,
-            resolution,
-            layer_name,
+        # Perform prediction based on model selected
+        if self.model == "kmeans":
+            coverage_map = self.predict_kmeans(
+                layer_array,
+                num_segments=num_segments,
+                resolution=resolution,
+            )
+        elif self.model == "cnn":
+            coverage_map = self.predict_cnn(
+                layer_array,
+                num_segments=num_segments,
+                resolution=self.dlg.inputRes.currentText(),
+            )
+        
+        # Render coverage map
+        self.render_raster(
+            coverage_map,
+            layer.extent(),
+            f"{layer_name}_{self.model}_{num_segments}_{resolution}",
         )
-        QgsApplication.taskManager().addTask(task)
 
         # Update message
         self.dlg.inputBox.setPlainText("Segmenting map...")
@@ -507,54 +520,6 @@ class Segmenter:
         elif model == "CNN":
             self.model = "cnn"
 
-    # Class for running segmenter in background
-    class SegmenterTask(QgsTask):
-            
-            def __init__(self, iface, model, num_segments, resolution, layer_name):
-                QgsTask.__init__(self, "Segmenting map")
-                self.iface = iface
-                self.model = model
-                self.num_segments = num_segments
-                self.resolution = resolution
-                self.layer_name = layer_name
-    
-            def run(self):
-                # Load user specified raster
-                layer = QgsProject.instance().mapLayersByName(self.layer_name)[0]
-                assert layer.isValid(), f"Invalid raster layer! \n{self.layer_name}"
-                raster = gdal.Open(layer.source())
-                map_array = raster.ReadAsArray()
-
-                # Perform prediction based on model selected
-                if self.model == "kmeans":
-                    coverage = Segmenter.predict_kmeans(
-                        map_array,
-                        num_segments=self.num_segments,
-                        resolution=self.resolution,
-                    )
-                elif self.model == "cnn":
-                    # Verify key
-                    if self.key == "nokey":
-                        self.dlg.inputBox.setPlainText("Please input key with dashes to use CNN model")
-                        return
-                    coverage = Segmenter.predict_cnn(
-                        map_array,
-                        num_segments=self.num_segments,
-                        resolution=self.resolution,
-                    )
-                else:
-                    self.dlg.inputBox.setPlainText("Please select a model")
-                    return
-    
-                # Render coverage map
-                Segmenter.render_raster(
-                    coverage,
-                    layer.extent(),
-                    self.layer_name+"_coverage"
-                )
-    
-                return True
-
     def run(self):
         """Run method that performs all the real work"""
 
@@ -602,7 +567,6 @@ class Segmenter:
             self.dlg.inputBox.textChanged.connect(self.submit)
             self.dlg.buttonPredict.clicked.connect(self.predict)
             self.dlg.inputLoadModel.currentIndexChanged.connect(self.set_model)
-            self.dlg.inputLayer.highlighted.connect(self.render_layers)
 
             # Render logo
             img_path = os.path.join(self.plugin_dir, "logo.png")
@@ -610,4 +574,5 @@ class Segmenter:
             self.dlg.imageLarge.setPixmap(pix)
 
         # show the dialog
+        self.render_layers()
         self.dlg.show()
