@@ -420,8 +420,9 @@ class Segmenter:
             self.dlg.inputBox.setPlainText("Please select a model")
             return
 
-        # Render coverage map
-        self.render_raster(coverage, layer.extent(), layer_name + "_coverage")
+        # Render coverage map with descriptive name
+        layer_name += f"_{self.model}_{num_segments}_{self.dlg.inputRes.currentText()}"
+        self.render_raster(coverage, layer.extent(), layer_name)
 
     # Download model from keygen
     def keygen_model(self, model_name, key):
