@@ -384,7 +384,7 @@ class Segmenter:
         layer = QgsProject.instance().mapLayersByName(layer_name)[0]
         assert layer.isValid(), f"Invalid raster layer! \n{layer_name}"
         raster = gdal.Open(layer.source())
-        map_array = raster.ReadAsArray()
+        layer_array = raster.ReadAsArray()
 
         # Get user specified num segments
         num_segments = int(self.dlg.inputSegments.text())
@@ -396,33 +396,32 @@ class Segmenter:
             "low": 16,
         }
 
+        # Get user specified resolution
+        resolution = resolution_map[self.dlg.inputRes.currentText()]
+
         # Perform prediction based on model selected
         if self.model == "kmeans":
-            coverage = self.predict_kmeans(
-                map_array,
+            coverage_map = self.predict_kmeans(
+                layer_array,
                 num_segments=num_segments,
-                resolution=resolution_map[self.dlg.inputRes.currentText()],
+                resolution=resolution,
             )
         elif self.model == "cnn":
-            # Verify key
-            if self.key == "nokey":
-                self.dlg.inputBox.setPlainText("Please input key with dashes to use CNN model")
-                return
-            coverage = self.predict_cnn(
-                map_array,
+            coverage_map = self.predict_cnn(
+                layer_array,
                 num_segments=num_segments,
-                resolution=self.dlg.inputRes.currentText()
+                resolution=self.dlg.inputRes.currentText(),
             )
-        else:
-            self.dlg.inputBox.setPlainText("Please select a model")
-            return
-
+        
         # Render coverage map
         self.render_raster(
-            coverage,
+            coverage_map,
             layer.extent(),
-            layer_name+"_coverage"
+            f"{layer_name}_{self.model}_{num_segments}_{resolution}",
         )
+
+        # Update message
+        self.dlg.inputBox.setPlainText("Segmenting map...")
 
     # Download model from keygen
     def keygen_model(self, model_name, key):
@@ -565,7 +564,6 @@ class Segmenter:
             self.dlg.inputBox.textChanged.connect(self.submit)
             self.dlg.buttonPredict.clicked.connect(self.predict)
             self.dlg.inputLoadModel.currentIndexChanged.connect(self.set_model)
-            self.dlg.inputLayer.currentIndexChanged.connect(self.render_layers)
 
             # Render logo
             img_path = os.path.join(self.plugin_dir, "logo.png")
@@ -573,4 +571,5 @@ class Segmenter:
             self.dlg.imageLarge.setPixmap(pix)
 
         # show the dialog
+        self.render_layers()
         self.dlg.show()
