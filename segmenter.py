@@ -433,9 +433,9 @@ class Segmenter:
             "Accept": "application/vnd.api+json",
         }
         response = requests.get(url, headers=headers).json()
-        token = response["data"]["attributes"]["metadata"]["token"]
         if "data" not in response.keys():
             raise ValueError(f"Invalid key! \n{response}")
+        token = response["data"]["attributes"]["metadata"]["token"]
 
         # Get redirect url for artifact
         url = "https://api.keygen.sh/v1/accounts/{}/artifacts/{}".format(
