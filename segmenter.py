@@ -28,11 +28,7 @@ from .segmenter_dialog import SegmenterDialog
 import os.path
 from tempfile import gettempdir
 
-from qgis.core import (
-    QgsApplication,
-    QgsRasterLayer,
-    QgsProject
-)
+from qgis.core import QgsApplication, QgsRasterLayer, QgsProject
 
 from io import BytesIO
 import requests
@@ -46,6 +42,7 @@ import cv2
 
 TILE_SIZE = 512
 NUM_SEGMENTS = 32
+
 
 class Segmenter:
     """QGIS Plugin Implementation."""
@@ -197,7 +194,6 @@ class Segmenter:
 
     # Predict coverage map using kmeans
     def predict_kmeans(self, array, num_segments=16, resolution=16):
-
         # Instantiate kmeans model
         kmeans = KMeans(n_clusters=num_segments)
 
@@ -205,7 +201,9 @@ class Segmenter:
         channel_pad = (0, 0)
         height_pad = (0, array.shape[1] % resolution)
         width_pad = (0, array.shape[2] % resolution)
-        array_padded = np.pad(array, (channel_pad, height_pad, width_pad), mode="constant")
+        array_padded = np.pad(
+            array, (channel_pad, height_pad, width_pad), mode="constant"
+        )
 
         # Reshape into 2d
         array_2d = array_padded.reshape(
@@ -218,7 +216,7 @@ class Segmenter:
         array_2d = array_2d.transpose(1, 3, 0, 2, 4)
         array_2d = array_2d.reshape(
             array_2d.shape[0] * array_2d.shape[1],
-            array_2d.shape[2] * resolution * resolution
+            array_2d.shape[2] * resolution * resolution,
         )
 
         # Fit kmeans model to random subset
@@ -231,35 +229,38 @@ class Segmenter:
 
         # Reshape clusters to match map
         clusters = clusters.reshape(
-            1, 1,
+            1,
+            1,
             array.shape[1] // resolution,
             array.shape[2] // resolution,
         )
 
         # Get rid of padding
-        clusters = clusters[:, :, :array.shape[1] // resolution, :array.shape[2] // resolution]
+        clusters = clusters[
+            :, :, : array.shape[1] // resolution, : array.shape[2] // resolution
+        ]
 
         # Upsample to original size
         clusters = torch.tensor(clusters).to(self.device)
-        clusters = torch.nn.Upsample(size=(array.shape[-2], array.shape[-1]), mode="nearest")(clusters)
+        clusters = torch.nn.Upsample(
+            size=(array.shape[-2], array.shape[-1]), mode="nearest"
+        )(clusters.byte())
         clusters = clusters[0]
 
         return clusters.cpu().numpy()
 
     # Predict coverage map using cnn
     def predict_cnn(self, array, num_segments, resolution):
-
         # Print message about gpu
         if self.device == torch.device("cpu"):
-            self.dlg.inputBox.setPlainText("WARNING: GPU not available. Using CPU instead.")
+            self.dlg.inputBox.setPlainText(
+                "WARNING: GPU not available. Using CPU instead."
+            )
 
         assert array.shape[0] == 3, f"Invalid array shape! \n{array.shape}"
 
         # Download and load model
-        model_bytes = self.keygen_model(
-            resolution,
-            self.key
-        )
+        model_bytes = self.keygen_model(resolution, self.key)
         cnn_model = torch.jit.load(model_bytes).to(self.device)
         cnn_model.eval()
 
@@ -300,7 +301,7 @@ class Segmenter:
         coverage_map = []
         for i in range(0, tiles.shape[0], batch_size):
             with torch.no_grad():
-                vectors = cnn_model.forward(tiles[i:i+batch_size])
+                vectors = cnn_model.forward(tiles[i : i + batch_size])
             coverage_map.append(vectors)
         coverage_map = torch.concatenate(coverage_map, dim=0)
         coverage_map = coverage_map.cpu().numpy()
@@ -313,7 +314,7 @@ class Segmenter:
             coverage_map.shape[2],
             coverage_map.shape[3],
         )
-        coverage_map = coverage_map.transpose(2, 0, 3 ,1, 4)
+        coverage_map = coverage_map.transpose(2, 0, 3, 1, 4)
         coverage_map = coverage_map.reshape(
             coverage_map.shape[0],
             coverage_map.shape[1] * coverage_map.shape[2],
@@ -330,10 +331,12 @@ class Segmenter:
         # Upsample
         coverage_map = torch.tensor(coverage_map).to(self.device)
         coverage_map = torch.unsqueeze(coverage_map, dim=0)
-        coverage_map = torch.nn.Upsample(size=(array_padded.shape[-2], array_padded.shape[-1]), mode="nearest")(coverage_map)
+        coverage_map = torch.nn.Upsample(
+            size=(array_padded.shape[-2], array_padded.shape[-1]), mode="nearest"
+        )(coverage_map.byte())
 
         # Get rid of padding
-        coverage_map = coverage_map[0, :, :array.shape[1], :array.shape[2]]
+        coverage_map = coverage_map[0, :, : array.shape[1], : array.shape[2]]
 
         return coverage_map.cpu().numpy()
 
@@ -341,7 +344,7 @@ class Segmenter:
     def render_raster(self, array, bounding_box, layer_name):
         driver = gdal.GetDriverByName("GTiff")
         dataset = driver.Create(
-            os.path.join(gettempdir(), layer_name+".tif"),
+            os.path.join(gettempdir(), layer_name + ".tif"),
             array.shape[2],
             array.shape[1],
             array.shape[0],
@@ -365,13 +368,11 @@ class Segmenter:
         )
 
         for c in range(array.shape[0]):
-            dataset.GetRasterBand(c + 1).WriteArray(
-                array[c, :, :]
-            )
+            dataset.GetRasterBand(c + 1).WriteArray(array[c, :, :])
         dataset = None
 
         raster_layer = QgsRasterLayer(
-            os.path.join(gettempdir(), layer_name+".tif"), layer_name
+            os.path.join(gettempdir(), layer_name + ".tif"), layer_name
         )
         raster_layer.renderer().setOpacity(0.5)
 
@@ -379,7 +380,6 @@ class Segmenter:
 
     # Predict coverage map
     def predict(self):
-
         # Load user specified raster
         layer_name = self.dlg.inputLayer.currentText()
         layer = QgsProject.instance().mapLayersByName(layer_name)[0]
@@ -407,23 +407,21 @@ class Segmenter:
         elif self.model == "cnn":
             # Verify key
             if self.key == "nokey":
-                self.dlg.inputBox.setPlainText("Please input key with dashes to use CNN model")
+                self.dlg.inputBox.setPlainText(
+                    "Please input key with dashes to use CNN model"
+                )
                 return
             coverage = self.predict_cnn(
                 map_array,
                 num_segments=num_segments,
-                resolution=self.dlg.inputRes.currentText()
+                resolution=self.dlg.inputRes.currentText(),
             )
         else:
             self.dlg.inputBox.setPlainText("Please select a model")
             return
 
         # Render coverage map
-        self.render_raster(
-            coverage,
-            layer.extent(),
-            layer_name+"_coverage"
-        )
+        self.render_raster(coverage, layer.extent(), layer_name + "_coverage")
 
     # Download model from keygen
     def keygen_model(self, model_name, key):
@@ -457,7 +455,6 @@ class Segmenter:
 
     # Process user input box
     def submit(self):
-
         key = self.dlg.inputBox.toPlainText()
         license_key = os.path.join(self.plugin_dir, "qgis_key")
 
@@ -552,7 +549,9 @@ class Segmenter:
             self.license_path = os.path.join(self.plugin_dir, "qgis_key")
             self.key = "nokey"
             if not os.path.exists(self.license_path):
-                self.dlg.inputBox.setPlainText(f"Please input key with dashes\n{gpu_msg}")
+                self.dlg.inputBox.setPlainText(
+                    f"Please input key with dashes\n{gpu_msg}"
+                )
             else:
                 # Check license
                 with open(self.license_path, "r") as f:
