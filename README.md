@@ -19,8 +19,7 @@ lines:
 
 ```
 import pip
-pip.main(["install", "torch", "--index-url", "https://download.pytorch.org/whl/cu118"])
-pip.main(["install", "scikit-learn", "opencv-python"])
+pip.main(["install", "scikit-learn", "opencv-python", "torch"])
 ```
 
 If the above install does not work, or if you have other questions, please contact help@quantcivil.ai.
