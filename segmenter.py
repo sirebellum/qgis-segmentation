@@ -35,10 +35,26 @@ import requests
 from osgeo import gdal
 
 from .keygen import activate_license
+
+# Install necessary packages
+import pkg_resources, pip
+def is_package_installed(package_name):
+    try:
+        pkg_resources.get_distribution(package_name)
+        return True
+    except pkg_resources.DistributionNotFound:
+        return False
+
+if not is_package_installed("torch"):
+    pip.main(["install", "torch"])
+if not is_package_installed("scikit-learn"):
+    pip.main(["install", "scikit-learn"])
+if not is_package_installed("numpy"):
+    pip.main(["install", "numpy"])
+
 import torch
 from sklearn.cluster import KMeans
 import numpy as np
-import cv2
 
 TILE_SIZE = 512
 NUM_SEGMENTS = 32
