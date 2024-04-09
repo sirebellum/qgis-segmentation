@@ -35,10 +35,26 @@ import requests
 from osgeo import gdal
 
 from .keygen import activate_license
+
+# Install necessary packages
+import pkg_resources, pip
+def is_package_installed(package_name):
+    try:
+        pkg_resources.get_distribution(package_name)
+        return True
+    except pkg_resources.DistributionNotFound:
+        return False
+
+if not is_package_installed("torch"):
+    pip.main(["install", "torch"])
+if not is_package_installed("scikit-learn"):
+    pip.main(["install", "scikit-learn"])
+if not is_package_installed("numpy"):
+    pip.main(["install", "numpy"])
+
 import torch
 from sklearn.cluster import KMeans
 import numpy as np
-import cv2
 
 TILE_SIZE = 512
 NUM_SEGMENTS = 32
@@ -528,10 +544,12 @@ class Segmenter:
             self.dlg = SegmenterDialog()
             self.canvas = self.iface.mapCanvas()
 
-            # use gpu if available
-            if torch.cuda.is_available():
+            # Set device
+            if torch.cuda.is_available(): # Cuda
                 self.device = torch.device("cuda")
-            else:
+            elif hasattr(torch, "mps"): # Apple mps
+                self.device = torch.device("mps")
+            else: # CPU
                 self.device = torch.device("cpu")
 
             # Populate drop down menus
@@ -565,6 +583,7 @@ class Segmenter:
             self.dlg.inputBox.textChanged.connect(self.submit)
             self.dlg.buttonPredict.clicked.connect(self.predict)
             self.dlg.inputLoadModel.currentIndexChanged.connect(self.set_model)
+            self.dlg.inputLoadModel.highlighted.connect(self.render_layers)
 
             # Render logo
             img_path = os.path.join(self.plugin_dir, "logo.png")
