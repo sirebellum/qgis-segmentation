@@ -544,10 +544,12 @@ class Segmenter:
             self.dlg = SegmenterDialog()
             self.canvas = self.iface.mapCanvas()
 
-            # use gpu if available
-            if torch.cuda.is_available():
+            # Set device
+            if torch.cuda.is_available(): # Cuda
                 self.device = torch.device("cuda")
-            else:
+            elif hasattr(torch, "mps"): # Apple mps
+                self.device = torch.device("mps")
+            else: # CPU
                 self.device = torch.device("cpu")
 
             # Populate drop down menus
@@ -581,6 +583,7 @@ class Segmenter:
             self.dlg.inputBox.textChanged.connect(self.submit)
             self.dlg.buttonPredict.clicked.connect(self.predict)
             self.dlg.inputLoadModel.currentIndexChanged.connect(self.set_model)
+            self.dlg.inputLoadModel.highlighted.connect(self.render_layers)
 
             # Render logo
             img_path = os.path.join(self.plugin_dir, "logo.png")
