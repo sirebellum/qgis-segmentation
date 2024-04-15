@@ -33,11 +33,16 @@ Below are the steps for a basic segmentation:
 5. Segment! A raster layer will be produced overlaying the input with the different segments.
 
 ## Example Images
-Below are some examples from the tool. First, a sample map:
-<img width="800" alt="image" src="https://github.com/sirebellum/qgis-segmentation/assets/25124443/88f95544-6c91-4402-83d7-eb7631b38b9b">
+Below are some examples from the tool. First, a sample map, rendered at 0.5 map units per pixel:
+<img width="800" alt="image" src="https://github.com/sirebellum/qgis-segmentation/assets/25124443/75890823-7899-4dca-bbe9-7372e12e64c0">
 
-Then, the K-Means segmentation map:
-<img width="800" alt="image" src="https://github.com/sirebellum/qgis-segmentation/assets/25124443/e96ff4fc-bd07-4047-b15a-952161599c75">
+Then, the K-Means segmentation map at high resolution with 8 segments:
+<img width="800" alt="image" src="https://github.com/sirebellum/qgis-segmentation/assets/25124443/a1b3c7ef-86a7-4c5b-b2ac-5b13ae408f91">
 
-Finally, a CNN segmentation map:
+Finally, a CNN segmentation map at high resolution with 8 segments:
+<img width="800" alt="image" src="https://github.com/sirebellum/qgis-segmentation/assets/25124443/e969507d-5571-4e41-8cb2-6ee2db4f28cd">
 
+As you can see, CNN provides cleaner results while K-Means is quick and easy.
+
+## [Buy me a coffee](https://www.buymeacoffee.com/sirebellum)
+Thanks for viewing my plugin! This is a hobby I do on the side, so any [donations](https://www.buymeacoffee.com/sirebellum) are much appreciated.
