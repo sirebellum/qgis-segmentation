@@ -34,8 +34,6 @@ from io import BytesIO
 import requests
 from osgeo import gdal
 
-from .keygen import activate_license
-
 # Install necessary packages
 import pkg_resources, pip
 def is_package_installed(package_name):
@@ -97,8 +95,6 @@ class Segmenter:
         QSettings().setValue("/qgis/parallel_rendering", True)
         threadcount = QThread.idealThreadCount()
         QgsApplication.setMaxThreads(threadcount)
-
-        self.keygen_account_id = "ae9bc51d-ae1c-482e-9223-c4243cd7e434"
 
     # noinspection PyMethodMayBeStatic
     def tr(self, message):
@@ -276,7 +272,7 @@ class Segmenter:
         assert array.shape[0] == 3, f"Invalid array shape! \n{array.shape}"
 
         # Download and load model
-        model_bytes = self.keygen_model(resolution, self.key)
+        model_bytes = self.load_model(resolution)
         cnn_model = torch.jit.load(model_bytes).to(self.device)
         cnn_model.eval()
 
@@ -390,7 +386,7 @@ class Segmenter:
         raster_layer = QgsRasterLayer(
             os.path.join(gettempdir(), layer_name + ".tif"), layer_name
         )
-        raster_layer.renderer().setOpacity(0.5)
+        raster_layer.renderer().setOpacity(1.0)
 
         QgsProject.instance().addMapLayer(raster_layer, True)
 
@@ -440,70 +436,17 @@ class Segmenter:
         # Update message
         self.dlg.inputBox.setPlainText("Segmenting map...")
 
-    # Download model from keygen
-    def keygen_model(self, model_name, key):
-        # Get license activation token
-        url = "https://api.keygen.sh/v1/accounts/{}/me".format(self.keygen_account_id)
-        headers = {
-            "Authorization": "License {}".format(key),
-            "Accept": "application/vnd.api+json",
-        }
-        response = requests.get(url, headers=headers).json()
-        if "data" not in response.keys():
-            raise ValueError(f"Invalid key! \n{response}")
-        token = response["data"]["attributes"]["metadata"]["token"]
-
-        # Get redirect url for artifact
-        url = "https://api.keygen.sh/v1/accounts/{}/artifacts/{}".format(
-            self.keygen_account_id, model_name
-        )
-        headers = {
-            "Authorization": "Bearer {}".format(token),
-            "Accept": "application/vnd.api+json",
-        }
-        response = requests.get(url, headers=headers, allow_redirects=False).json()
-        if "data" not in response.keys():
-            raise ValueError(f"Invalid response from model server! \n{response}")
-        redirect = response["data"]["links"]["redirect"]
-
-        file_data = requests.get(redirect).content
-
-        return BytesIO(file_data)
+    # Load model from disk
+    def load_model(self, model_name):
+        # Load model into bytes object
+        model_path = os.path.join(self.plugin_dir, f"models/model_{model_name}.pt")
+        with open(model_path, "rb") as f:
+            model_bytes = BytesIO(f.read())
+        return model_bytes
 
     # Process user input box
     def submit(self):
-        key = self.dlg.inputBox.toPlainText()
-        license_key = os.path.join(self.plugin_dir, "qgis_key")
-
-        # Process special input
-        if key == "delete_key":
-            os.remove(license_key)
-            self.dlg.inputBox.setPlainText("Key deleted!")
-            return
-
-        # Make sure entered key looks like a key
-        if len(key.split("-")) != 4:
-            return
-        if len(key.split("-")[-1]) < 4:
-            return
-
-        # Check existing key
-        if os.path.exists(license_key):
-            with open(license_key, "r") as f:
-                file_key = f.readline()
-            if file_key != key:
-                os.remove(license_key)
-
-        # activate license
-        activated, msg = activate_license(key, self.keygen_account_id)
-        if activated:
-            with open(license_key, "x") as f:
-                f.write(key)
-            self.dlg.inputBox.setPlainText(f"Valid: {msg}")
-            self.key = key
-        else:
-            self.dlg.inputBox.setPlainText(f"Invalid: {msg}")
-            self.key = "nokey"
+        return
 
     #  Display models in dropdown
     def render_models(self):
@@ -562,22 +505,8 @@ class Segmenter:
             if self.device == torch.device("cpu"):
                 gpu_msg = "GPU not available. Using CPU instead."
 
-            # Set up license
-            self.license_path = os.path.join(self.plugin_dir, "qgis_key")
-            self.key = "nokey"
-            if not os.path.exists(self.license_path):
-                self.dlg.inputBox.setPlainText(
-                    f"Please input key with dashes\n{gpu_msg}"
-                )
-            else:
-                # Check license
-                with open(self.license_path, "r") as f:
-                    self.key = f.readline()
-                act, msg = activate_license(self.key, self.keygen_account_id)
-                if not act:
-                    os.remove(self.license_path)
-                    self.key = "nokey"
-                self.dlg.inputBox.setPlainText(f"{msg}\n{gpu_msg}")
+            # Display message
+            self.dlg.inputBox.setPlainText(gpu_msg)
 
             # Attach inputs
             self.dlg.inputBox.textChanged.connect(self.submit)
