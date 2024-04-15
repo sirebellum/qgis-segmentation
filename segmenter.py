@@ -253,7 +253,7 @@ class Segmenter:
         ]
 
         # Upsample to original size
-        clusters = torch.tensor(clusters).to(self.device)
+        clusters = torch.tensor(clusters)
         clusters = torch.nn.Upsample(
             size=(array.shape[-2], array.shape[-1]), mode="nearest"
         )(clusters.byte())
@@ -341,7 +341,7 @@ class Segmenter:
         )
 
         # Upsample
-        coverage_map = torch.tensor(coverage_map).to(self.device)
+        coverage_map = torch.tensor(coverage_map)
         coverage_map = torch.unsqueeze(coverage_map, dim=0)
         coverage_map = torch.nn.Upsample(
             size=(array_padded.shape[-2], array_padded.shape[-1]), mode="nearest"
