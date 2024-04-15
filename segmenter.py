@@ -306,7 +306,14 @@ class Segmenter:
         tiles = tiles.astype("float32") / 255
 
         # Convert to torch
-        tiles = torch.from_numpy(tiles).to(self.device)
+        try:
+            tiles = torch.from_numpy(tiles).to(self.device)
+        except RuntimeError as e:
+            self.dlg.inputBox.setPlainText(
+                "ERROR: GPU out of memory. Using CPU instead."
+            )
+            tiles = torch.from_numpy(tiles).to(torch.device("cpu"))
+            cnn_model = cnn_model.to(torch.device("cpu"))
 
         # Predict vectors
         batch_size = 1
