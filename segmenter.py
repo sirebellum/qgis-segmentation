@@ -413,6 +413,7 @@ class Segmenter:
         resolution = resolution_map[self.dlg.inputRes.currentText()]
 
         # Perform prediction based on model selected
+        self.dlg.inputBox.setPlainText("Segmenting map...")
         if self.model == "kmeans":
             coverage_map = self.predict_kmeans(
                 layer_array,
@@ -423,7 +424,7 @@ class Segmenter:
             coverage_map = self.predict_cnn(
                 layer_array,
                 num_segments=num_segments,
-                resolution=self.dlg.inputRes.currentText(),
+                resolution=resolution,
             )
 
         # Render coverage map
@@ -434,12 +435,12 @@ class Segmenter:
         )
 
         # Update message
-        self.dlg.inputBox.setPlainText("Segmenting map...")
+        self.dlg.inputBox.setPlainText("Map segmented!")
 
     # Load model from disk
     def load_model(self, model_name):
         # Load model into bytes object
-        model_path = os.path.join(self.plugin_dir, f"models/model_{model_name}.pt")
+        model_path = os.path.join(self.plugin_dir, f"models/model_{model_name}.pth")
         with open(model_path, "rb") as f:
             model_bytes = BytesIO(f.read())
         return model_bytes
