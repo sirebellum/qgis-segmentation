@@ -24,6 +24,8 @@ pip.main(["install", "scikit-learn", "opencv-python", "torch"])
 
 If the above install does not work, or if you have other questions, please contact help@quantcivil.ai.
 
+Additionally, you may have to install the CUDA library from NVIDIA for GPU functionality. It can be downloaded [here](https://developer.download.nvidia.com/compute/cuda/12.4.1/local_installers/cuda_12.4.1_551.78_windows.exe).
+
 ## Instructions
 Below are the steps for a basic segmentation:
 1. Choose a raster. Make sure the raster is in RGB format with 3 channels. The tool will process everything within the raster, so if you find your device running out of RAM, try using a smaller section of the raster or reducing the resolution. If you are using a web generated map (Google satelite), please convert the map to a raster first with the "Convert map to raster" tool available in QGIS.
