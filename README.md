@@ -10,12 +10,11 @@ Not anymore! Introducing the machine learning powered qgis plugin that will chan
 
 ## Dependencies
 
-The tool should automatically try to install the required dependencies. To manually install the dependencies required by the tool, open your python console in QGIS and enter the following
-lines:
+The tool should automatically try to install the required dependencies. To manually install the dependencies required by the tool, open your python console in QGIS and enter the following lines:
 
 ```
 import pip
-pip.main(["install", "scikit-learn", "opencv-python", "torch"])
+pip.main(["install", "scikit-learn", "torch"])
 ```
 
 If the above install does not work, or if you have other questions, please contact help@quantcivil.ai.
