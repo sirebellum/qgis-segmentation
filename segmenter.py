@@ -44,7 +44,7 @@ def is_package_installed(package_name):
         return False
 
 if not is_package_installed("torch"):
-    pip.main(["install", "torch"])
+    pip.main(["install", "torch", "--index-url", "https://download.pytorch.org/whl/cu121"])
 if not is_package_installed("scikit-learn"):
     pip.main(["install", "scikit-learn"])
 if not is_package_installed("numpy"):
@@ -55,7 +55,6 @@ from sklearn.cluster import KMeans
 import numpy as np
 
 TILE_SIZE = 512
-NUM_SEGMENTS = 32
 
 
 class Segmenter:
@@ -306,14 +305,19 @@ class Segmenter:
         tiles = tiles.astype("float32") / 255
 
         # Convert to torch
-        tiles = torch.from_numpy(tiles).to(self.device)
+        try:
+            tiles = torch.from_numpy(tiles).to(self.device)
+        except Exception as e:
+            self.dlg.inputBox.setPlainText(f"Error converting to torch! (Probably out of memory)\n{e}")
+            return
 
         # Predict vectors
         batch_size = 1
         coverage_map = []
         for i in range(0, tiles.shape[0], batch_size):
             with torch.no_grad():
-                vectors = cnn_model.forward(tiles[i : i + batch_size])
+                result = cnn_model.forward(tiles[i : i + batch_size])
+            vectors = result[1]
             coverage_map.append(vectors)
         coverage_map = torch.concatenate(coverage_map, dim=0)
         coverage_map = coverage_map.cpu().numpy()
@@ -403,7 +407,6 @@ class Segmenter:
         num_segments = int(self.dlg.inputSegments.text())
 
         resolution_map = {
-            "very high": 2,
             "high": 4,
             "medium": 8,
             "low": 16,
@@ -465,7 +468,7 @@ class Segmenter:
 
     # Display resolutions in dropdown
     def render_resolutions(self):
-        res_list = ["very high", "high", "medium", "low"]
+        res_list = ["high", "medium", "low"]
         self.dlg.inputRes.clear()
         for res in res_list:
             self.dlg.inputRes.addItem(str(res))
@@ -491,8 +494,6 @@ class Segmenter:
             # Set device
             if torch.cuda.is_available(): # Cuda
                 self.device = torch.device("cuda")
-            elif hasattr(torch, "mps"): # Apple mps
-                self.device = torch.device("mps")
             else: # CPU
                 self.device = torch.device("cpu")
 
