@@ -14,7 +14,8 @@ The tool should automatically try to install the required dependencies. To manua
 
 ```
 import pip
-pip.main(["install", "scikit-learn", "torch"])
+pip.main(["install", "scikit-learn"])
+pip.main(["install", "torch", "--index-url", "https://download.pytorch.org/whl/cu121"])
 ```
 
 If the above install does not work, or if you have other questions, please contact help@quantcivil.ai.
