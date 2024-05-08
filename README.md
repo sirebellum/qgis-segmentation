@@ -8,10 +8,6 @@ Welcome!
 Ever needed to intelligently divide your map into different sections? Have you been drawing polygons for days?
 Not anymore! Introducing the machine learning powered qgis plugin that will change your workflow.
 
-## License
-
-Because machine learning takes time and compute power, this tool provides pre-trained models to accelerate your workflow.
-
 ## Dependencies
 
 The tool should automatically try to install the required dependencies. To manually install the dependencies required by the tool, open your python console in QGIS and enter the following
