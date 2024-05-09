@@ -275,57 +275,27 @@ class Segmenter:
         cnn_model = torch.jit.load(model_bytes).to(self.device)
         cnn_model.eval()
 
-        # Pad to tile_size
-        channel_pad = (0, 0)
-        height_pad = (0, TILE_SIZE - array.shape[1] % TILE_SIZE)
-        width_pad = (0, TILE_SIZE - array.shape[2] % TILE_SIZE)
-        array_padded = np.pad(
-            array,
-            (channel_pad, height_pad, width_pad),
-            mode="constant",
-        )
-
-        # Reshape into tiles
-        tiles = array_padded.reshape(
-            3,
-            array_padded.shape[1] // TILE_SIZE,
-            TILE_SIZE,
-            array_padded.shape[2] // TILE_SIZE,
-            TILE_SIZE,
-        )
-        tiles = tiles.transpose(1, 3, 0, 2, 4)
-        tiles = tiles.reshape(
-            tiles.shape[0] * tiles.shape[1],
-            3,
-            TILE_SIZE,
-            TILE_SIZE,
-        )
+        # Tile raster
+        tiles, (height_pad, width_pad) = self.tile_raster(array, TILE_SIZE)
 
         # Convert to float range [0, 1]
         tiles = tiles.astype("float32") / 255
-
-        # Convert to torch
-        try:
-            tiles = torch.from_numpy(tiles).to(self.device)
-        except Exception as e:
-            self.dlg.inputBox.setPlainText(f"Error converting to torch! (Probably out of memory)\n{e}")
-            return
 
         # Predict vectors
         batch_size = 1
         coverage_map = []
         for i in range(0, tiles.shape[0], batch_size):
             with torch.no_grad():
-                result = cnn_model.forward(tiles[i : i + batch_size])
-            vectors = result[1]
+                tile = torch.tensor(tiles[i : i + batch_size]).to(self.device)
+                result = cnn_model.forward(tile)
+            vectors = result[1].cpu().numpy()
             coverage_map.append(vectors)
-        coverage_map = torch.concatenate(coverage_map, dim=0)
-        coverage_map = coverage_map.cpu().numpy()
+        coverage_map = np.concatenate(coverage_map, axis=0)
 
         # Convert from tiles to one big map
         coverage_map = coverage_map.reshape(
-            array_padded.shape[1] // TILE_SIZE,
-            array_padded.shape[2] // TILE_SIZE,
+            (array.shape[1] + height_pad) // TILE_SIZE,
+            (array.shape[2] + width_pad) // TILE_SIZE,
             coverage_map.shape[1],
             coverage_map.shape[2],
             coverage_map.shape[3],
@@ -348,13 +318,43 @@ class Segmenter:
         coverage_map = torch.tensor(coverage_map)
         coverage_map = torch.unsqueeze(coverage_map, dim=0)
         coverage_map = torch.nn.Upsample(
-            size=(array_padded.shape[-2], array_padded.shape[-1]), mode="nearest"
+            size=(array.shape[1]+height_pad, array.shape[2]+width_pad), mode="nearest"
         )(coverage_map)
 
         # Get rid of padding
         coverage_map = coverage_map[0, :, : array.shape[1], : array.shape[2]]
 
         return coverage_map.cpu().numpy()
+
+    # Tile raster for CNN or K-means
+    def tile_raster(self, array, tile_size):
+        # Pad to tile_size
+        channel_pad = (0, 0)
+        height_pad = (0, tile_size - array.shape[1] % tile_size)
+        width_pad = (0, tile_size - array.shape[2] % tile_size)
+        array_padded = np.pad(
+            array,
+            (channel_pad, height_pad, width_pad),
+            mode="constant",
+        )
+
+        # Reshape into tiles
+        tiles = array_padded.reshape(
+            array_padded.shape[0],
+            array_padded.shape[1] // tile_size,
+            tile_size,
+            array_padded.shape[2] // tile_size,
+            tile_size,
+        )
+        tiles = tiles.transpose(1, 3, 0, 2, 4)
+        tiles = tiles.reshape(
+            tiles.shape[0] * tiles.shape[1],
+            array_padded.shape[0],
+            tile_size,
+            tile_size,
+        )
+
+        return tiles, (height_pad[1], width_pad[1])
 
     # Render raster from array
     def render_raster(self, array, bounding_box, layer_name):
