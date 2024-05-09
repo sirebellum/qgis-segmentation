@@ -19,6 +19,13 @@ from qgis.PyQt.QtCore import (
 )
 from qgis.PyQt.QtGui import QIcon, QPixmap
 from qgis.PyQt.QtWidgets import QAction
+from qgis.core import (
+    QgsTask,
+    QgsApplication,
+    QgsMessageLog,
+    QgsProject,
+    Qgis,
+)
 
 # Initialize Qt resources from file resources.py
 from .resources import *
@@ -26,9 +33,6 @@ from .resources import *
 # Import the code for the dialog
 from .segmenter_dialog import SegmenterDialog
 import os.path
-from tempfile import gettempdir
-
-from qgis.core import QgsApplication, QgsRasterLayer, QgsProject
 
 from io import BytesIO
 import requests
@@ -54,7 +58,47 @@ import torch
 from sklearn.cluster import KMeans
 import numpy as np
 
+from .funcs import predict_kmeans, predict_cnn, render_raster
+
 TILE_SIZE = 512
+
+
+# Multithreading stuff
+class Task(QgsTask):
+    def __init__(self, function, *args, **kwargs):
+        super().__init__()
+        self.function = function
+        self.args = args
+        self.kwargs = kwargs
+        self.result = None
+        QgsMessageLog.logMessage("Task initialized", "Segmenter", level=Qgis.Info)
+
+    def run(self):
+        QgsMessageLog.logMessage("Running task", "Segmenter", level=Qgis.Info)
+        try:
+            self.result = self.function(*self.args)
+            return True
+        except Exception as e:
+            QgsMessageLog.logMessage(
+                f"Exception in task: {e}", "Segmenter", level=Qgis.Critical
+            )
+            return False
+
+    def finished(self, result):
+        QgsMessageLog.logMessage("Task finished", "Segmenter", level=Qgis.Info)
+        if result:
+            # render raster
+            render_raster(
+                self.result,
+                self.kwargs["layer"].extent(),
+                f"{self.kwargs['layer'].name()}_{self.kwargs['model']}_{self.kwargs['num_segments']}_{self.kwargs['resolution']}",
+                self.kwargs["canvas"].layer(0).crs().postgisSrid(),
+            )
+            
+def run_task(function, *args, **kwargs):
+    task = Task(function, *args, **kwargs)
+    QgsApplication.taskManager().addTask(task)
+    return task
 
 
 class Segmenter:
@@ -94,6 +138,8 @@ class Segmenter:
         QSettings().setValue("/qgis/parallel_rendering", True)
         threadcount = QThread.idealThreadCount()
         QgsApplication.setMaxThreads(threadcount)
+
+        self.task = None
 
     # noinspection PyMethodMayBeStatic
     def tr(self, message):
@@ -203,199 +249,9 @@ class Segmenter:
             self.iface.removePluginMenu(self.tr("&Map Segmenter"), action)
             self.iface.removeToolBarIcon(action)
 
-    # Predict coverage map using kmeans
-    def predict_kmeans(self, array, num_segments=16, resolution=16):
-        # Instantiate kmeans model
-        kmeans = KMeans(n_clusters=num_segments)
-
-        # Pad to resolution
-        channel_pad = (0, 0)
-        height_pad = (0, array.shape[1] % resolution)
-        width_pad = (0, array.shape[2] % resolution)
-        array_padded = np.pad(
-            array, (channel_pad, height_pad, width_pad), mode="constant"
-        )
-
-        # Reshape into 2d
-        array_2d = array_padded.reshape(
-            array_padded.shape[0],
-            array_padded.shape[1] // resolution,
-            resolution,
-            array_padded.shape[2] // resolution,
-            resolution,
-        )
-        array_2d = array_2d.transpose(1, 3, 0, 2, 4)
-        array_2d = array_2d.reshape(
-            array_2d.shape[0] * array_2d.shape[1],
-            array_2d.shape[2] * resolution * resolution,
-        )
-
-        # Fit kmeans model to random subset
-        size = 10000 if array_2d.shape[0] > 10000 else array_2d.shape[0]
-        idx = np.random.randint(0, array_2d.shape[0], size=size)
-        kmeans = kmeans.fit(array_2d[idx])
-
-        # Get clusters
-        clusters = kmeans.predict(array_2d)
-
-        # Reshape clusters to match map
-        clusters = clusters.reshape(
-            1,
-            1,
-            array.shape[1] // resolution,
-            array.shape[2] // resolution,
-        )
-
-        # Get rid of padding
-        clusters = clusters[
-            :, :, : array.shape[1] // resolution, : array.shape[2] // resolution
-        ]
-
-        # Upsample to original size
-        clusters = torch.tensor(clusters)
-        clusters = torch.nn.Upsample(
-            size=(array.shape[-2], array.shape[-1]), mode="nearest"
-        )(clusters.byte())
-        clusters = clusters[0]
-
-        return clusters.cpu().numpy()
-
-    # Predict coverage map using cnn
-    def predict_cnn(self, array, num_segments, resolution):
-        # Print message about gpu
-        if self.device == torch.device("cpu"):
-            self.dlg.inputBox.setPlainText(
-                "WARNING: GPU not available. Using CPU instead."
-            )
-
-        assert array.shape[0] == 3, f"Invalid array shape! \n{array.shape}"
-
-        # Download and load model
-        model_bytes = self.load_model(resolution)
-        cnn_model = torch.jit.load(model_bytes).to(self.device)
-        cnn_model.eval()
-
-        # Tile raster
-        tiles, (height_pad, width_pad) = self.tile_raster(array, TILE_SIZE)
-
-        # Convert to float range [0, 1]
-        tiles = tiles.astype("float32") / 255
-
-        # Predict vectors
-        batch_size = 1
-        coverage_map = []
-        for i in range(0, tiles.shape[0], batch_size):
-            with torch.no_grad():
-                tile = torch.tensor(tiles[i : i + batch_size]).to(self.device)
-                result = cnn_model.forward(tile)
-            vectors = result[1].cpu().numpy()
-            coverage_map.append(vectors)
-        coverage_map = np.concatenate(coverage_map, axis=0)
-
-        # Convert from tiles to one big map
-        coverage_map = coverage_map.reshape(
-            (array.shape[1] + height_pad) // TILE_SIZE,
-            (array.shape[2] + width_pad) // TILE_SIZE,
-            coverage_map.shape[1],
-            coverage_map.shape[2],
-            coverage_map.shape[3],
-        )
-        coverage_map = coverage_map.transpose(2, 0, 3, 1, 4)
-        coverage_map = coverage_map.reshape(
-            coverage_map.shape[0],
-            coverage_map.shape[1] * coverage_map.shape[2],
-            coverage_map.shape[3] * coverage_map.shape[4],
-        )
-
-        # Perform kmeans to get num_segments clusters
-        coverage_map = self.predict_kmeans(
-            coverage_map,
-            num_segments=num_segments,
-            resolution=1,
-        )
-
-        # Upsample
-        coverage_map = torch.tensor(coverage_map)
-        coverage_map = torch.unsqueeze(coverage_map, dim=0)
-        coverage_map = torch.nn.Upsample(
-            size=(array.shape[1]+height_pad, array.shape[2]+width_pad), mode="nearest"
-        )(coverage_map)
-
-        # Get rid of padding
-        coverage_map = coverage_map[0, :, : array.shape[1], : array.shape[2]]
-
-        return coverage_map.cpu().numpy()
-
-    # Tile raster for CNN or K-means
-    def tile_raster(self, array, tile_size):
-        # Pad to tile_size
-        channel_pad = (0, 0)
-        height_pad = (0, tile_size - array.shape[1] % tile_size)
-        width_pad = (0, tile_size - array.shape[2] % tile_size)
-        array_padded = np.pad(
-            array,
-            (channel_pad, height_pad, width_pad),
-            mode="constant",
-        )
-
-        # Reshape into tiles
-        tiles = array_padded.reshape(
-            array_padded.shape[0],
-            array_padded.shape[1] // tile_size,
-            tile_size,
-            array_padded.shape[2] // tile_size,
-            tile_size,
-        )
-        tiles = tiles.transpose(1, 3, 0, 2, 4)
-        tiles = tiles.reshape(
-            tiles.shape[0] * tiles.shape[1],
-            array_padded.shape[0],
-            tile_size,
-            tile_size,
-        )
-
-        return tiles, (height_pad[1], width_pad[1])
-
-    # Render raster from array
-    def render_raster(self, array, bounding_box, layer_name):
-        driver = gdal.GetDriverByName("GTiff")
-        dataset = driver.Create(
-            os.path.join(gettempdir(), layer_name + ".tif"),
-            array.shape[2],
-            array.shape[1],
-            array.shape[0],
-            gdal.GDT_Byte,
-        )
-
-        out_srs = gdal.osr.SpatialReference()
-        out_srs.ImportFromEPSG(self.canvas.layer(0).crs().postgisSrid())
-
-        dataset.SetProjection(out_srs.ExportToWkt())
-
-        dataset.SetGeoTransform(
-            (
-                bounding_box.xMinimum(),  # 0
-                bounding_box.width() / array.shape[2],  # 1
-                0,  # 2
-                bounding_box.yMaximum(),  # 3
-                0,  # 4
-                -bounding_box.height() / array.shape[1],
-            )
-        )
-
-        for c in range(array.shape[0]):
-            dataset.GetRasterBand(c + 1).WriteArray(array[c, :, :])
-        dataset = None
-
-        raster_layer = QgsRasterLayer(
-            os.path.join(gettempdir(), layer_name + ".tif"), layer_name
-        )
-        raster_layer.renderer().setOpacity(1.0)
-
-        QgsProject.instance().addMapLayer(raster_layer, True)
-
     # Predict coverage map
     def predict(self):
+
         # Load user specified raster
         layer_name = self.dlg.inputLayer.currentText()
         layer = QgsProject.instance().mapLayersByName(layer_name)[0]
@@ -415,30 +271,30 @@ class Segmenter:
         # Get user specified resolution
         resolution = resolution_map[self.dlg.inputRes.currentText()]
 
-        # Perform prediction based on model selected
-        self.dlg.inputBox.setPlainText("Segmenting map...")
+        # Set up kwargs
+        kwargs = {
+            "layer": layer,
+            "canvas": self.canvas,
+            "dlg": self.dlg,
+            "model": self.model,
+            "num_segments": num_segments,
+            "resolution": resolution,
+        }
+
+        # set up args
         if self.model == "kmeans":
-            coverage_map = self.predict_kmeans(
-                layer_array,
-                num_segments=num_segments,
-                resolution=resolution,
-            )
+            func = predict_kmeans
+            args = (layer_array, num_segments, resolution)
         elif self.model == "cnn":
-            coverage_map = self.predict_cnn(
-                layer_array,
-                num_segments=num_segments,
-                resolution=resolution,
-            )
+            func = predict_cnn
+            args = (self.load_model(resolution), layer_array, num_segments, TILE_SIZE, self.device)
 
-        # Render coverage map
-        self.render_raster(
-            coverage_map,
-            layer.extent(),
-            f"{layer_name}_{self.model}_{num_segments}_{resolution}",
-        )
+        # Run task
+        self.task = run_task(func, *args, **kwargs)
 
-        # Update message
-        self.dlg.inputBox.setPlainText("Map segmented!")
+        # Display error if task stops running after a little bit
+        if self.task.waitForFinished(1):
+            self.dlg.inputBox.setPlainText("An error occurred. Please try again.")
 
     # Load model from disk
     def load_model(self, model_name):
@@ -446,7 +302,12 @@ class Segmenter:
         model_path = os.path.join(self.plugin_dir, f"models/model_{model_name}.pth")
         with open(model_path, "rb") as f:
             model_bytes = BytesIO(f.read())
-        return model_bytes
+
+        # Load torchscript model
+        model = torch.jit.load(model_bytes)
+        model.eval().to(self.device)
+
+        return model
 
     # Process user input box
     def submit(self):
