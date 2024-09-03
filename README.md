@@ -39,6 +39,3 @@ Finally, a CNN segmentation map at high resolution with 8 segments:
 <img width="800" alt="image" src="https://github.com/sirebellum/qgis-segmentation/assets/25124443/e969507d-5571-4e41-8cb2-6ee2db4f28cd">
 
 As you can see, CNN provides cleaner results while K-Means is quick and easy.
-
-## [Buy me a coffee](https://www.buymeacoffee.com/sirebellum)
-Thanks for viewing my plugin! This is a hobby I do on the side, so any [donations](https://www.buymeacoffee.com/sirebellum) are much appreciated.
