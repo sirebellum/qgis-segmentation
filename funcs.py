@@ -5,24 +5,20 @@ import numpy as np
 from osgeo import gdal
 import os
 from tempfile import gettempdir
-from qgis.core import QgsRasterLayer, QgsProject, QgsMessageLog, Qgis
+from qgis.core import QgsRasterLayer, QgsProject
 
 # Predict coverage map using kmeans
 def predict_kmeans(array, num_segments=16, resolution=16):
-    QgsMessageLog.logMessage("Starting kmeans", "Segmenter", Qgis.info)
-    QgsMessageLog.logMessage(f"Array shape: {array.shape}", "Segmenter", Qgis.info)
-
     # Instantiate kmeans model
     kmeans = KMeans(n_clusters=num_segments)
 
     # Pad to resolution
     channel_pad = (0, 0)
-    height_pad = (0, array.shape[1] % resolution)
-    width_pad = (0, array.shape[2] % resolution)
+    height_pad = (0, resolution - array.shape[1] % resolution)
+    width_pad = (0, resolution - array.shape[2] % resolution)
     array_padded = np.pad(
         array, (channel_pad, height_pad, width_pad), mode="constant"
     )
-    QgsMessageLog.logMessage(f"Padded array shape: {array_padded.shape}", "Segmenter", Qgis.info)
 
     # Reshape into 2d
     array_2d = array_padded.reshape(
@@ -37,7 +33,6 @@ def predict_kmeans(array, num_segments=16, resolution=16):
         array_2d.shape[0] * array_2d.shape[1],
         array_2d.shape[2] * resolution * resolution,
     )
-    QgsMessageLog.logMessage(f"2D array shape: {array_2d.shape}", "Segmenter", Qgis.info)
 
     # Fit kmeans model to random subset
     size = 10000 if array_2d.shape[0] > 10000 else array_2d.shape[0]
@@ -46,7 +41,6 @@ def predict_kmeans(array, num_segments=16, resolution=16):
 
     # Get clusters
     clusters = kmeans.predict(array_2d)
-    QgsMessageLog.logMessage(f"Clusters shape: {clusters.shape}", "Segmenter", Qgis.info)
 
     # Reshape clusters to match map
     clusters = clusters.reshape(
@@ -60,7 +54,6 @@ def predict_kmeans(array, num_segments=16, resolution=16):
     clusters = clusters[
         :, :, : array.shape[1] // resolution, : array.shape[2] // resolution
     ]
-    QgsMessageLog.logMessage(f"Clusters shape: {clusters.shape}", "Segmenter", Qgis.info)
 
     # Upsample to original size
     clusters = torch.tensor(clusters)
