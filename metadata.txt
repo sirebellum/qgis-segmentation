@@ -8,7 +8,7 @@ qgisMinimumVersion=3.0
 description=Uses machine learning to segment a map into ares of interest.
 version=2.1.1
 author=Quant Civil
-email=help@quantcivil.ai
+email=joshua.herrera227@gmail.com
 
 about=The purpose of this plugin is to provide the user with the tools to segment parts of the map into different buckets. That is, trees vs asphalt roads vs buildings etc. More details along with installation instructions can be found on the github repository.
 
