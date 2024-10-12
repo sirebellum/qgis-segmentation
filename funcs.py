@@ -2,10 +2,7 @@ import numpy as np
 import torch
 from sklearn.cluster import KMeans
 import numpy as np
-from osgeo import gdal
 import os
-from tempfile import gettempdir
-from qgis.core import QgsRasterLayer, QgsProject
 
 # Predict coverage map using kmeans
 def predict_kmeans(array, num_segments=16, resolution=16):
@@ -86,19 +83,12 @@ def predict_cnn(cnn_model, array, num_segments, tile_size=256, device="cpu"):
         coverage_map.append(vectors)
     coverage_map = np.concatenate(coverage_map, axis=0)
 
-    # Convert from tiles to one big map
-    coverage_map = coverage_map.reshape(
-        (array.shape[1] + height_pad) // tile_size,
-        (array.shape[2] + width_pad) // tile_size,
-        coverage_map.shape[1],
-        coverage_map.shape[2],
-        coverage_map.shape[3],
-    )
-    coverage_map = coverage_map.transpose(2, 0, 3, 1, 4)
+    # Convert from tiles (N, C, H//tile_size, W//tile_size) to (C, H, W)
+    coverage_map = coverage_map.transpose(1, 0, 2, 3)
     coverage_map = coverage_map.reshape(
         coverage_map.shape[0],
-        coverage_map.shape[1] * coverage_map.shape[2],
-        coverage_map.shape[3] * coverage_map.shape[4],
+        np.sqrt(coverage_map.shape[1]).astype(int) * tile_size,
+        np.sqrt(coverage_map.shape[1]).astype(int) * tile_size,
     )
 
     # Perform kmeans to get num_segments clusters
@@ -123,9 +113,10 @@ def predict_cnn(cnn_model, array, num_segments, tile_size=256, device="cpu"):
 # Tile raster for CNN or K-means
 def tile_raster(array, tile_size):
     # Pad to tile_size
+    padding = lambda shape: 0 if shape % tile_size == 0 else tile_size - shape % tile_size
     channel_pad = (0, 0)
-    height_pad = (0, tile_size - array.shape[1] % tile_size)
-    width_pad = (0, tile_size - array.shape[2] % tile_size)
+    height_pad = (0, padding(array.shape[1]))
+    width_pad = (0, padding(array.shape[2]))
     array_padded = np.pad(
         array,
         (channel_pad, height_pad, width_pad),
@@ -149,41 +140,3 @@ def tile_raster(array, tile_size):
     )
 
     return tiles, (height_pad[1], width_pad[1])
-
-# Render raster from array
-def render_raster(array, bounding_box, layer_name, epsg):
-    driver = gdal.GetDriverByName("GTiff")
-    dataset = driver.Create(
-        os.path.join(gettempdir(), layer_name + ".tif"),
-        array.shape[2],
-        array.shape[1],
-        array.shape[0],
-        gdal.GDT_Byte,
-    )
-
-    out_srs = gdal.osr.SpatialReference()
-    out_srs.ImportFromEPSG(epsg)
-
-    dataset.SetProjection(out_srs.ExportToWkt())
-
-    dataset.SetGeoTransform(
-        (
-            bounding_box.xMinimum(),  # 0
-            bounding_box.width() / array.shape[2],  # 1
-            0,  # 2
-            bounding_box.yMaximum(),  # 3
-            0,  # 4
-            -bounding_box.height() / array.shape[1],
-        )
-    )
-
-    for c in range(array.shape[0]):
-        dataset.GetRasterBand(c + 1).WriteArray(array[c, :, :])
-    dataset = None
-
-    raster_layer = QgsRasterLayer(
-        os.path.join(gettempdir(), layer_name + ".tif"), layer_name
-    )
-    raster_layer.renderer().setOpacity(1.0)
-
-    QgsProject.instance().addMapLayer(raster_layer, True)

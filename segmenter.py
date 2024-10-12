@@ -58,7 +58,8 @@ import torch
 from sklearn.cluster import KMeans
 import numpy as np
 
-from .funcs import predict_kmeans, predict_cnn, render_raster
+from .funcs import predict_kmeans, predict_cnn
+from .qgis_funcs import render_raster
 
 TILE_SIZE = 512
 
