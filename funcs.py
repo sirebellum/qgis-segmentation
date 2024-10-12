@@ -82,23 +82,24 @@ def predict_cnn(cnn_model, array, num_segments, tile_size=256, device="cpu"):
         coverage_map.append(vectors)
     coverage_map = np.concatenate(coverage_map, axis=0)
 
-    # Convert from tiles (Ht*Wt, C, tile_size, tile_size) to (C, H, W)
-    _, C, _, _ = coverage_map.shape
+    # Convert from tiles (Ht*Wt, C, cnn_tile, cnn_tile) to (C, H, W)
+    N_cnn, C_cnn, h_cnn_tile, w_cnn_tile = coverage_map.shape
     
     # Calculate full height (H) and width (W)
     Ht = (array.shape[1] + height_pad) // tile_size
     Wt = (array.shape[2] + width_pad) // tile_size
-    H = Ht * tile_size
-    W = Wt * tile_size
+    assert Ht * Wt == N_cnn, f"Invalid number of tiles! \n{Ht * Wt} != {N_cnn}"
+    H_cnn = Ht * h_cnn_tile
+    W_cnn = Wt * w_cnn_tile
     
     # Reshape the tiled array into the full form
-    coverage_map = coverage_map.reshape(Ht, Wt, C, tile_size, tile_size)
+    coverage_map = coverage_map.reshape(Ht, Wt, C_cnn, h_cnn_tile, w_cnn_tile)
     
     # Transpose to move tiles into the correct position
     coverage_map = coverage_map.transpose(2, 0, 3, 1, 4)
     
     # Reshape into the full (C, H, W) array
-    coverage_map = coverage_map.reshape(C, H, W)
+    coverage_map = coverage_map.reshape(C_cnn, H_cnn, W_cnn)
 
     # Perform kmeans to get num_segments clusters
     coverage_map = predict_kmeans(
@@ -107,10 +108,17 @@ def predict_cnn(cnn_model, array, num_segments, tile_size=256, device="cpu"):
         resolution=1,
     )
 
-    # Get rid of padding
-    coverage_map = coverage_map[:, : array.shape[1], : array.shape[2]]
+    # Upsample to original size
+    coverage_map = torch.tensor(coverage_map).unsqueeze(0)
+    og_size = (Ht * tile_size, Wt * tile_size)
+    coverage_map = torch.nn.Upsample(
+        size=og_size, mode="nearest"
+    )(coverage_map.byte())
 
-    return coverage_map
+    # Get rid of padding
+    coverage_map = coverage_map[0, :, : array.shape[1], : array.shape[2]]
+
+    return coverage_map.cpu().numpy()
 
 # Tile raster for CNN or K-means
 def tile_raster(array, tile_size):
