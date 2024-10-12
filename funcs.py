@@ -2,7 +2,6 @@ import numpy as np
 import torch
 from sklearn.cluster import KMeans
 import numpy as np
-import os
 
 # Predict coverage map using kmeans
 def predict_kmeans(array, num_segments=16, resolution=16):

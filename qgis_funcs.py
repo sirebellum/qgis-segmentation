@@ -1,6 +1,7 @@
 from osgeo import gdal
 from tempfile import gettempdir
 from qgis.core import QgsRasterLayer, QgsProject
+import os
 
 # Render raster from array
 def render_raster(array, bounding_box, layer_name, epsg):
