@@ -63,8 +63,6 @@ def predict_kmeans(array, num_segments=16, resolution=16):
 # Predict coverage map using cnn
 def predict_cnn(cnn_model, array, num_segments, tile_size=256, device="cpu"):
 
-    assert array.shape[0] == 3, f"Invalid array shape! \n{array.shape}"
-
     # Tile raster
     tiles, (height_pad, width_pad) = tile_raster(array, tile_size)
 
