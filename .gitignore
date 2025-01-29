@@ -1,1 +1,3 @@
 zip_build/
+.venv/
+**/__pycache__/
