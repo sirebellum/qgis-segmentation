@@ -38,4 +38,4 @@ Then, the K-Means segmentation map at low resolution with 6 segments:
 Finally, a CNN segmentation map at low resolution with 6 segments:
 <img width="800" alt="image" src="https://github.com/user-attachments/assets/50863c0c-64b0-4603-b2e7-85ddaba60f21">
 
-As you can see, CNN provides cleaner results while K-Means is quick and easy.
+In general, CNN provides cleaner results while K-Means is quick and easy.
