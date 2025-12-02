@@ -26,6 +26,7 @@ from qgis.core import (
     QgsApplication,
     QgsMessageLog,
     QgsProject,
+    QgsRasterLayer,
     Qgis,
 )
 
@@ -387,10 +388,19 @@ class Segmenter:
 
     # Display layers in dropdown
     def render_layers(self):
-        layer_list = [layer.name() for layer in self.canvas.layers()]
+        project_layers = QgsProject.instance().mapLayers().values()
+        raster_layers = [layer for layer in project_layers if isinstance(layer, QgsRasterLayer)]
+        raster_layers.sort(key=lambda lyr: lyr.name().lower())
+
+        current = self.dlg.inputLayer.currentText()
         self.dlg.inputLayer.clear()
-        for layer in layer_list:
-            self.dlg.inputLayer.addItem(layer)
+        for layer in raster_layers:
+            self.dlg.inputLayer.addItem(layer.name())
+
+        if current:
+            index = self.dlg.inputLayer.findText(current)
+            if index >= 0:
+                self.dlg.inputLayer.setCurrentIndex(index)
 
     # Display resolutions in dropdown
     def render_resolutions(self):
