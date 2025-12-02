@@ -18,15 +18,13 @@ from sklearn.cluster import KMeans
 
 DEFAULT_MEMORY_BUDGET = 128 * 1024 * 1024
 
-# VRAM budget ratios: fraction of free GPU memory to allocate for chunk processing.
-# These conservative values (~1% or less) leave headroom for PyTorch allocator
-# overhead, CUDA/MPS runtime structures, and concurrent GUI rendering.
-# - CUDA: 0.9% - NVIDIA drivers reserve significant memory for context and streams
-# - MPS: 0.75% - Apple's Metal backend has tighter memory constraints on shared memory
-# - CPU: 1.0% - System RAM is more abundant so we allow a slightly higher ratio
-VRAM_RATIO_CUDA = 0.009  # 0.9% of free VRAM
-VRAM_RATIO_MPS = 0.0075  # 0.75% of free VRAM
-VRAM_RATIO_CPU = 0.01    # 1.0% of available system RAM
+# Tile size bounds for chunk processing.
+# MIN_TILE_SIZE: Minimum tile size in pixels to ensure meaningful feature extraction.
+# Below 128px, CNN receptive fields may not capture enough context.
+MIN_TILE_SIZE = 128
+# MAX_TILE_SIZE: Maximum tile size in pixels to prevent excessive memory usage per chunk.
+# Larger tiles increase memory pressure; 512px balances quality and efficiency.
+MAX_TILE_SIZE = 512
 
 
 @dataclass
@@ -125,10 +123,11 @@ def _derive_chunk_size(array_shape, device):
         ratio = VRAM_RATIO_CPU
     budget = max(int(free_bytes * ratio), 64 * 1024 * 1024)
     bytes_per_pixel = channels * 4
-    safety = get_adaptive_settings().safety_factor
+    settings = get_adaptive_settings()
+    safety = settings.safety_factor
     max_pixels = max(budget // (bytes_per_pixel * safety), 1)
     tile_side = int(math.sqrt(max_pixels))
-    tile_side = max(128, min(512, tile_side))
+    tile_side = max(MIN_TILE_SIZE, min(MAX_TILE_SIZE, tile_side))
     return tile_side, budget, ratio
 
 
