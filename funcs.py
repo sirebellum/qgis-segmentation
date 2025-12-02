@@ -27,6 +27,9 @@ class ChunkPlan:
     ratio: float
     prefetch_depth: int
 
+    def __post_init__(self):
+        if self.overlap >= self.chunk_size:
+            raise ValueError(f"overlap ({self.overlap}) must be less than chunk_size ({self.chunk_size})")
     @property
     def stride(self) -> int:
         return max(1, self.chunk_size - self.overlap)
