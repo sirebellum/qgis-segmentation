@@ -18,6 +18,12 @@ from sklearn.cluster import KMeans
 
 DEFAULT_MEMORY_BUDGET = 128 * 1024 * 1024
 
+# VRAM budget ratios based on backend characteristics.
+# These conservative fractions (<=1%) leave headroom for runtime allocations and UI rendering.
+VRAM_RATIO_CUDA = 0.009   # 0.9% of free CUDA memory
+VRAM_RATIO_MPS = 0.0075   # 0.75% of free MPS memory
+VRAM_RATIO_CPU = 0.01     # 1.0% of available system RAM
+
 # Tile size bounds for chunk processing.
 # MIN_TILE_SIZE: Minimum tile size in pixels to ensure meaningful feature extraction.
 # Below 128px, CNN receptive fields may not capture enough context.
