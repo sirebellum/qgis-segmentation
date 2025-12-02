@@ -105,41 +105,19 @@ def _run_profile(device: torch.device, status_callback: Callable[[str], None] | 
     set_adaptive_settings(best_settings)
     return best_settings
 
-
-def _benchmark_settings(
-    settings: AdaptiveSettings,
-    model: torch.nn.Module,
-    array: np.ndarray,
-    device: torch.device,
-    status_callback: Callable[[str], None] | None,
-    phase: int,
-    step: int,
-    total: int,
-) -> float | None:
-    """Run a single benchmark iteration and return the score, or None on failure."""
-    set_adaptive_settings(settings)
-    start = time.perf_counter()
-    try:
-        predict_cnn(
-            model,
-            array,
-            num_segments=3,
-            tile_size=128,
-            device=device,
-            memory_budget=DEFAULT_BUDGET_BYTES,
-            prefetch_depth=settings.prefetch_depth,
-            status_callback=None,
-        )
-        if device.type == "cuda":
-            torch.cuda.synchronize(device)
-        elapsed = max(time.perf_counter() - start, 1e-6)
-        score = (array.shape[1] * array.shape[2]) / elapsed
-        score /= settings.prefetch_depth  # penalize large prefetch depths slightly
-        if status_callback:
-            progress = int(100 * step / total)
-            status_callback(
-                f"[{progress}%] Phase {phase}: safety={settings.safety_factor}, "
-                f"prefetch={settings.prefetch_depth}: {score:.0f} px/s"
+    for settings in combos:
+        set_adaptive_settings(settings)
+        start = time.perf_counter()
+        try:
+            predict_cnn(
+                dummy_model,
+                array,
+                num_segments=3,
+                tile_size=128,
+                device=device,
+                memory_budget=DEFAULT_BUDGET_BYTES,
+                prefetch_depth=settings.prefetch_depth,
+                status_callback=None,
             )
         return score
     except RuntimeError as e:
