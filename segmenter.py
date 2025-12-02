@@ -38,7 +38,6 @@ import os.path
 
 from io import BytesIO
 from datetime import datetime
-import requests
 from osgeo import gdal
 
 from .dependency_manager import ensure_dependencies
@@ -49,7 +48,12 @@ import torch
 from sklearn.cluster import KMeans
 import numpy as np
 
-from .funcs import predict_kmeans, predict_cnn
+from .funcs import (
+    recommended_chunk_plan,
+    execute_kmeans_segmentation,
+    execute_cnn_segmentation,
+)
+from .perf_tuner import load_or_profile_settings
 from .qgis_funcs import render_raster
 
 TILE_SIZE = 512
@@ -305,6 +309,15 @@ class Segmenter:
         resolution = resolution_map[self.dlg.inputRes.currentText()]
 
         # Set up kwargs
+        device = getattr(self, "device", torch.device("cpu"))
+        chunk_plan = recommended_chunk_plan(layer_array.shape, device)
+        budget_mb = chunk_plan.budget_bytes / (1024 * 1024)
+        self.log_status(
+            "Prepared chunk plan: window "
+            + f"{chunk_plan.chunk_size}px with {chunk_plan.overlap}px overlap"
+            + f" (using {chunk_plan.ratio * 100:.2f}% of free VRAM, ~{budget_mb:.1f} MB)."
+        )
+
         kwargs = {
             "layer": layer,
             "canvas": self.canvas,
@@ -312,21 +325,27 @@ class Segmenter:
             "model": self.model,
             "num_segments": num_segments,
             "resolution": resolution,
-            "status_callback": self.log_status,
         }
 
         # set up args
         if self.model == "kmeans":
-            func = predict_kmeans
-            args = (layer_array, num_segments, resolution, self.log_status)
+            func = execute_kmeans_segmentation
+            args = (
+                layer_array,
+                num_segments,
+                resolution,
+                chunk_plan,
+                self.log_status,
+            )
         elif self.model == "cnn":
-            func = predict_cnn
+            func = execute_cnn_segmentation
             args = (
                 self.load_model(resolution),
                 layer_array,
                 num_segments,
-                TILE_SIZE,
-                self.device,
+                chunk_plan,
+                min(TILE_SIZE, chunk_plan.chunk_size),
+                device,
                 self.log_status,
             )
 
@@ -404,6 +423,18 @@ class Segmenter:
                 self.device = torch.device("mps")
             else: # CPU
                 self.device = torch.device("cpu")
+
+            settings, profiled = load_or_profile_settings(
+                self.plugin_dir, self.device, self.log_status
+            )
+            if profiled:
+                self.log_status(
+                    f"Adaptive profiling complete (safety={settings.safety_factor}, prefetch={settings.prefetch_depth})."
+                )
+            else:
+                self.log_status(
+                    f"Loaded cached adaptive profile (safety={settings.safety_factor}, prefetch={settings.prefetch_depth})."
+                )
 
             # Populate drop down menus
             self.render_models()
