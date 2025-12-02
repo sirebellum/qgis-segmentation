@@ -38,6 +38,20 @@ class _DummyModel(torch.nn.Module):
         return (None, stacked)
 
 
+class _StubAutoencoder:
+    def __init__(self):
+        self.calls = 0
+
+    def set_device(self, *_):
+        return
+
+    def refresh_and_remap(self, raster, label_map, status_callback=None):
+        self.calls += 1
+        if status_callback:
+            status_callback(f"stub-remap-{self.calls}")
+        return label_map.copy()
+
+
 def _rand_array(seed, shape):
     rng = np.random.default_rng(seed)
     return rng.integers(0, 255, size=shape, dtype=np.uint8)
@@ -108,6 +122,8 @@ def test_predict_cnn_uses_adaptive_batching():
 def test_execute_cnn_segmentation_chunking_preserves_shape(shape):
     array = _rand_array(2, shape)
     plan = ChunkPlan(chunk_size=256, overlap=64, budget_bytes=16 * 1024 * 1024, ratio=0.0075, prefetch_depth=2)
+    manager = _StubAutoencoder()
+    manager.set_device(torch.device("cpu"))
     output = execute_cnn_segmentation(
         _DummyModel(),
         array,
@@ -115,23 +131,28 @@ def test_execute_cnn_segmentation_chunking_preserves_shape(shape):
         chunk_plan=plan,
         tile_size=256,
         device=torch.device("cpu"),
+        texture_manager=manager,
     )
     assert output.shape == shape[1:]
     assert output.max() < 3
+    assert manager.calls == 1
 
 
 def test_execute_kmeans_segmentation_chunking_preserves_shape():
     array = _rand_array(3, (3, 781, 1023))
     plan = ChunkPlan(chunk_size=200, overlap=50, budget_bytes=8 * 1024 * 1024, ratio=0.0075, prefetch_depth=2)
+    manager = _StubAutoencoder()
     output = execute_kmeans_segmentation(
         array,
         num_segments=4,
         resolution=16,
         chunk_plan=plan,
         status_callback=lambda *_: None,
+        texture_manager=manager,
     )
     assert output.shape == array.shape[1:]
     assert output.max() < 4
+    assert manager.calls == 1
 
 
 def test_perf_tuner_profiles_and_caches(tmp_path):

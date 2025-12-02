@@ -14,6 +14,9 @@
 from collections import deque
 import os
 import re
+import threading
+import weakref
+from typing import Optional
 from qgis.PyQt.QtCore import (
     QSettings,
     QTranslator,
@@ -21,9 +24,13 @@ from qgis.PyQt.QtCore import (
     QThread,
     QObject,
     pyqtSignal,
+    QUrl,
 )
-from qgis.PyQt.QtGui import QIcon, QPixmap
-from qgis.PyQt.QtWidgets import QAction
+from qgis.PyQt.QtGui import QIcon, QPixmap, QDesktopServices
+from qgis.PyQt.QtWidgets import (
+    QAction,
+    QMessageBox,
+)
 from qgis.core import (
     QgsTask,
     QgsApplication,
@@ -50,21 +57,54 @@ ensure_dependencies()
 import torch
 from sklearn.cluster import KMeans
 import numpy as np
+from .autoencoder_utils import TextureAutoencoderManager, default_autoencoder_path
 
 from .funcs import (
     recommended_chunk_plan,
     execute_kmeans_segmentation,
     execute_cnn_segmentation,
+    SegmentationCanceled,
 )
 from .perf_tuner import load_or_profile_settings
 from .qgis_funcs import render_raster
 
 TILE_SIZE = 512
 SUPPORTED_RASTER_EXTENSIONS = {".tif", ".tiff"}
+GITHUB_ISSUES_URL = "https://github.com/sirebellum/qgis-segmentation/issues/new/choose"
 
 
 class StatusEmitter(QObject):
     message = pyqtSignal(object)
+
+
+class CancellationToken:
+    def __init__(self):
+        self._event = threading.Event()
+        self._task_ref: Optional[weakref.ReferenceType] = None
+
+    def bind_task(self, task: QgsTask) -> None:
+        try:
+            self._task_ref = weakref.ref(task)
+        except TypeError:
+            self._task_ref = None
+
+    def cancel(self) -> None:
+        self._event.set()
+
+    def is_cancelled(self) -> bool:
+        if self._event.is_set():
+            return True
+        if self._task_ref is None:
+            return False
+        task = self._task_ref()
+        if task is not None and task.isCanceled():
+            self._event.set()
+            return True
+        return self._event.is_set()
+
+    def raise_if_cancelled(self) -> None:
+        if self.is_cancelled():
+            raise SegmentationCanceled()
 
 
 # Multithreading stuff
@@ -73,6 +113,9 @@ class Task(QgsTask):
         super().__init__()
         self.function = function
         self.args = args
+        cancel_token = kwargs.pop("cancel_token", None)
+        self.cancel_token = cancel_token or CancellationToken()
+        self.cancel_token.bind_task(self)
         self.kwargs = kwargs
         self.result = None
         QgsMessageLog.logMessage("Task initialized", "Segmenter", level=Qgis.Info)
@@ -81,10 +124,19 @@ class Task(QgsTask):
     def run(self):
         QgsMessageLog.logMessage("Running task", "Segmenter", level=Qgis.Info)
         self._status("Processing started")
+        if self.isCanceled():
+            self._status("Task canceled before execution")
+            return False
         try:
-            self.result = self.function(*self.args)
+            self.result = self.function(*self.args, cancel_token=self.cancel_token)
+            if self.isCanceled():
+                self._status("Processing canceled")
+                return False
             self._status("Processing completed successfully")
             return True
+        except SegmentationCanceled:
+            self._status("Processing canceled")
+            return False
         except Exception as e:
             QgsMessageLog.logMessage(
                 f"Exception in task: {e}", "Segmenter", level=Qgis.Critical
@@ -92,9 +144,14 @@ class Task(QgsTask):
             self._status(f"Processing failed: {e}")
             return False
 
+    def cancel(self):
+        self.cancel_token.cancel()
+        return super().cancel()
+
     def finished(self, result):
         QgsMessageLog.logMessage("Task finished", "Segmenter", level=Qgis.Info)
-        if result:
+        segmenter = self.kwargs.get("segmenter")
+        if result and not self.isCanceled():
             # render raster
             render_raster(
                 self.result,
@@ -103,8 +160,13 @@ class Task(QgsTask):
                 self.kwargs["canvas"].layer(0).crs().postgisSrid(),
             )
             self._status("Segmentation layer rendered")
+        elif self.isCanceled():
+            self._status("Segmentation task canceled")
         else:
             self._status("Segmentation task failed")
+        if segmenter:
+            segmenter.task = None
+            segmenter._set_stop_enabled(False)
 
     def _status(self, message):
         callback = self.kwargs.get("status_callback")
@@ -165,8 +227,9 @@ class Segmenter:
         self._log_history = deque(maxlen=50)
         self.status_emitter = StatusEmitter()
         self.status_emitter.message.connect(self._handle_status_message)
-        self.model = "kmeans"
+        self.model = "cnn"
         self._logged_missing_layers = False
+        self.autoencoder_manager: Optional[TextureAutoencoderManager] = None
 
     # noinspection PyMethodMayBeStatic
     def tr(self, message):
@@ -223,6 +286,93 @@ class Segmenter:
         if getattr(self, "dlg", None):
             lines = list(self._log_history)[::-1]
             self.dlg.inputBox.setPlainText("\n".join(lines))
+
+    def _set_stop_enabled(self, enabled):
+        dlg = getattr(self, "dlg", None)
+        if not dlg:
+            return
+        button = getattr(dlg, "buttonStop", None)
+        if button is not None:
+            button.setEnabled(bool(enabled))
+
+    def _collect_heuristics(self):
+        dlg = getattr(self, "dlg", None)
+        if dlg is None:
+            return {"smoothness": 0.25, "speed": 0.5, "accuracy": 0.65}
+
+        def _value(name, default=0.5):
+            slider = getattr(dlg, name, None)
+            if not slider:
+                return default
+            maximum = max(1, slider.maximum())
+            return np.clip(slider.value() / maximum, 0.0, 1.0)
+
+        return {
+            "smoothness": _value("sliderSmoothness", 0.25),
+            "speed": _value("sliderSpeed", 0.5),
+            "accuracy": _value("sliderAccuracy", 0.65),
+        }
+
+    def _build_heuristic_overrides(self):
+        heuristics = self._collect_heuristics()
+        smooth = heuristics["smoothness"]
+        speed = heuristics["speed"]
+        accuracy = heuristics["accuracy"]
+
+        smoothing_scale = float(np.interp(smooth, [0.0, 1.0], [0.7, 1.9]))
+        tile_factor = float(np.interp(speed, [0.0, 1.0], [0.8, 1.35]))
+        tile_size = int(np.clip(TILE_SIZE * tile_factor, 192, 768))
+
+        latent_cfg = {
+            "mix": float(np.interp(smooth, [0.0, 1.0], [0.35, 0.85])),
+            "temperature": float(np.interp(accuracy, [0.0, 1.0], [3.5, 0.9])),
+            "neighbors": int(np.round(np.interp(accuracy, [0.0, 1.0], [6, 28]))),
+            "iterations": int(max(1, round(np.interp(smooth, [0.0, 1.0], [1, 4])))),
+            "spatial_weight": float(np.interp(accuracy, [0.0, 1.0], [0.04, 0.16])),
+            "chunk_size": int(np.round(np.interp(speed, [0.0, 1.0], [20000, 65536]))),
+            "index_points": int(np.round(np.interp(speed, [0.0, 1.0], [50000, 180000]))),
+            "query_batch": int(np.round(np.interp(speed, [0.0, 1.0], [12000, 60000]))),
+            "hierarchy_factor": 1 if accuracy < 0.4 else 2,
+            "hierarchy_passes": 1 if accuracy < 0.7 else 2,
+        }
+
+        latent_cfg["mix"] = np.clip(latent_cfg["mix"], 0.2, 0.95)
+
+        return {
+            "tile_size": tile_size,
+            "smoothing_scale": smoothing_scale,
+            "latent_knn": latent_cfg,
+        }
+
+    def open_feedback_link(self):
+        if not getattr(self, "dlg", None):
+            return
+        opened = QDesktopServices.openUrl(QUrl(GITHUB_ISSUES_URL))
+        if opened:
+            self.log_status(f"Opening feedback page: {GITHUB_ISSUES_URL}")
+        else:
+            QMessageBox.warning(
+                self.dlg,
+                "Unable to open link",
+                "Could not launch the browser. Please visit the issues page manually.",
+            )
+
+    def stop_current_task(self):
+        if not self.task:
+            self.log_status("No active segmentation task to cancel.")
+            return
+        if self.task.isCanceled():
+            self.log_status("Cancellation already requested.")
+            return
+        try:
+            task_id = self.task.taskId()
+        except AttributeError:
+            task_id = None
+        if task_id is not None:
+            QgsApplication.taskManager().cancelTask(task_id)
+        self.task.cancel()
+        self._set_stop_enabled(False)
+        self.log_status("Cancellation requested; attempting to stop the worker immediately.")
 
     def add_action(
         self,
@@ -334,8 +484,27 @@ class Segmenter:
         raster = gdal.Open(layer.source())
         layer_array = raster.ReadAsArray()
 
+        if self.autoencoder_manager is None:
+            self.log_status("Autoencoder unavailable; please reopen the Segmenter dialog to reinitialize.")
+            return
+        self.autoencoder_manager.set_device(self.device)
+
         # Get user specified num segments
-        num_segments = int(self.dlg.inputSegments.text())
+        segments_raw = (self.dlg.inputSegments.text() or "").strip()
+        if not segments_raw:
+            self.log_status("Please enter the desired number of segments and try again.")
+            self.dlg.inputSegments.setFocus()
+            return
+        try:
+            num_segments = int(segments_raw)
+        except ValueError:
+            self.log_status("Number of segments must be an integer value.")
+            self.dlg.inputSegments.setFocus()
+            return
+        if num_segments <= 0:
+            self.log_status("Number of segments must be a positive integer.")
+            self.dlg.inputSegments.setFocus()
+            return
 
         resolution_map = {
             "high": 4,
@@ -346,7 +515,7 @@ class Segmenter:
         # Get user specified resolution
         resolution_label = self.dlg.inputRes.currentText()
         resolution = resolution_map[resolution_label]
-        profile_tier = (resolution_label or "high").strip().lower()
+        profile_tier = (resolution_label or "low").strip().lower()
 
         # Set up kwargs
         if not hasattr(self, "device"):
@@ -366,7 +535,10 @@ class Segmenter:
             "num_segments": num_segments,
             "resolution": resolution,
             "status_callback": self.log_status,
+            "segmenter": self,
         }
+
+        heuristic_overrides = None
 
         # set up args
         if self.model == "kmeans":
@@ -377,8 +549,19 @@ class Segmenter:
                 resolution,
                 chunk_plan,
                 self.worker_status,
+                self.autoencoder_manager,
             )
         elif self.model == "cnn":
+            heuristic_overrides = self._build_heuristic_overrides()
+            heuristics = self._collect_heuristics()
+            self.log_status(
+                "Heuristic tuning — smoothness {:.2f}, speed {:.2f}, accuracy {:.2f}.".format(
+                    heuristics["smoothness"], heuristics["speed"], heuristics["accuracy"]
+                )
+            )
+            self.log_status(
+                f"Adaptive overrides: tile {heuristic_overrides['tile_size']}px, smoothing x{heuristic_overrides['smoothing_scale']:.2f}."
+            )
             func = execute_cnn_segmentation
             args = (
                 self.load_model(resolution),
@@ -389,6 +572,8 @@ class Segmenter:
                 device,
                 self.worker_status,
                 profile_tier,
+                heuristic_overrides,
+                self.autoencoder_manager,
             )
 
         self.log_status(
@@ -397,6 +582,7 @@ class Segmenter:
 
         # Run task
         self.task = run_task(func, *args, **kwargs)
+        self._set_stop_enabled(True)
 
         # Display error if task stops running after a little bit
         if self.task.waitForFinished(1):
@@ -425,6 +611,11 @@ class Segmenter:
         self.dlg.inputLoadModel.clear()
         for model in model_list:
             self.dlg.inputLoadModel.addItem(model)
+        default_model = "CNN"
+        index = self.dlg.inputLoadModel.findText(default_model)
+        if index >= 0:
+            self.dlg.inputLoadModel.setCurrentIndex(index)
+        self.set_model()
 
     # Display layers in dropdown
     def render_layers(self):
@@ -455,10 +646,14 @@ class Segmenter:
 
     # Display resolutions in dropdown
     def render_resolutions(self):
-        res_list = ["high", "medium", "low"]
+        res_list = ["low", "medium", "high"]
         self.dlg.inputRes.clear()
         for res in res_list:
             self.dlg.inputRes.addItem(str(res))
+        default_res = "low"
+        index = self.dlg.inputRes.findText(default_res)
+        if index >= 0:
+            self.dlg.inputRes.setCurrentIndex(index)
 
     # Set model based on selected dropdown
     def set_model(self):
@@ -506,6 +701,10 @@ class Segmenter:
             else: # CPU
                 self.device = torch.device("cpu")
 
+            cache_dir = default_autoencoder_path(self.plugin_dir)
+            self.autoencoder_manager = TextureAutoencoderManager(cache_dir)
+            self.autoencoder_manager.set_device(self.device)
+
             settings, profiled = load_or_profile_settings(
                 self.plugin_dir, self.device, self.log_status
             )
@@ -536,8 +735,11 @@ class Segmenter:
             # Attach inputs
             self.dlg.inputBox.textChanged.connect(self.submit)
             self.dlg.buttonPredict.clicked.connect(self.predict)
+            self.dlg.buttonFeedback.clicked.connect(self.open_feedback_link)
+            self.dlg.buttonStop.clicked.connect(self.stop_current_task)
             self.dlg.inputLoadModel.currentIndexChanged.connect(self.set_model)
             self.dlg.inputLoadModel.highlighted.connect(self.render_layers)
+            self._set_stop_enabled(False)
 
             # Render logo
             img_path = os.path.join(self.plugin_dir, "logo.png")

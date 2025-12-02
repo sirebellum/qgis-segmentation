@@ -5,6 +5,7 @@ import importlib
 import logging
 import os
 import platform
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -21,7 +22,7 @@ _VENDOR_DIR.mkdir(exist_ok=True)
 _vendor_str = str(_VENDOR_DIR)
 while _vendor_str in sys.path:
     sys.path.remove(_vendor_str)
-sys.path.append(_vendor_str)
+sys.path.insert(0, _vendor_str)
 
 _ENSURED = False
 _PROFILED_POST_INSTALL = False
@@ -66,6 +67,7 @@ def _package_specs() -> Iterable[Dict[str, object]]:
             "pip": torch_spec,
             "label": "PyTorch",
             "extra_args": _torch_index_args(),
+            "validator": _torch_validator,
         },
         {
             "import": "numpy",
@@ -92,13 +94,32 @@ def _torch_index_args() -> List[str]:
     return ["--index-url", "https://download.pytorch.org/whl/cu121"]
 
 
+def _torch_validator(torch_module: Any) -> bool:
+    return hasattr(torch_module, "_dynamo")
+
+
+def _module_satisfies(module: Any, validator: Optional[Any]) -> bool:
+    if validator is None:
+        return True
+    try:
+        return bool(validator(module))
+    except Exception:
+        return False
+
+
 def _ensure_package(spec: Dict[str, object]) -> bool:
     import_name = spec["import"]  # type: ignore[index]
+    validator = spec.get("validator")  # type: ignore[assignment]
     try:
-        importlib.import_module(import_name)  # type: ignore[arg-type]
-        return False
+        module = importlib.import_module(import_name)  # type: ignore[arg-type]
     except ImportError:
-        pass
+        module = None
+    else:
+        if validator is not None and not _module_satisfies(module, validator):
+            _purge_vendor_artifacts(module)
+            module = None
+    if module is not None and _module_satisfies(module, validator):
+        return False
 
     pip_name = spec["pip"]  # type: ignore[index]
     raw_args = spec.get("extra_args")
@@ -134,7 +155,31 @@ def _ensure_package(spec: Dict[str, object]) -> bool:
             "Run QGIS Python console and install it manually."
         ) from exc
     _close_install_popup(dialog)
+    importlib.invalidate_caches()
+    if validator is not None:
+        module = importlib.import_module(import_name)  # type: ignore[arg-type]
+        if not _module_satisfies(module, validator):
+            raise ImportError(
+                f"Dependency '{pip_name}' did not satisfy validator even after installation."
+            )
     return True
+
+
+def _purge_vendor_artifacts(module: Any) -> None:
+    module_file = getattr(module, "__file__", None)
+    if not module_file:
+        return
+    module_path = Path(module_file).resolve()
+    if _VENDOR_DIR not in module_path.parents and module_path.parent != _VENDOR_DIR:
+        return
+    root = module_path
+    while root.parent != _VENDOR_DIR and root.parent != root:
+        root = root.parent
+    if root.exists():
+        shutil.rmtree(root, ignore_errors=True)
+    prefix = root.stem.split(".")[0]
+    for dist_info in _VENDOR_DIR.glob(f"{prefix}-*.dist-info"):
+        shutil.rmtree(dist_info, ignore_errors=True)
 
 
 def _bootstrap_pip() -> None:
