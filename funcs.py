@@ -443,7 +443,12 @@ def _normalize_cluster_labels(labels, centers):
 
 
 def _recommended_batch_size(channels, height, width, memory_budget, settings):
+    # Ensure all dimensions are at least 1 to avoid division by zero
+    channels = max(1, channels)
+    height = max(1, height)
+    width = max(1, width)
     bytes_per_tile = channels * height * width * 4
+    # bytes_per_tile is guaranteed > 0 since all factors are >= 1
     budget = max(memory_budget or DEFAULT_MEMORY_BUDGET, bytes_per_tile)
     safety = max(1, settings.safety_factor)
     depth = max(1, settings.prefetch_depth)
