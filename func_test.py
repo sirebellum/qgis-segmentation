@@ -1,3 +1,4 @@
+import json
 import numpy as np
 import pytest
 import torch
@@ -11,13 +12,15 @@ from funcs import (
     ChunkPlan,
     AdaptiveSettings,
     set_adaptive_settings,
+    get_adaptive_settings,
     _compute_chunk_starts,
     _normalize_cluster_labels,
     recommended_chunk_plan,
     _derive_chunk_size,
     _ChunkAggregator,
+    _chunked_gaussian_blur,
 )
-from perf_tuner import load_or_profile_settings
+from perf_tuner import load_or_profile_settings, ProfilePayload
 from raster_utils import ensure_channel_first
 
 
@@ -72,7 +75,7 @@ def test_predict_cnn_handles_rectangular_tiles(shape, tile_size):
         num_segments=3,
         tile_size=tile_size,
         device="cpu",
-        memory_budget=512 * 1024 * 1024,
+        memory_budget=32 * 1024 * 1024,
     )
     assert result.shape == shape[1:]
     assert result.dtype == np.uint8
@@ -89,7 +92,7 @@ def test_predict_cnn_uses_adaptive_batching():
         num_segments=3,
         tile_size=64,
         device="cpu",
-        memory_budget=1024 * 1024 * 1024,
+        memory_budget=64 * 1024 * 1024,
         prefetch_depth=3,
     )
     assert max(model.batch_history) > 1
@@ -104,7 +107,7 @@ def test_predict_cnn_uses_adaptive_batching():
 )
 def test_execute_cnn_segmentation_chunking_preserves_shape(shape):
     array = _rand_array(2, shape)
-    plan = ChunkPlan(chunk_size=256, overlap=64, budget_bytes=128 * 1024 * 1024, ratio=0.0075, prefetch_depth=2)
+    plan = ChunkPlan(chunk_size=256, overlap=64, budget_bytes=16 * 1024 * 1024, ratio=0.0075, prefetch_depth=2)
     output = execute_cnn_segmentation(
         _DummyModel(),
         array,
@@ -119,7 +122,7 @@ def test_execute_cnn_segmentation_chunking_preserves_shape(shape):
 
 def test_execute_kmeans_segmentation_chunking_preserves_shape():
     array = _rand_array(3, (3, 781, 1023))
-    plan = ChunkPlan(chunk_size=200, overlap=50, budget_bytes=64 * 1024 * 1024, ratio=0.0075, prefetch_depth=2)
+    plan = ChunkPlan(chunk_size=200, overlap=50, budget_bytes=8 * 1024 * 1024, ratio=0.0075, prefetch_depth=2)
     output = execute_kmeans_segmentation(
         array,
         num_segments=4,
@@ -137,7 +140,24 @@ def test_perf_tuner_profiles_and_caches(tmp_path):
 
     def fake_runner(dev, status):
         calls.append(dev.type)
-        return AdaptiveSettings(safety_factor=5, prefetch_depth=3)
+        settings = {
+            "high": AdaptiveSettings(safety_factor=5, prefetch_depth=3),
+            "medium": AdaptiveSettings(safety_factor=6, prefetch_depth=2),
+            "low": AdaptiveSettings(safety_factor=7, prefetch_depth=1),
+        }
+        options = {
+            "high": [
+                (32 * 1024 * 1024, AdaptiveSettings(safety_factor=7, prefetch_depth=1)),
+                (128 * 1024 * 1024, AdaptiveSettings(safety_factor=5, prefetch_depth=2)),
+            ],
+            "medium": [],
+            "low": [],
+        }
+        metrics = {
+            "high": {"best_px_per_s": 10_000.0, "speedup_vs_prefetch1": 1.25},
+            "medium": {"best_px_per_s": 8_000.0, "speedup_vs_prefetch1": 1.10},
+        }
+        return ProfilePayload(settings=settings, options=options, default_tier="high", metrics=metrics)
 
     settings, created = load_or_profile_settings(
         tmp_path, device, benchmark_runner=fake_runner
@@ -151,6 +171,18 @@ def test_perf_tuner_profiles_and_caches(tmp_path):
     assert not created2
     assert cached.prefetch_depth == 3
     assert len(calls) == 1
+    profile_file = tmp_path / "perf_profile.json"
+    assert profile_file.exists()
+    disk_data = json.loads(profile_file.read_text())
+    assert "cpu" in disk_data
+    entry = disk_data["cpu"]
+    assert entry["default_tier"] == "high"
+    assert "settings" in entry and "low" in entry["settings"]
+    assert "metrics" in entry and "high" in entry["metrics"]
+    low = get_adaptive_settings(40 * 1024 * 1024, tier="low")
+    high = get_adaptive_settings(256 * 1024 * 1024, tier="high")
+    assert low.prefetch_depth == 1
+    assert high.prefetch_depth == 2
     set_adaptive_settings(AdaptiveSettings())
 
 
@@ -181,7 +213,7 @@ def test_ensure_channel_first_rejects_invalid_ndarrays():
 def test_predict_kmeans_shape_preservation(array_shape, num_segments, resolution, expected_shape):
     """Regression test: verify predict_kmeans preserves spatial dimensions."""
     rng = np.random.default_rng(42)
-    array = rng.random(array_shape)
+    array = rng.random(array_shape, dtype=np.float32)
     result = predict_kmeans(array, num_segments=num_segments, resolution=resolution)
     assert result.shape == expected_shape
 
@@ -201,8 +233,17 @@ def test_tile_raster_shape_preservation(
 ):
     """Regression test: verify tile_raster produces correct shapes and padding."""
     rng = np.random.default_rng(42)
-    array = rng.random(array_shape)
+    array = rng.random(array_shape, dtype=np.float32)
     tiles, (height_pad, width_pad), grid_shape = tile_raster(array, tile_size=tile_size)
     assert height_pad == expected_height_pad
     assert width_pad == expected_width_pad
     assert tiles.shape == expected_tile_shape
+
+
+def test_chunked_gaussian_blur_matches_single_pass():
+    rng = np.random.default_rng(0)
+    array = rng.random((3, 96, 64), dtype=np.float32)
+    sigma = 6.0
+    full = _chunked_gaussian_blur(array, sigma, max_chunk_bytes=1_000_000_000)
+    chunked = _chunked_gaussian_blur(array, sigma, max_chunk_bytes=32 * 1024)
+    np.testing.assert_allclose(chunked, full, atol=1e-4)

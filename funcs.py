@@ -4,6 +4,7 @@ import os
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from typing import Dict, List, Tuple, Optional
 
 try:
     from .dependency_manager import ensure_dependencies
@@ -14,6 +15,7 @@ ensure_dependencies()
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from sklearn.cluster import KMeans
 
 DEFAULT_MEMORY_BUDGET = 128 * 1024 * 1024
@@ -31,6 +33,7 @@ MIN_TILE_SIZE = 128
 # MAX_TILE_SIZE: Maximum tile size in pixels to prevent excessive memory usage per chunk.
 # Larger tiles increase memory pressure; 512px balances quality and efficiency.
 MAX_TILE_SIZE = 512
+SMOOTH_CHUNK_BYTES = 256 * 1024 * 1024
 
 
 @dataclass
@@ -64,16 +67,64 @@ class AdaptiveSettings:
     prefetch_depth: int = 2
 
 
-_ADAPTIVE_SETTINGS = AdaptiveSettings()
+_ADAPTIVE_SETTINGS_MAP: Dict[str, AdaptiveSettings] = {"default": AdaptiveSettings()}
+_ADAPTIVE_OPTIONS_MAP: Dict[str, List[Tuple[int, AdaptiveSettings]]] = {"default": []}
+_ADAPTIVE_DEFAULT_TIER = "default"
 
 
-def get_adaptive_settings() -> AdaptiveSettings:
-    return _ADAPTIVE_SETTINGS
+def _copy_setting(settings: AdaptiveSettings) -> AdaptiveSettings:
+    return AdaptiveSettings(safety_factor=settings.safety_factor, prefetch_depth=settings.prefetch_depth)
 
 
-def set_adaptive_settings(settings: AdaptiveSettings) -> None:
-    global _ADAPTIVE_SETTINGS
-    _ADAPTIVE_SETTINGS = settings
+def get_adaptive_settings(memory_bytes: Optional[int] = None, tier: Optional[str] = None) -> AdaptiveSettings:
+    tier_key = tier or _ADAPTIVE_DEFAULT_TIER
+    settings = _ADAPTIVE_SETTINGS_MAP.get(tier_key) or _ADAPTIVE_SETTINGS_MAP.get(_ADAPTIVE_DEFAULT_TIER)
+    options = _ADAPTIVE_OPTIONS_MAP.get(tier_key, [])
+    if memory_bytes is not None and options:
+        for threshold, opt_settings in reversed(options):
+            if memory_bytes >= threshold:
+                return opt_settings
+        return options[0][1]
+    return settings
+
+
+def set_adaptive_settings(
+    settings: Optional[Dict[str, AdaptiveSettings]] = None,
+    options: Optional[Dict[str, List[Tuple[int, AdaptiveSettings]]]] = None,
+    default_tier: Optional[str] = None,
+) -> None:
+    global _ADAPTIVE_SETTINGS_MAP, _ADAPTIVE_OPTIONS_MAP, _ADAPTIVE_DEFAULT_TIER
+
+    if settings is None:
+        settings = {"default": AdaptiveSettings()}
+    elif not isinstance(settings, dict):  # backward compatibility
+        settings = {default_tier or "default": settings}
+
+    _ADAPTIVE_SETTINGS_MAP = {tier: _copy_setting(cfg) for tier, cfg in settings.items()}
+
+    if options is None:
+        _ADAPTIVE_OPTIONS_MAP = {tier: [] for tier in _ADAPTIVE_SETTINGS_MAP}
+    else:
+        normalized: Dict[str, List[Tuple[int, AdaptiveSettings]]] = {}
+        for tier, entries in options.items():
+            sorted_entries = sorted(entries, key=lambda item: item[0])
+            normalized[tier] = [
+                (int(max(0, threshold)), _copy_setting(cfg))
+                for threshold, cfg in sorted_entries
+            ]
+        for tier in _ADAPTIVE_SETTINGS_MAP:
+            normalized.setdefault(tier, [])
+        _ADAPTIVE_OPTIONS_MAP = normalized
+
+    if default_tier and default_tier in _ADAPTIVE_SETTINGS_MAP:
+        _ADAPTIVE_DEFAULT_TIER = default_tier
+    elif _ADAPTIVE_DEFAULT_TIER not in _ADAPTIVE_SETTINGS_MAP:
+        _ADAPTIVE_DEFAULT_TIER = next(iter(_ADAPTIVE_SETTINGS_MAP))
+
+
+def get_adaptive_options(tier: Optional[str] = None) -> List[Tuple[int, AdaptiveSettings]]:
+    tier_key = tier or _ADAPTIVE_DEFAULT_TIER
+    return list(_ADAPTIVE_OPTIONS_MAP.get(tier_key, []))
 
 
 def _emit_status(callback, message):
@@ -105,6 +156,11 @@ def _process_in_chunks(array, plan, num_segments, infer_fn, status_callback):
         labels = infer_fn(chunk)
         aggregator.add(labels, (y, x, y_end, x_end))
 
+    if status_callback:
+        megapixels = (height * width) / 1_000_000
+        status_callback(
+            f"Smoothing out {total} chunks (~{megapixels:.2f} MP of coverage)..."
+        )
     return aggregator.finalize()
 
 
@@ -118,7 +174,7 @@ def _compute_chunk_starts(length, chunk_size, stride):
     return sorted(set(starts))
 
 
-def _derive_chunk_size(array_shape, device):
+def _derive_chunk_size(array_shape, device, profile_tier: Optional[str] = None):
     channels = array_shape[0]
     free_bytes = _free_vram_bytes(device)
     if device.type == "cuda":
@@ -129,12 +185,12 @@ def _derive_chunk_size(array_shape, device):
         ratio = VRAM_RATIO_CPU
     budget = max(int(free_bytes * ratio), 64 * 1024 * 1024)
     bytes_per_pixel = channels * 4
-    settings = get_adaptive_settings()
+    settings = get_adaptive_settings(free_bytes, tier=profile_tier)
     safety = settings.safety_factor
     max_pixels = max(budget // (bytes_per_pixel * safety), 1)
     tile_side = int(math.sqrt(max_pixels))
     tile_side = max(MIN_TILE_SIZE, min(MAX_TILE_SIZE, tile_side))
-    return tile_side, budget, ratio
+    return tile_side, budget, ratio, settings
 
 
 def _free_vram_bytes(device):
@@ -163,6 +219,7 @@ class _ChunkAggregator:
         self.scores = np.zeros((num_segments, height, width), dtype=np.float32)
         self.weight = np.zeros((height, width), dtype=np.float32)
         self.weight_template = _build_weight_mask(chunk_size)
+        self.chunk_size = chunk_size
 
     def add(self, labels, region):
         y0, x0, y1, x1 = region
@@ -176,9 +233,70 @@ class _ChunkAggregator:
         self.weight[y0:y1, x0:x1] += mask
 
     def finalize(self):
-        weight = np.maximum(self.weight, 1e-6)
-        probs = self.scores / weight
+        sigma = max(1.0, min(self.chunk_size / 10.0, 32.0))
+        smoothed_scores = _gaussian_blur_channels(self.scores, sigma)
+        smoothed_weight = _gaussian_blur_channels(self.weight[np.newaxis, ...], sigma)[0]
+        weight = np.maximum(smoothed_weight, 1e-6)
+        probs = smoothed_scores / weight
         return np.argmax(probs, axis=0).astype(np.uint8)
+
+
+def _gaussian_blur_channels(array, sigma):
+    if sigma <= 0:
+        return array
+    return _chunked_gaussian_blur(array, sigma)
+
+
+def _chunked_gaussian_blur(array, sigma, max_chunk_bytes=SMOOTH_CHUNK_BYTES):
+    sigma = max(float(sigma), 1e-6)
+    channels, height, width = array.shape
+    radius = int(max(1, round(3 * sigma)))
+    device = _smoothing_device()
+    kernel = _build_gaussian_kernel(radius, sigma, channels, device)
+    result = np.zeros_like(array, dtype=np.float32)
+    bytes_per_row = max(channels * width * 4, 1)
+    chunk_rows = max(radius * 2 + 1, int(max_chunk_bytes // bytes_per_row))
+    chunk_rows = max(chunk_rows, radius * 2 + 1)
+
+    start = 0
+    while start < height:
+        end = min(height, start + chunk_rows)
+        pad_top = min(radius, start)
+        pad_bottom = min(radius, height - end)
+        slice_start = start - pad_top
+        slice_end = min(height, end + pad_bottom)
+        chunk = array[:, slice_start:slice_end, :]
+        tensor = torch.from_numpy(chunk).unsqueeze(0).to(device=device, dtype=torch.float32)
+        padded = F.pad(tensor, (radius, radius, radius, radius), mode="reflect")
+        smoothed = F.conv2d(padded, kernel, groups=channels).squeeze(0)
+        usable = smoothed[:, pad_top : pad_top + (end - start), :]
+        result[:, start:end, :] = usable.detach().cpu().numpy()
+        start = end
+
+    return result.astype(np.float32)
+
+
+def _build_gaussian_kernel(radius, sigma, channels, device):
+    if radius <= 0:
+        kernel = torch.ones((1, 1, 1, 1), device=device, dtype=torch.float32)
+        return kernel.repeat(channels, 1, 1, 1)
+    coords = torch.arange(-radius, radius + 1, dtype=torch.float32, device=device)
+    kernel_1d = torch.exp(-(coords ** 2) / (2 * sigma * sigma))
+    kernel_1d = kernel_1d / kernel_1d.sum()
+    kernel_2d = kernel_1d[:, None] * kernel_1d[None, :]
+    kernel = kernel_2d.view(1, 1, kernel_2d.shape[0], kernel_2d.shape[1])
+    return kernel.repeat(channels, 1, 1, 1)
+
+
+def _smoothing_device():
+    try:
+        if torch.cuda.is_available():
+            return torch.device("cuda")
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            return torch.device("mps")
+    except Exception:
+        pass
+    return torch.device("cpu")
 
 
 def _build_weight_mask(size):
@@ -191,10 +309,9 @@ def _build_weight_mask(size):
     return mask.astype(np.float32)
 
 
-def recommended_chunk_plan(array_shape, device):
-    chunk_size, budget, ratio = _derive_chunk_size(array_shape, device)
-    overlap = max(32, int(chunk_size * 0.25))
-    settings = get_adaptive_settings()
+def recommended_chunk_plan(array_shape, device, profile_tier: Optional[str] = None):
+    chunk_size, budget, ratio, settings = _derive_chunk_size(array_shape, device, profile_tier=profile_tier)
+    overlap = 0
     return ChunkPlan(
         chunk_size=chunk_size,
         overlap=overlap,
@@ -225,6 +342,7 @@ def execute_cnn_segmentation(
     tile_size,
     device,
     status_callback=None,
+    profile_tier: Optional[str] = None,
 ):
     height, width = array.shape[1], array.shape[2]
     effective_tile = min(tile_size, chunk_plan.chunk_size) if chunk_plan else tile_size
@@ -247,6 +365,7 @@ def execute_cnn_segmentation(
                 status_callback=status_callback,
                 memory_budget=chunk_plan.budget_bytes,
                 prefetch_depth=chunk_plan.prefetch_depth,
+                profile_tier=profile_tier,
             ),
             status_callback,
         )
@@ -259,6 +378,7 @@ def execute_cnn_segmentation(
         status_callback=status_callback,
         memory_budget=chunk_plan.budget_bytes if chunk_plan else None,
         prefetch_depth=chunk_plan.prefetch_depth if chunk_plan else None,
+        profile_tier=profile_tier,
     )
 
 # Predict coverage map using kmeans
@@ -337,10 +457,12 @@ def predict_cnn(
     status_callback=None,
     memory_budget=None,
     prefetch_depth=None,
+    profile_tier: Optional[str] = None,
 ):
-    settings = get_adaptive_settings()
+    effective_budget = memory_budget or DEFAULT_MEMORY_BUDGET
+    settings = get_adaptive_settings(effective_budget, tier=profile_tier)
     prefetch_depth = prefetch_depth or settings.prefetch_depth
-    memory_budget = memory_budget or DEFAULT_MEMORY_BUDGET
+    memory_budget = effective_budget
 
     tiles, (height_pad, width_pad), grid_shape = tile_raster(array, tile_size)
     _emit_status(

@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>384</width>
-    <height>292</height>
+    <height>340</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -25,10 +25,10 @@
   <widget class="QPushButton" name="buttonPredict">
    <property name="geometry">
     <rect>
-     <x>50</x>
-     <y>155</y>
-     <width>141</width>
-     <height>34</height>
+      <x>50</x>
+      <y>155</y>
+      <width>141</width>
+      <height>34</height>
     </rect>
    </property>
    <property name="toolTip">
@@ -44,12 +44,11 @@
      <x>40</x>
      <y>220</y>
      <width>291</width>
-     <height>51</height>
+     <height>110</height>
     </rect>
    </property>
    <property name="plainText">
-    <string>Please input key with dashes
-</string>
+        <string/>
    </property>
    <property name="overwriteMode">
     <bool>false</bool>
@@ -61,10 +60,10 @@
   <widget class="QLabel" name="imageLarge">
    <property name="geometry">
     <rect>
-     <x>240</x>
-     <y>80</y>
-     <width>121</width>
-     <height>119</height>
+      <x>240</x>
+      <y>80</y>
+      <width>121</width>
+      <height>119</height>
     </rect>
    </property>
    <property name="styleSheet">
@@ -77,10 +76,10 @@
   <widget class="QComboBox" name="inputLoadModel">
    <property name="geometry">
     <rect>
-     <x>20</x>
-     <y>30</y>
-     <width>101</width>
-     <height>32</height>
+      <x>20</x>
+      <y>30</y>
+      <width>101</width>
+      <height>32</height>
     </rect>
    </property>
    <property name="toolTip">
@@ -96,10 +95,10 @@
   <widget class="QLabel" name="labelLoadModel">
    <property name="geometry">
     <rect>
-     <x>50</x>
-     <y>10</y>
-     <width>81</width>
-     <height>18</height>
+      <x>50</x>
+      <y>10</y>
+      <width>81</width>
+      <height>18</height>
     </rect>
    </property>
    <property name="text">
@@ -109,10 +108,10 @@
   <widget class="QLabel" name="labelSegments">
    <property name="geometry">
     <rect>
-     <x>50</x>
-     <y>85</y>
-     <width>161</width>
-     <height>18</height>
+      <x>50</x>
+      <y>85</y>
+      <width>161</width>
+      <height>18</height>
     </rect>
    </property>
    <property name="text">
@@ -122,10 +121,10 @@
   <widget class="Line" name="line">
    <property name="geometry">
     <rect>
-     <x>210</x>
-     <y>80</y>
-     <width>16</width>
-     <height>121</height>
+      <x>210</x>
+      <y>80</y>
+      <width>16</width>
+      <height>121</height>
     </rect>
    </property>
    <property name="orientation">
@@ -135,10 +134,10 @@
   <widget class="Line" name="line_2">
    <property name="geometry">
     <rect>
-     <x>20</x>
-     <y>70</y>
-     <width>200</width>
-     <height>20</height>
+      <x>20</x>
+      <y>70</y>
+      <width>200</width>
+      <height>20</height>
     </rect>
    </property>
    <property name="orientation">
@@ -148,10 +147,10 @@
   <widget class="Line" name="line_3">
    <property name="geometry">
     <rect>
-     <x>19</x>
-     <y>190</y>
-     <width>200</width>
-     <height>20</height>
+      <x>19</x>
+      <y>190</y>
+      <width>200</width>
+      <height>20</height>
     </rect>
    </property>
    <property name="orientation">
@@ -161,10 +160,10 @@
   <widget class="Line" name="line_4">
    <property name="geometry">
     <rect>
-     <x>10</x>
-     <y>80</y>
-     <width>16</width>
-     <height>121</height>
+      <x>10</x>
+      <y>80</y>
+      <width>16</width>
+      <height>121</height>
     </rect>
    </property>
    <property name="orientation">
@@ -174,10 +173,10 @@
   <widget class="QComboBox" name="inputLayer">
    <property name="geometry">
     <rect>
-     <x>140</x>
-     <y>30</y>
-     <width>101</width>
-     <height>32</height>
+      <x>140</x>
+      <y>30</y>
+      <width>101</width>
+      <height>32</height>
     </rect>
    </property>
    <property name="toolTip">
@@ -193,10 +192,10 @@
   <widget class="QLabel" name="labelLoadModel_2">
    <property name="geometry">
     <rect>
-     <x>160</x>
-     <y>10</y>
-     <width>81</width>
-     <height>18</height>
+      <x>160</x>
+      <y>10</y>
+      <width>81</width>
+      <height>18</height>
     </rect>
    </property>
    <property name="text">
@@ -206,10 +205,10 @@
   <widget class="QLabel" name="labelLoadModel_3">
    <property name="geometry">
     <rect>
-     <x>270</x>
-     <y>10</y>
-     <width>81</width>
-     <height>18</height>
+      <x>270</x>
+      <y>10</y>
+      <width>81</width>
+      <height>18</height>
     </rect>
    </property>
    <property name="accessibleDescription">
@@ -222,10 +221,10 @@
   <widget class="QComboBox" name="inputRes">
    <property name="geometry">
     <rect>
-     <x>260</x>
-     <y>30</y>
-     <width>101</width>
-     <height>32</height>
+      <x>260</x>
+      <y>30</y>
+      <width>101</width>
+      <height>32</height>
     </rect>
    </property>
    <property name="toolTip">
@@ -241,10 +240,10 @@
   <widget class="QLineEdit" name="inputSegments">
    <property name="geometry">
     <rect>
-     <x>60</x>
-     <y>110</y>
-     <width>113</width>
-     <height>32</height>
+      <x>60</x>
+      <y>110</y>
+      <width>113</width>
+      <height>32</height>
     </rect>
    </property>
   </widget>

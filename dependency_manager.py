@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib
+import logging
 import os
 import platform
 import subprocess
@@ -23,6 +24,8 @@ while _vendor_str in sys.path:
 sys.path.append(_vendor_str)
 
 _ENSURED = False
+_PROFILED_POST_INSTALL = False
+_LOGGER = logging.getLogger(__name__)
 
 
 def ensure_dependencies() -> None:
@@ -35,8 +38,14 @@ def ensure_dependencies() -> None:
         _ENSURED = True
         return
 
+    installed_labels: List[str] = []
     for spec in _package_specs():
-        _ensure_package(spec)
+        if _ensure_package(spec):
+            label = str(spec.get("label", spec.get("pip", "package")))
+            installed_labels.append(label)
+
+    if installed_labels:
+        _run_post_install_tasks(installed_labels)
 
     _ENSURED = True
 
@@ -83,11 +92,11 @@ def _torch_index_args() -> List[str]:
     return ["--index-url", "https://download.pytorch.org/whl/cu121"]
 
 
-def _ensure_package(spec: Dict[str, object]) -> None:
+def _ensure_package(spec: Dict[str, object]) -> bool:
     import_name = spec["import"]  # type: ignore[index]
     try:
         importlib.import_module(import_name)  # type: ignore[arg-type]
-        return
+        return False
     except ImportError:
         pass
 
@@ -125,6 +134,7 @@ def _ensure_package(spec: Dict[str, object]) -> None:
             "Run QGIS Python console and install it manually."
         ) from exc
     _close_install_popup(dialog)
+    return True
 
 
 def _bootstrap_pip() -> None:
@@ -176,13 +186,13 @@ def _python_executable() -> str:
 def _start_install_popup(package_label: str) -> Optional[Any]:
     if QMessageBox is None:
         return None
+    _ = package_label  # parameter kept for backwards compatibility; message is generic now
 
     box = QMessageBox()
-    box.setWindowTitle("Segmenter Dependencies")
+    box.setWindowTitle("Segmenter Setup")
     box.setText(
-        "Installing "
-        + package_label
-        + "...\nThis may take a few minutes. QGIS will continue once this finishes."
+        "Preparing the Segmenter plugin, please hold...\n"
+        "You can keep QGIS open; we'll resume automatically once setup completes."
     )
     box.setStandardButtons(QMessageBox.NoButton)
     box.setIcon(QMessageBox.Information)
@@ -197,3 +207,43 @@ def _close_install_popup(box: Optional[Any]) -> None:
         return
     box.hide()
     box.deleteLater()
+
+
+def _run_post_install_tasks(installed_labels: List[str]) -> None:
+    _profile_after_install()
+
+
+def _profile_after_install() -> None:
+    global _PROFILED_POST_INSTALL
+    if _PROFILED_POST_INSTALL:
+        return
+    try:
+        import torch  # noqa: WPS433 - runtime import
+    except Exception as exc:  # pragma: no cover - torch missing
+        _LOGGER.debug("Skipping post-install profiling: torch unavailable (%s)", exc)
+        return
+
+    try:
+        from . import perf_tuner  # type: ignore
+    except Exception as exc:  # pragma: no cover - avoid hard failure on import
+        _LOGGER.debug("Skipping post-install profiling: perf_tuner import failed (%s)", exc)
+        return
+
+    plugin_dir = str(Path(__file__).resolve().parent)
+    device = _select_profiling_device(torch)
+    try:
+        perf_tuner.load_or_profile_settings(plugin_dir, device)
+        _PROFILED_POST_INSTALL = True
+    except Exception as exc:  # pragma: no cover - best effort
+        _LOGGER.warning("Post-install profiling failed: %s", exc)
+
+
+def _select_profiling_device(torch_module):
+    try:
+        if torch_module.cuda.is_available():
+            return torch_module.device("cuda")
+        if hasattr(torch_module.backends, "mps") and torch_module.backends.mps.is_available():
+            return torch_module.device("mps")
+    except Exception:
+        pass
+    return torch_module.device("cpu")
