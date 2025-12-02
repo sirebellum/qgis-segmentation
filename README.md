@@ -16,6 +16,8 @@ On macOS the installer defaults to the CPU build of PyTorch. Windows and Linux s
 
 If QGIS embeds Python in a non-standard way, set `SEGMENTER_PYTHON` to the absolute path of the interpreter that should run `pip`.
 
+While a model is running, the log panel in the dialog now streams live status updates (tiling progress, clustering stages, rendering) so you can monitor long operations.
+
 If you need to perform a manual install (for example on an offline machine), open the QGIS Python console and run:
 
 ```
