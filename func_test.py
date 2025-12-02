@@ -11,6 +11,11 @@ from funcs import (
     ChunkPlan,
     AdaptiveSettings,
     set_adaptive_settings,
+    _compute_chunk_starts,
+    _normalize_cluster_labels,
+    recommended_chunk_plan,
+    _derive_chunk_size,
+    _ChunkAggregator,
 )
 from perf_tuner import load_or_profile_settings
 from raster_utils import ensure_channel_first

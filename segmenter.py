@@ -109,9 +109,10 @@ class Task(QgsTask):
             return
         try:
             callback(message)
-        except Exception:
+        except Exception:  # pragma: no cover - best effort status callback
             pass
-            
+
+
 def run_task(function, *args, **kwargs):
     task = Task(function, *args, **kwargs)
     QgsApplication.taskManager().addTask(task)
