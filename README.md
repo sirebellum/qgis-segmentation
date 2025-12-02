@@ -18,7 +18,7 @@ If QGIS embeds Python in a non-standard way, set `SEGMENTER_PYTHON` to the absol
 
 While a model is running, the log panel in the dialog now streams live status updates (tiling progress, clustering stages, rendering) so you can monitor long operations.
 
-Large rasters are processed with a YOLO-style overlapping sliding window. The plugin inspects the available VRAM on CUDA devices (using 0.9% of the free memory) or MPS (0.75%) to pick a safe chunk size, then blends the overlapping predictions back together so you get a seamless output without exhausting GPU memory. Within each chunk the CNN tiles are now batched and prefetched to the GPU using the same memory budget, so utilization stays high without increasing peak RAM use.
+Large rasters are processed with a YOLO-style overlapping sliding window. The plugin inspects the available memory on CUDA devices (using 0.9% of the free memory), MPS (0.75%), or CPU (1%) to pick a safe chunk size, then blends the overlapping predictions back together so you get a seamless output without exhausting GPU memory. Within each chunk the CNN tiles are now batched and prefetched to the GPU using the same memory budget, so utilization stays high without increasing peak RAM use.
 
 On first launch, Segmenter profiles your local GPU to pick the best safety factor and prefetch depth for the batching logic. Results are cached in `perf_profile.json` inside the plugin so later runs reuse them instantly. Set `SEGMENTER_SKIP_PROFILING=1` if you prefer the default heuristics.
 

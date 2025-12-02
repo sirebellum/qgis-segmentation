@@ -67,8 +67,8 @@ def _emit_status(callback, message):
         return
     try:
         callback(message)
-    except Exception:  # pragma: no cover - best effort status callback
-        pass
+    except Exception:
+        pass  # Silently ignore callback errors to avoid interrupting processing
 
 
 def _process_in_chunks(array, plan, num_segments, infer_fn, status_callback):
@@ -110,7 +110,7 @@ def _derive_chunk_size(array_shape, device):
     ratio = 0.009 if device.type == "cuda" else 0.0075 if device.type == "mps" else 0.01
     budget = max(int(free_bytes * ratio), 64 * 1024 * 1024)
     bytes_per_pixel = channels * 4
-    safety = 8
+    safety = get_adaptive_settings().safety_factor
     max_pixels = max(budget // (bytes_per_pixel * safety), 1)
     tile_side = int(math.sqrt(max_pixels))
     tile_side = max(128, min(512, tile_side))
@@ -191,7 +191,7 @@ def execute_kmeans_segmentation(array, num_segments, resolution, chunk_plan, sta
             array,
             chunk_plan,
             num_segments,
-            lambda data: predict_kmeans(data, num_segments, resolution, status_callback=None),
+            lambda data: predict_kmeans(data, num_segments, resolution, status_callback=status_callback),
             status_callback,
         )
     return predict_kmeans(array, num_segments, resolution, status_callback=status_callback)
@@ -224,7 +224,7 @@ def execute_cnn_segmentation(
                 num_segments,
                 tile_size=_tile_for_data(data),
                 device=device,
-                status_callback=None,
+                status_callback=status_callback,
                 memory_budget=chunk_plan.budget_bytes,
                 prefetch_depth=chunk_plan.prefetch_depth,
             ),

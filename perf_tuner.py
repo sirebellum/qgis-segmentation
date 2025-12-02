@@ -112,8 +112,9 @@ def _device_key(device: torch.device) -> str:
             return f"cuda:{idx}:{uuid}"
         name = torch.cuda.get_device_name(idx)
         return f"cuda:{idx}:{name}"
-    if device.type == "mps":
-        return "mps"
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        if device.type == "mps":
+            return "mps"
     return "cpu"
 
 
