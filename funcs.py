@@ -466,7 +466,17 @@ def _prefetch_batches(tiles, batch_size, device, depth=2):
                 futures.append((future, start, end))
                 index = end
             future, start, end = futures.popleft()
-            yield future.result(), start, end, total
+            try:
+                yield future.result(), start, end, total
+            except Exception as exc:
+                # Ensure all remaining futures are awaited so exceptions are not lost
+                while futures:
+                    leftover_future, _, _ = futures.popleft()
+                    try:
+                        leftover_future.result()
+                    except Exception:
+                        pass  # Optionally log or collect these exceptions
+                raise
     finally:
         executor.shutdown(wait=True)
 
