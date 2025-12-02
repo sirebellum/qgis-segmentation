@@ -119,4 +119,3 @@ pytestdebug.log
 *.temp
 zip_build/
 vendor/
-perf_profile.json
