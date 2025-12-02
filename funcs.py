@@ -94,8 +94,6 @@ def predict_cnn(
     status_callback=None,
 ):
 
-    assert array.shape[0] == 3, f"Invalid array shape! \n{array.shape}"
-
     # Tile raster
     tiles, (height_pad, width_pad) = tile_raster(array, tile_size)
     _emit_status(
@@ -123,13 +121,24 @@ def predict_cnn(
             _emit_status(status_callback, f"CNN inference {min(percent,100)}% complete.")
     coverage_map = np.concatenate(coverage_map, axis=0)
 
-    # Convert from tiles (N, C, H//tile_size, W//tile_size) to (C, H, W)
-    coverage_map = coverage_map.transpose(1, 0, 2, 3)
-    coverage_map = coverage_map.reshape(
-        coverage_map.shape[0],
-        np.sqrt(coverage_map.shape[1]).astype(int) * tile_size,
-        np.sqrt(coverage_map.shape[1]).astype(int) * tile_size,
-    )
+    # Convert from tiles (Ht*Wt, C, cnn_tile, cnn_tile) to (C, H, W)
+    N_cnn, C_cnn, h_cnn_tile, w_cnn_tile = coverage_map.shape
+    
+    # Calculate full height (H) and width (W)
+    Ht = (array.shape[1] + height_pad) // tile_size
+    Wt = (array.shape[2] + width_pad) // tile_size
+    assert Ht * Wt == N_cnn, f"Invalid number of tiles! \n{Ht * Wt} != {N_cnn}"
+    H_cnn = Ht * h_cnn_tile
+    W_cnn = Wt * w_cnn_tile
+    
+    # Reshape the tiled array into the full form
+    coverage_map = coverage_map.reshape(Ht, Wt, C_cnn, h_cnn_tile, w_cnn_tile)
+    
+    # Transpose to move tiles into the correct position
+    coverage_map = coverage_map.transpose(2, 0, 3, 1, 4)
+    
+    # Reshape into the full (C, H, W) array
+    coverage_map = coverage_map.reshape(C_cnn, H_cnn, W_cnn)
 
     # Perform kmeans to get num_segments clusters
     coverage_map = predict_kmeans(
@@ -139,12 +148,12 @@ def predict_cnn(
         status_callback=status_callback,
     )
 
-    # Upsample
-    coverage_map = torch.tensor(coverage_map)
-    coverage_map = torch.unsqueeze(coverage_map, dim=0)
+    # Upsample to original size
+    coverage_map = torch.tensor(coverage_map).unsqueeze(0)
+    og_size = (Ht * tile_size, Wt * tile_size)
     coverage_map = torch.nn.Upsample(
-        size=(array.shape[1]+height_pad, array.shape[2]+width_pad), mode="nearest"
-    )(coverage_map)
+        size=og_size, mode="nearest"
+    )(coverage_map.byte())
 
     # Get rid of padding
     coverage_map = coverage_map[0, :, : array.shape[1], : array.shape[2]]
