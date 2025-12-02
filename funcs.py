@@ -1,8 +1,15 @@
+import os
+
+try:
+    from .dependency_manager import ensure_dependencies
+except ImportError:  # pragma: no cover
+    from dependency_manager import ensure_dependencies
+
+ensure_dependencies()
+
 import numpy as np
 import torch
 from sklearn.cluster import KMeans
-import numpy as np
-import os
 
 # Predict coverage map using kmeans
 def predict_kmeans(array, num_segments=16, resolution=16):

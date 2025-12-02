@@ -118,3 +118,4 @@ pytestdebug.log
 *.tmp
 *.temp
 zip_build/
+vendor/

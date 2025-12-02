@@ -10,15 +10,31 @@ Not anymore! Introducing the machine learning powered qgis plugin that will chan
 
 ## Dependencies
 
-The tool should automatically try to install the required dependencies. To manually install the dependencies required by the tool, open your python console in QGIS and enter the following lines:
+Segmenter now ships with a lightweight dependency bootstrapper. When the plugin loads it checks for `torch`, `scikit-learn`, and `numpy` and, if they are missing, installs them into `<plugin>/vendor` using the Python interpreter that ships with QGIS. This keeps the QGIS installation untouched while ensuring the models can run.
+
+On macOS the installer defaults to the CPU build of PyTorch. Windows and Linux systems default to the CUDA 12.1 build so that GPU acceleration remains available; set `SEGMENTER_TORCH_INDEX_URL` or `SEGMENTER_TORCH_SPEC` in the environment before starting QGIS to pin a different wheel. Set `SEGMENTER_SKIP_AUTO_INSTALL=1` if you prefer to manage dependencies yourself.
+
+If QGIS embeds Python in a non-standard way, set `SEGMENTER_PYTHON` to the absolute path of the interpreter that should run `pip`.
+
+If you need to perform a manual install (for example on an offline machine), open the QGIS Python console and run:
 
 ```
-import pip
-pip.main(["install", "scikit-learn"])
-pip.main(["install", "torch", "--index-url", "https://download.pytorch.org/whl/cu121"])
+import sys
+import subprocess
+subprocess.check_call([
+	sys.executable,
+	"-m",
+	"pip",
+	"install",
+	"torch==2.2.2",
+	"scikit-learn>=1.1,<2.0",
+	"numpy>=1.23,<2.0",
+	"--target",
+	r"/path/to/segmenter/vendor",
+])
 ```
 
-If the above install does not work, or if you have other questions, please contact help@quantcivil.ai.
+Replace the `--target` path with the Segmenter plugin directory in your profile. Contact help@quantcivil.ai if you run into issues.
 
 ## Instructions
 Below are the steps for a basic segmentation:

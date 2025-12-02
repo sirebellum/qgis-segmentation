@@ -38,21 +38,9 @@ from io import BytesIO
 import requests
 from osgeo import gdal
 
-# Install necessary packages
-import pkg_resources, pip
-def is_package_installed(package_name):
-    try:
-        pkg_resources.get_distribution(package_name)
-        return True
-    except pkg_resources.DistributionNotFound:
-        return False
+from .dependency_manager import ensure_dependencies
 
-if not is_package_installed("torch"):
-    pip.main(["install", "torch", "--index-url", "https://download.pytorch.org/whl/cu121"])
-if not is_package_installed("scikit-learn"):
-    pip.main(["install", "scikit-learn"])
-if not is_package_installed("numpy"):
-    pip.main(["install", "numpy"])
+ensure_dependencies()
 
 import torch
 from sklearn.cluster import KMeans
@@ -353,9 +341,11 @@ class Segmenter:
             self.dlg = SegmenterDialog()
             self.canvas = self.iface.mapCanvas()
 
-            # Set device
+            # Set device (CUDA, CPU)
             if torch.cuda.is_available(): # Cuda
                 self.device = torch.device("cuda")
+            elif torch.backends.mps.is_available(): # Multi-Process Service
+                self.device = torch.device("mps")
             else: # CPU
                 self.device = torch.device("cpu")
 
