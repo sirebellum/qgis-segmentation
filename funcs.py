@@ -145,7 +145,7 @@ def _process_in_chunks(array, plan, num_segments, infer_fn, status_callback):
     y_starts = _compute_chunk_starts(height, plan.chunk_size, stride)
     x_starts = _compute_chunk_starts(width, plan.chunk_size, stride)
     total = len(y_starts) * len(x_starts)
-    aggregator = _ChunkAggregator(height, width, num_segments, plan.chunk_size)
+    aggregator = _ChunkAggregator(height, width, num_segments, plan.chunk_size, status_callback)
 
     for idx, (y, x) in enumerate(itertools.product(y_starts, x_starts), start=1):
         y_end = min(y + plan.chunk_size, height)
@@ -212,7 +212,7 @@ def _system_available_memory():
 
 
 class _ChunkAggregator:
-    def __init__(self, height, width, num_segments, chunk_size):
+    def __init__(self, height, width, num_segments, chunk_size, status_callback=None):
         self.height = height
         self.width = width
         self.num_segments = num_segments
@@ -220,6 +220,7 @@ class _ChunkAggregator:
         self.weight = np.zeros((height, width), dtype=np.float32)
         self.weight_template = _build_weight_mask(chunk_size)
         self.chunk_size = chunk_size
+        self._status_callback = status_callback
 
     def add(self, labels, region):
         y0, x0, y1, x1 = region
@@ -234,20 +235,31 @@ class _ChunkAggregator:
 
     def finalize(self):
         sigma = max(1.0, min(self.chunk_size / 10.0, 32.0))
-        smoothed_scores = _gaussian_blur_channels(self.scores, sigma)
-        smoothed_weight = _gaussian_blur_channels(self.weight[np.newaxis, ...], sigma)[0]
+        _emit_status(self._status_callback, "Smoothing CNN logits with GPU gradients...")
+        smoothed_scores = _gaussian_blur_channels(
+            self.scores,
+            sigma,
+            status_callback=lambda msg: _emit_status(self._status_callback, msg),
+            stage_label="scores",
+        )
+        smoothed_weight = _gaussian_blur_channels(
+            self.weight[np.newaxis, ...],
+            sigma,
+            status_callback=lambda msg: _emit_status(self._status_callback, msg),
+            stage_label="weights",
+        )[0]
         weight = np.maximum(smoothed_weight, 1e-6)
         probs = smoothed_scores / weight
         return np.argmax(probs, axis=0).astype(np.uint8)
 
 
-def _gaussian_blur_channels(array, sigma):
+def _gaussian_blur_channels(array, sigma, status_callback=None, stage_label="scores"):
     if sigma <= 0:
         return array
-    return _chunked_gaussian_blur(array, sigma)
+    return _chunked_gaussian_blur(array, sigma, status_callback=status_callback, stage_label=stage_label)
 
 
-def _chunked_gaussian_blur(array, sigma, max_chunk_bytes=SMOOTH_CHUNK_BYTES):
+def _chunked_gaussian_blur(array, sigma, max_chunk_bytes=SMOOTH_CHUNK_BYTES, status_callback=None, stage_label="scores"):
     sigma = max(float(sigma), 1e-6)
     channels, height, width = array.shape
     radius = int(max(1, round(3 * sigma)))
@@ -259,6 +271,8 @@ def _chunked_gaussian_blur(array, sigma, max_chunk_bytes=SMOOTH_CHUNK_BYTES):
     chunk_rows = max(chunk_rows, radius * 2 + 1)
 
     start = 0
+    total_chunks = max(1, math.ceil(height / chunk_rows))
+    chunk_index = 0
     while start < height:
         end = min(height, start + chunk_rows)
         pad_top = min(radius, start)
@@ -272,6 +286,12 @@ def _chunked_gaussian_blur(array, sigma, max_chunk_bytes=SMOOTH_CHUNK_BYTES):
         usable = smoothed[:, pad_top : pad_top + (end - start), :]
         result[:, start:end, :] = usable.detach().cpu().numpy()
         start = end
+        chunk_index += 1
+        if status_callback:
+            percent = int((chunk_index / total_chunks) * 100)
+            status_callback(
+                f"GPU smoothing [{stage_label}] chunk {chunk_index}/{total_chunks} ({percent}% complete)."
+            )
 
     return result.astype(np.float32)
 
