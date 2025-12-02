@@ -113,3 +113,8 @@ pytestdebug.log
 # QGIS specific caches
 .qgis2/
 .qgis3/
+
+# Temporary files
+*.tmp
+*.temp
+zip_build/
