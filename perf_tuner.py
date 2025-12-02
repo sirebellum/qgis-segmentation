@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 from dataclasses import asdict
@@ -10,6 +11,8 @@ from typing import Callable, Dict, Tuple
 
 import numpy as np
 import torch
+
+logger = logging.getLogger(__name__)
 
 try:
     from .funcs import AdaptiveSettings, set_adaptive_settings, predict_cnn
@@ -107,7 +110,11 @@ def _read_profile_file(path: Path) -> Dict[str, Dict[str, int]]:
         return {}
     try:
         return json.loads(path.read_text())
-    except Exception:
+    except json.JSONDecodeError as e:
+        logger.warning("Failed to parse profile file %s: %s", path, e)
+        return {}
+    except OSError as e:
+        logger.warning("Failed to read profile file %s: %s", path, e)
         return {}
 
 
