@@ -346,7 +346,7 @@ class Segmenter:
                 layer_array,
                 num_segments,
                 chunk_plan,
-                min(TILE_SIZE, chunk_plan.chunk_size),
+                TILE_SIZE,
                 device,
                 self.log_status,
             )
