@@ -27,6 +27,9 @@ class ChunkPlan:
     ratio: float
     prefetch_depth: int
 
+    def __post_init__(self):
+        if self.overlap >= self.chunk_size:
+            raise ValueError(f"overlap ({self.overlap}) must be less than chunk_size ({self.chunk_size})")
     @property
     def stride(self) -> int:
         return max(1, self.chunk_size - self.overlap)
@@ -95,8 +98,9 @@ def _compute_chunk_starts(length, chunk_size, stride):
     if length <= chunk_size:
         return [0]
     starts = list(range(0, max(1, length - chunk_size), stride))
-    if starts[-1] != length - chunk_size:
-        starts.append(length - chunk_size)
+    last_start = length - chunk_size
+    if last_start > 0 and (not starts or starts[-1] != last_start):
+        starts.append(last_start)
     return sorted(set(starts))
 
 
@@ -161,8 +165,7 @@ def _build_weight_mask(size):
     if size <= 1:
         return np.ones((1, 1), dtype=np.float32)
     window = np.hanning(size)
-    if np.max(window) == 0:
-        window = np.ones(size)
+    assert np.max(window) != 0, "np.hanning(size) returned all zeros, which should never happen for size > 1"
     mask = np.outer(window, window)
     mask = mask / np.max(mask)
     return mask.astype(np.float32)
@@ -300,7 +303,7 @@ def predict_kmeans(array, num_segments=16, resolution=16, status_callback=None):
     clusters = torch.nn.Upsample(
         size=(array.shape[-2], array.shape[-1]), mode="nearest"
     )(clusters.byte())
-    clusters = clusters.squeeze()
+    clusters = clusters.detach().squeeze()
 
     _emit_status(status_callback, "K-Means output upsampled to raster resolution.")
     return clusters.cpu().numpy()
@@ -424,10 +427,16 @@ def tile_raster(array, tile_size):
 
 
 def _normalize_cluster_labels(labels, centers):
+    # Validate that all label indices are within bounds
+    n_centers = centers.shape[0]
+    flat = labels.reshape(-1)
+    if not np.all((flat >= 0) & (flat < n_centers)):
+        raise ValueError(
+            f"All label indices must be in [0, {n_centers-1}]. Found out-of-bounds values: {flat[(flat < 0) | (flat >= n_centers)]}"
+        )
     ordering = np.argsort(centers.mean(axis=1))
     mapping = np.zeros_like(ordering)
     mapping[ordering] = np.arange(ordering.size)
-    flat = labels.reshape(-1)
     flat = mapping[flat]
     return flat.reshape(labels.shape)
 
@@ -459,7 +468,17 @@ def _prefetch_batches(tiles, batch_size, device, depth=2):
                 futures.append((future, start, end))
                 index = end
             future, start, end = futures.popleft()
-            yield future.result(), start, end, total
+            try:
+                yield future.result(), start, end, total
+            except Exception as exc:
+                # Ensure all remaining futures are awaited so exceptions are not lost
+                while futures:
+                    leftover_future, _, _ = futures.popleft()
+                    try:
+                        leftover_future.result()
+                    except Exception:
+                        pass  # Optionally log or collect these exceptions
+                raise
     finally:
         executor.shutdown(wait=True)
 

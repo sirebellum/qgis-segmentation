@@ -69,25 +69,36 @@ def _run_profile(device: torch.device, status_callback: Callable[[str], None] | 
             dummy_model,
             array,
             num_segments=3,
-            tile_size=128,
-            device=device,
-            memory_budget=DEFAULT_BUDGET_BYTES,
-            prefetch_depth=settings.prefetch_depth,
-            status_callback=None,
-        )
-        if device.type == "cuda":
-            torch.cuda.synchronize(device)
-        elapsed = max(time.perf_counter() - start, 1e-6)
-        score = (array.shape[1] * array.shape[2]) / elapsed
-        score /= settings.prefetch_depth  # penalize large prefetch depths slightly
-        if status_callback:
-            status_callback(
-                f"Profile safety {settings.safety_factor}, prefetch {settings.prefetch_depth}: {score:.2f} px/s"
+        try:
+            predict_cnn(
+                dummy_model,
+                array,
+                num_segments=3,
+                tile_size=128,
+                device=device,
+                memory_budget=DEFAULT_BUDGET_BYTES,
+                prefetch_depth=settings.prefetch_depth,
+                status_callback=None,
             )
-        if score > best_score:
-            best_score = score
-            best_settings = settings
-
+            if device.type == "cuda":
+                torch.cuda.synchronize(device)
+            elapsed = max(time.perf_counter() - start, 1e-6)
+            score = (array.shape[1] * array.shape[2]) / elapsed
+            score /= settings.prefetch_depth  # penalize large prefetch depths slightly
+            if status_callback:
+                status_callback(
+                    f"Profile safety {settings.safety_factor}, prefetch {settings.prefetch_depth}: {score:.2f} px/s"
+                )
+            if score > best_score:
+                best_score = score
+                best_settings = settings
+        except RuntimeError as e:
+            # Catch OOM or memory errors and skip this settings combo
+            if status_callback:
+                status_callback(
+                    f"Profile safety {settings.safety_factor}, prefetch {settings.prefetch_depth}: FAILED ({str(e).splitlines()[0]})"
+                )
+            continue
     set_adaptive_settings(best_settings)
     return best_settings
 
@@ -95,6 +106,10 @@ def _run_profile(device: torch.device, status_callback: Callable[[str], None] | 
 def _device_key(device: torch.device) -> str:
     if device.type == "cuda" and torch.cuda.is_available():
         idx = device.index if device.index is not None else torch.cuda.current_device()
+        props = torch.cuda.get_device_properties(idx)
+        uuid = getattr(props, "uuid", None)
+        if uuid is not None:
+            return f"cuda:{idx}:{uuid}"
         name = torch.cuda.get_device_name(idx)
         return f"cuda:{idx}:{name}"
     if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():

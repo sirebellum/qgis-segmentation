@@ -12,6 +12,7 @@ from funcs import (
     set_adaptive_settings,
 )
 from perf_tuner import load_or_profile_settings
+from raster_utils import ensure_channel_first
 
 
 class _DummyModel(torch.nn.Module):
@@ -145,3 +146,16 @@ def test_perf_tuner_profiles_and_caches(tmp_path):
     assert cached.prefetch_depth == 3
     assert len(calls) == 1
     set_adaptive_settings(AdaptiveSettings())
+
+
+def test_ensure_channel_first_promotes_grayscale_arrays():
+    array = np.arange(16, dtype=np.uint8).reshape(4, 4)
+    prepared = ensure_channel_first(array)
+    assert prepared.shape == (1, 4, 4)
+    np.testing.assert_array_equal(prepared[0], array)
+
+
+def test_ensure_channel_first_rejects_invalid_ndarrays():
+    array = np.zeros((2, 3, 4, 5), dtype=np.uint8)
+    with pytest.raises(ValueError):
+        ensure_channel_first(array)

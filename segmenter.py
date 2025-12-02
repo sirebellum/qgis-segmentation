@@ -109,9 +109,10 @@ class Task(QgsTask):
             return
         try:
             callback(message)
-        except Exception:
+        except Exception:  # pragma: no cover - best effort status callback
             pass
-            
+
+
 def run_task(function, *args, **kwargs):
     task = Task(function, *args, **kwargs)
     QgsApplication.taskManager().addTask(task)
@@ -310,13 +311,13 @@ class Segmenter:
         resolution = resolution_map[self.dlg.inputRes.currentText()]
 
         # Set up kwargs
-        device = getattr(self, "device", torch.device("cpu"))
+        if not hasattr(self, "device"):
+            raise AttributeError("Segmenter instance must have a 'device' attribute set before calling predict().")
+        device = self.device
         chunk_plan = recommended_chunk_plan(layer_array.shape, device)
         budget_mb = chunk_plan.budget_bytes / (1024 * 1024)
         self.log_status(
-            "Prepared chunk plan: window "
-            + f"{chunk_plan.chunk_size}px with {chunk_plan.overlap}px overlap"
-            + f" (using {chunk_plan.ratio * 100:.2f}% of free VRAM, ~{budget_mb:.1f} MB)."
+            f"Prepared chunk plan: window {chunk_plan.chunk_size}px with {chunk_plan.overlap}px overlap (using {chunk_plan.ratio * 100:.2f}% of free VRAM, ~{budget_mb:.1f} MB)."
         )
 
         kwargs = {
@@ -346,7 +347,7 @@ class Segmenter:
                 layer_array,
                 num_segments,
                 chunk_plan,
-                min(TILE_SIZE, chunk_plan.chunk_size),
+                TILE_SIZE,
                 device,
                 self.log_status,
             )
