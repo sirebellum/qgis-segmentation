@@ -77,9 +77,13 @@ def _run_profile(device: torch.device, status_callback: Callable[[str], None] | 
         )
         if device.type == "cuda":
             torch.cuda.synchronize(device)
-        elapsed = max(time.perf_counter() - start, 1e-6)
+        # Use a more reasonable lower bound for elapsed time (e.g., 1ms)
+        elapsed = max(time.perf_counter() - start, 1e-3)
+        # Estimate memory usage for current settings
+        est_mem_usage = settings.prefetch_depth * array.nbytes
+        # Score: pixels/sec, penalized by prefetch depth and memory usage
         score = (array.shape[1] * array.shape[2]) / elapsed
-        score /= settings.prefetch_depth  # penalize large prefetch depths slightly
+        score /= (settings.prefetch_depth * (1 + est_mem_usage / DEFAULT_BUDGET_BYTES))
         if status_callback:
             status_callback(
                 f"Profile safety {settings.safety_factor}, prefetch {settings.prefetch_depth}: {score:.2f} px/s"
