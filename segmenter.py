@@ -325,6 +325,7 @@ class Segmenter:
             "model": self.model,
             "num_segments": num_segments,
             "resolution": resolution,
+            "status_callback": self.log_status,
         }
 
         # set up args
