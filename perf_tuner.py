@@ -69,29 +69,36 @@ def _run_profile(device: torch.device, status_callback: Callable[[str], None] | 
             dummy_model,
             array,
             num_segments=3,
-            tile_size=128,
-            device=device,
-            memory_budget=DEFAULT_BUDGET_BYTES,
-            prefetch_depth=settings.prefetch_depth,
-            status_callback=None,
-        )
-        if device.type == "cuda":
-            torch.cuda.synchronize(device)
-        # Use a more reasonable lower bound for elapsed time (e.g., 1ms)
-        elapsed = max(time.perf_counter() - start, 1e-3)
-        # Estimate memory usage for current settings
-        est_mem_usage = settings.prefetch_depth * array.nbytes
-        # Score: pixels/sec, penalized by prefetch depth and memory usage
-        score = (array.shape[1] * array.shape[2]) / elapsed
-        score /= (settings.prefetch_depth * (1 + est_mem_usage / DEFAULT_BUDGET_BYTES))
-        if status_callback:
-            status_callback(
-                f"Profile safety {settings.safety_factor}, prefetch {settings.prefetch_depth}: {score:.2f} px/s"
+        try:
+            predict_cnn(
+                dummy_model,
+                array,
+                num_segments=3,
+                tile_size=128,
+                device=device,
+                memory_budget=DEFAULT_BUDGET_BYTES,
+                prefetch_depth=settings.prefetch_depth,
+                status_callback=None,
             )
-        if score > best_score:
-            best_score = score
-            best_settings = settings
-
+            if device.type == "cuda":
+                torch.cuda.synchronize(device)
+            elapsed = max(time.perf_counter() - start, 1e-6)
+            score = (array.shape[1] * array.shape[2]) / elapsed
+            score /= settings.prefetch_depth  # penalize large prefetch depths slightly
+            if status_callback:
+                status_callback(
+                    f"Profile safety {settings.safety_factor}, prefetch {settings.prefetch_depth}: {score:.2f} px/s"
+                )
+            if score > best_score:
+                best_score = score
+                best_settings = settings
+        except RuntimeError as e:
+            # Catch OOM or memory errors and skip this settings combo
+            if status_callback:
+                status_callback(
+                    f"Profile safety {settings.safety_factor}, prefetch {settings.prefetch_depth}: FAILED ({str(e).splitlines()[0]})"
+                )
+            continue
     set_adaptive_settings(best_settings)
     return best_settings
 
