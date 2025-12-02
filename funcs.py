@@ -95,8 +95,9 @@ def _compute_chunk_starts(length, chunk_size, stride):
     if length <= chunk_size:
         return [0]
     starts = list(range(0, max(1, length - chunk_size), stride))
-    if starts[-1] != length - chunk_size:
-        starts.append(length - chunk_size)
+    last_start = length - chunk_size
+    if last_start > 0 and (not starts or starts[-1] != last_start):
+        starts.append(last_start)
     return sorted(set(starts))
 
 
