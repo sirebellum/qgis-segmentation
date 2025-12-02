@@ -2,5 +2,3 @@ numpy
 requests
 scikit-learn
 torch
-pytest
-flake8
