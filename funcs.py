@@ -18,6 +18,14 @@ from sklearn.cluster import KMeans
 
 DEFAULT_MEMORY_BUDGET = 128 * 1024 * 1024
 
+# Tile size bounds for chunk processing.
+# MIN_TILE_SIZE: Minimum tile size in pixels to ensure meaningful feature extraction.
+# Below 128px, CNN receptive fields may not capture enough context.
+MIN_TILE_SIZE = 128
+# MAX_TILE_SIZE: Maximum tile size in pixels to prevent excessive memory usage per chunk.
+# Larger tiles increase memory pressure; 512px balances quality and efficiency.
+MAX_TILE_SIZE = 512
+
 
 @dataclass
 class ChunkPlan:
@@ -110,10 +118,11 @@ def _derive_chunk_size(array_shape, device):
     ratio = 0.009 if device.type == "cuda" else 0.0075 if device.type == "mps" else 0.01
     budget = max(int(free_bytes * ratio), 64 * 1024 * 1024)
     bytes_per_pixel = channels * 4
-    safety = 8
+    settings = get_adaptive_settings()
+    safety = settings.safety_factor
     max_pixels = max(budget // (bytes_per_pixel * safety), 1)
     tile_side = int(math.sqrt(max_pixels))
-    tile_side = max(128, min(512, tile_side))
+    tile_side = max(MIN_TILE_SIZE, min(MAX_TILE_SIZE, tile_side))
     return tile_side, budget, ratio
 
 
