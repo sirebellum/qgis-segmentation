@@ -121,7 +121,7 @@ def _ensure_package(spec: Dict[str, object]) -> None:
     except (subprocess.CalledProcessError, OSError) as exc:
         _close_install_popup(dialog)
         raise ImportError(
-            "Segmenter could not install dependency '" + str(pip_name) + "'."
+            "Segmenter could not install dependency '" + str(pip_name) + "'. "
             "Run QGIS Python console and install it manually."
         ) from exc
     _close_install_popup(dialog)
