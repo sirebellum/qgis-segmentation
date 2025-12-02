@@ -18,6 +18,16 @@ from sklearn.cluster import KMeans
 
 DEFAULT_MEMORY_BUDGET = 128 * 1024 * 1024
 
+# VRAM budget ratios: fraction of free GPU memory to allocate for chunk processing.
+# These conservative values (~1% or less) leave headroom for PyTorch allocator
+# overhead, CUDA/MPS runtime structures, and concurrent GUI rendering.
+# - CUDA: 0.9% - NVIDIA drivers reserve significant memory for context and streams
+# - MPS: 0.75% - Apple's Metal backend has tighter memory constraints on shared memory
+# - CPU: 1.0% - System RAM is more abundant so we allow a slightly higher ratio
+VRAM_RATIO_CUDA = 0.009  # 0.9% of free VRAM
+VRAM_RATIO_MPS = 0.0075  # 0.75% of free VRAM
+VRAM_RATIO_CPU = 0.01    # 1.0% of available system RAM
+
 
 @dataclass
 class ChunkPlan:
@@ -107,7 +117,12 @@ def _compute_chunk_starts(length, chunk_size, stride):
 def _derive_chunk_size(array_shape, device):
     channels = array_shape[0]
     free_bytes = _free_vram_bytes(device)
-    ratio = 0.009 if device.type == "cuda" else 0.0075 if device.type == "mps" else 0.01
+    if device.type == "cuda":
+        ratio = VRAM_RATIO_CUDA
+    elif device.type == "mps":
+        ratio = VRAM_RATIO_MPS
+    else:
+        ratio = VRAM_RATIO_CPU
     budget = max(int(free_bytes * ratio), 64 * 1024 * 1024)
     bytes_per_pixel = channels * 4
     safety = get_adaptive_settings().safety_factor
