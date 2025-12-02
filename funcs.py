@@ -425,10 +425,16 @@ def tile_raster(array, tile_size):
 
 
 def _normalize_cluster_labels(labels, centers):
+    # Validate that all label indices are within bounds
+    n_centers = centers.shape[0]
+    flat = labels.reshape(-1)
+    if not np.all((flat >= 0) & (flat < n_centers)):
+        raise ValueError(
+            f"All label indices must be in [0, {n_centers-1}]. Found out-of-bounds values: {flat[(flat < 0) | (flat >= n_centers)]}"
+        )
     ordering = np.argsort(centers.mean(axis=1))
     mapping = np.zeros_like(ordering)
     mapping[ordering] = np.arange(ordering.size)
-    flat = labels.reshape(-1)
     flat = mapping[flat]
     return flat.reshape(labels.shape)
 
