@@ -304,7 +304,7 @@ def predict_kmeans(array, num_segments=16, resolution=16, status_callback=None):
     clusters = torch.nn.Upsample(
         size=(array.shape[-2], array.shape[-1]), mode="nearest"
     )(clusters.byte())
-    clusters = clusters.squeeze()
+    clusters = clusters.detach().squeeze()
 
     _emit_status(status_callback, "K-Means output upsampled to raster resolution.")
     return clusters.cpu().numpy()
