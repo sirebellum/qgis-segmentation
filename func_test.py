@@ -5,6 +5,7 @@ import torch
 from funcs import (
     tile_raster,
     predict_cnn,
+    predict_kmeans,
     execute_cnn_segmentation,
     execute_kmeans_segmentation,
     ChunkPlan,
@@ -159,3 +160,44 @@ def test_ensure_channel_first_rejects_invalid_ndarrays():
     array = np.zeros((2, 3, 4, 5), dtype=np.uint8)
     with pytest.raises(ValueError):
         ensure_channel_first(array)
+
+
+# Regression tests for shape preservation (from original unittest-based tests)
+@pytest.mark.parametrize(
+    "array_shape,num_segments,resolution,expected_shape",
+    [
+        ((3, 64, 64), 4, 16, (64, 64)),
+        ((3, 128, 128), 8, 16, (128, 128)),
+        ((3, 256, 256), 16, 16, (256, 256)),
+        ((3, 256, 128), 8, 16, (256, 128)),
+        ((3, 128, 256), 8, 16, (128, 256)),
+    ],
+)
+def test_predict_kmeans_shape_preservation(array_shape, num_segments, resolution, expected_shape):
+    """Regression test: verify predict_kmeans preserves spatial dimensions."""
+    rng = np.random.default_rng(42)
+    array = rng.random(array_shape)
+    result = predict_kmeans(array, num_segments=num_segments, resolution=resolution)
+    assert result.shape == expected_shape
+
+
+@pytest.mark.parametrize(
+    "array_shape,tile_size,expected_height_pad,expected_width_pad,expected_tile_shape",
+    [
+        ((3, 512, 512), 256, 0, 0, (4, 3, 256, 256)),
+        ((3, 500, 500), 256, 12, 12, (4, 3, 256, 256)),
+        ((3, 256, 256), 128, 0, 0, (4, 3, 128, 128)),
+        ((3, 300, 300), 128, 84, 84, (9, 3, 128, 128)),
+        ((3, 256, 128), 128, 0, 0, (2, 3, 128, 128)),
+    ],
+)
+def test_tile_raster_shape_preservation(
+    array_shape, tile_size, expected_height_pad, expected_width_pad, expected_tile_shape
+):
+    """Regression test: verify tile_raster produces correct shapes and padding."""
+    rng = np.random.default_rng(42)
+    array = rng.random(array_shape)
+    tiles, (height_pad, width_pad), grid_shape = tile_raster(array, tile_size=tile_size)
+    assert height_pad == expected_height_pad
+    assert width_pad == expected_width_pad
+    assert tiles.shape == expected_tile_shape

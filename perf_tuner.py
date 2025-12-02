@@ -65,10 +65,6 @@ def _run_profile(device: torch.device, status_callback: Callable[[str], None] | 
     for settings in combos:
         set_adaptive_settings(settings)
         start = time.perf_counter()
-        predict_cnn(
-            dummy_model,
-            array,
-            num_segments=3,
         try:
             predict_cnn(
                 dummy_model,
