@@ -165,8 +165,7 @@ def _build_weight_mask(size):
     if size <= 1:
         return np.ones((1, 1), dtype=np.float32)
     window = np.hanning(size)
-    if np.max(window) == 0:
-        window = np.ones(size)
+    assert np.max(window) != 0, "np.hanning(size) returned all zeros, which should never happen for size > 1"
     mask = np.outer(window, window)
     mask = mask / np.max(mask)
     return mask.astype(np.float32)
