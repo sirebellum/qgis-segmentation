@@ -76,7 +76,7 @@ def _emit_status(callback, message):
     try:
         callback(message)
     except Exception:
-        pass
+        pass  # Silently ignore callback errors to avoid interrupting processing
 
 
 def _process_in_chunks(array, plan, num_segments, infer_fn, status_callback):
@@ -115,7 +115,12 @@ def _compute_chunk_starts(length, chunk_size, stride):
 def _derive_chunk_size(array_shape, device):
     channels = array_shape[0]
     free_bytes = _free_vram_bytes(device)
-    ratio = 0.009 if device.type == "cuda" else 0.0075 if device.type == "mps" else 0.01
+    if device.type == "cuda":
+        ratio = VRAM_RATIO_CUDA
+    elif device.type == "mps":
+        ratio = VRAM_RATIO_MPS
+    else:
+        ratio = VRAM_RATIO_CPU
     budget = max(int(free_bytes * ratio), 64 * 1024 * 1024)
     bytes_per_pixel = channels * 4
     settings = get_adaptive_settings()
@@ -174,8 +179,7 @@ def _build_weight_mask(size):
     if size <= 1:
         return np.ones((1, 1), dtype=np.float32)
     window = np.hanning(size)
-    if np.max(window) == 0:
-        window = np.ones(size)
+    assert np.max(window) != 0, "np.hanning(size) returned all zeros, which should never happen for size > 1"
     mask = np.outer(window, window)
     mask = mask / np.max(mask)
     return mask.astype(np.float32)
@@ -201,7 +205,7 @@ def execute_kmeans_segmentation(array, num_segments, resolution, chunk_plan, sta
             array,
             chunk_plan,
             num_segments,
-            lambda data: predict_kmeans(data, num_segments, resolution, status_callback=None),
+            lambda data: predict_kmeans(data, num_segments, resolution, status_callback=status_callback),
             status_callback,
         )
     return predict_kmeans(array, num_segments, resolution, status_callback=status_callback)
@@ -234,7 +238,7 @@ def execute_cnn_segmentation(
                 num_segments,
                 tile_size=_tile_for_data(data),
                 device=device,
-                status_callback=None,
+                status_callback=status_callback,
                 memory_budget=chunk_plan.budget_bytes,
                 prefetch_depth=chunk_plan.prefetch_depth,
             ),
@@ -397,7 +401,6 @@ def predict_cnn(
     )(coverage_map.byte())
 
     coverage_map = coverage_map[0, 0, : array.shape[1], : array.shape[2]]
-    coverage_map = coverage_map.squeeze()
 
     _emit_status(status_callback, "CNN segmentation map reconstructed.")
     return coverage_map.cpu().numpy()
@@ -452,7 +455,12 @@ def _normalize_cluster_labels(labels, centers):
 
 
 def _recommended_batch_size(channels, height, width, memory_budget, settings):
+    # Ensure all dimensions are at least 1 to avoid division by zero
+    channels = max(1, channels)
+    height = max(1, height)
+    width = max(1, width)
     bytes_per_tile = channels * height * width * 4
+    # bytes_per_tile is guaranteed > 0 since all dimensions are clamped to >= 1
     budget = max(memory_budget or DEFAULT_MEMORY_BUDGET, bytes_per_tile)
     safety = max(1, settings.safety_factor)
     depth = max(1, settings.prefetch_depth)
