@@ -316,9 +316,7 @@ class Segmenter:
         chunk_plan = recommended_chunk_plan(layer_array.shape, device)
         budget_mb = chunk_plan.budget_bytes / (1024 * 1024)
         self.log_status(
-            "Prepared chunk plan: window "
-            + f"{chunk_plan.chunk_size}px with {chunk_plan.overlap}px overlap"
-            + f" (using {chunk_plan.ratio * 100:.2f}% of free VRAM, ~{budget_mb:.1f} MB)."
+            f"Prepared chunk plan: window {chunk_plan.chunk_size}px with {chunk_plan.overlap}px overlap (using {chunk_plan.ratio * 100:.2f}% of free VRAM, ~{budget_mb:.1f} MB)."
         )
 
         kwargs = {
