@@ -402,7 +402,6 @@ def predict_cnn(
     )(coverage_map.byte())
 
     coverage_map = coverage_map[0, 0, : array.shape[1], : array.shape[2]]
-    coverage_map = coverage_map.squeeze()
 
     _emit_status(status_callback, "CNN segmentation map reconstructed.")
     return coverage_map.cpu().numpy()
