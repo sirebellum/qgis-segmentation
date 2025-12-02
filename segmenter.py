@@ -310,7 +310,9 @@ class Segmenter:
         resolution = resolution_map[self.dlg.inputRes.currentText()]
 
         # Set up kwargs
-        device = getattr(self, "device", torch.device("cpu"))
+        if not hasattr(self, "device"):
+            raise AttributeError("Segmenter instance must have a 'device' attribute set before calling predict().")
+        device = self.device
         chunk_plan = recommended_chunk_plan(layer_array.shape, device)
         budget_mb = chunk_plan.budget_bytes / (1024 * 1024)
         self.log_status(
