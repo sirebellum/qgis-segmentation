@@ -36,7 +36,7 @@ subprocess.check_call([
 ])
 ```
 
-Replace the `--target` path with the Segmenter plugin directory in your profile. Contact help@quantcivil.ai if you run into issues.
+If the above install does not work, or if you have other questions, please contact joshua.herrera227@gmail.com.
 
 ## Instructions
 Below are the steps for a basic segmentation:
@@ -47,13 +47,13 @@ Below are the steps for a basic segmentation:
 5. Segment! A raster layer will be produced overlaying the input with the different segments.
 
 ## Example Images
-Below are some examples from the tool. First, a sample map, rendered at 0.5 map units per pixel:
-<img width="800" alt="image" src="https://github.com/sirebellum/qgis-segmentation/assets/25124443/75890823-7899-4dca-bbe9-7372e12e64c0">
+Below are some examples from the tool. First, a sample map, rendered at 0.1 map units per pixel:
+<img width="800" alt="image" src="https://github.com/user-attachments/assets/c3cdf14d-3717-4e39-ad98-71c7e457cc15">
 
-Then, the K-Means segmentation map at high resolution with 8 segments:
-<img width="800" alt="image" src="https://github.com/sirebellum/qgis-segmentation/assets/25124443/a1b3c7ef-86a7-4c5b-b2ac-5b13ae408f91">
+Then, the K-Means segmentation map at low resolution with 6 segments:
+<img width="800" alt="image" src="https://github.com/user-attachments/assets/2bf88670-db9f-48dc-919d-4813f788a1cd">
 
-Finally, a CNN segmentation map at high resolution with 8 segments:
-<img width="800" alt="image" src="https://github.com/sirebellum/qgis-segmentation/assets/25124443/e969507d-5571-4e41-8cb2-6ee2db4f28cd">
+Finally, a CNN segmentation map at low resolution with 6 segments:
+<img width="800" alt="image" src="https://github.com/user-attachments/assets/50863c0c-64b0-4603-b2e7-85ddaba60f21">
 
-As you can see, CNN provides cleaner results while K-Means is quick and easy.
+In general, CNN provides cleaner results while K-Means is quick and easy.
