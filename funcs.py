@@ -78,7 +78,7 @@ def _emit_status(callback, message):
     try:
         callback(message)
     except Exception:
-        pass
+        pass  # Silently ignore callback errors to avoid interrupting processing
 
 
 def _process_in_chunks(array, plan, num_segments, infer_fn, status_callback):
@@ -125,7 +125,7 @@ def _derive_chunk_size(array_shape, device):
         ratio = VRAM_RATIO_CPU
     budget = max(int(free_bytes * ratio), 64 * 1024 * 1024)
     bytes_per_pixel = channels * 4
-    safety = 8
+    safety = get_adaptive_settings().safety_factor
     max_pixels = max(budget // (bytes_per_pixel * safety), 1)
     tile_side = int(math.sqrt(max_pixels))
     tile_side = max(128, min(512, tile_side))
@@ -180,8 +180,7 @@ def _build_weight_mask(size):
     if size <= 1:
         return np.ones((1, 1), dtype=np.float32)
     window = np.hanning(size)
-    if np.max(window) == 0:
-        window = np.ones(size)
+    assert np.max(window) != 0, "np.hanning(size) returned all zeros, which should never happen for size > 1"
     mask = np.outer(window, window)
     mask = mask / np.max(mask)
     return mask.astype(np.float32)
@@ -207,7 +206,7 @@ def execute_kmeans_segmentation(array, num_segments, resolution, chunk_plan, sta
             array,
             chunk_plan,
             num_segments,
-            lambda data: predict_kmeans(data, num_segments, resolution, status_callback=None),
+            lambda data: predict_kmeans(data, num_segments, resolution, status_callback=status_callback),
             status_callback,
         )
     return predict_kmeans(array, num_segments, resolution, status_callback=status_callback)
@@ -240,7 +239,7 @@ def execute_cnn_segmentation(
                 num_segments,
                 tile_size=_tile_for_data(data),
                 device=device,
-                status_callback=None,
+                status_callback=status_callback,
                 memory_budget=chunk_plan.budget_bytes,
                 prefetch_depth=chunk_plan.prefetch_depth,
             ),
@@ -319,7 +318,7 @@ def predict_kmeans(array, num_segments=16, resolution=16, status_callback=None):
     clusters = torch.nn.Upsample(
         size=(array.shape[-2], array.shape[-1]), mode="nearest"
     )(clusters.byte())
-    clusters = clusters.squeeze()
+    clusters = clusters.detach().squeeze()
 
     _emit_status(status_callback, "K-Means output upsampled to raster resolution.")
     return clusters.cpu().numpy()
