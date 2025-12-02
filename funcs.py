@@ -1,12 +1,31 @@
+try:
+    from .dependency_manager import ensure_dependencies
+except ImportError:  # pragma: no cover
+    from dependency_manager import ensure_dependencies
+
+ensure_dependencies()
+
 import numpy as np
 import torch
 from sklearn.cluster import KMeans
-import numpy as np
+
+
+def _emit_status(callback, message):
+    if not callback:
+        return
+    try:
+        callback(message)
+    except Exception:
+        pass
 
 # Predict coverage map using kmeans
-def predict_kmeans(array, num_segments=16, resolution=16):
+def predict_kmeans(array, num_segments=16, resolution=16, status_callback=None):
     # Instantiate kmeans model
     kmeans = KMeans(n_clusters=num_segments)
+    _emit_status(
+        status_callback,
+        f"K-Means initialized ({num_segments} clusters, resolution={resolution}).",
+    )
 
     # Pad to resolution
     channel_pad = (0, 0)
@@ -15,6 +34,7 @@ def predict_kmeans(array, num_segments=16, resolution=16):
     array_padded = np.pad(
         array, (channel_pad, height_pad, width_pad), mode="constant"
     )
+    _emit_status(status_callback, "Raster padded for block processing.")
 
     # Reshape into 2d
     array_2d = array_padded.reshape(
@@ -29,14 +49,17 @@ def predict_kmeans(array, num_segments=16, resolution=16):
         array_2d.shape[0] * array_2d.shape[1],
         array_2d.shape[2] * resolution * resolution,
     )
+    _emit_status(status_callback, f"Prepared {array_2d.shape[0]} blocks for clustering.")
 
     # Fit kmeans model to random subset
     size = 10000 if array_2d.shape[0] > 10000 else array_2d.shape[0]
     idx = np.random.randint(0, array_2d.shape[0], size=size)
+    _emit_status(status_callback, f"Fitting K-Means on {size} sampled blocks.")
     kmeans = kmeans.fit(array_2d[idx])
 
     # Get clusters
     clusters = kmeans.predict(array_2d)
+    _emit_status(status_callback, "Cluster assignment complete.")
 
     # Reshape clusters to match map
     clusters = clusters.reshape(
@@ -58,13 +81,25 @@ def predict_kmeans(array, num_segments=16, resolution=16):
     )(clusters.byte())
     clusters = clusters[0]
 
+    _emit_status(status_callback, "K-Means output upsampled to raster resolution.")
     return clusters.cpu().numpy()
 
 # Predict coverage map using cnn
-def predict_cnn(cnn_model, array, num_segments, tile_size=256, device="cpu"):
+def predict_cnn(
+    cnn_model,
+    array,
+    num_segments,
+    tile_size=256,
+    device="cpu",
+    status_callback=None,
+):
 
     # Tile raster
     tiles, (height_pad, width_pad) = tile_raster(array, tile_size)
+    _emit_status(
+        status_callback,
+        f"Raster tiled into {tiles.shape[0]} patches of size {tile_size}x{tile_size}.",
+    )
 
     # Convert to float range [0, 1]
     tiles = tiles.astype("float32") / 255
@@ -72,12 +107,18 @@ def predict_cnn(cnn_model, array, num_segments, tile_size=256, device="cpu"):
     # Predict vectors
     batch_size = 1
     coverage_map = []
-    for i in range(0, tiles.shape[0], batch_size):
+    last_report = -1
+    total_tiles = tiles.shape[0]
+    for i in range(0, total_tiles, batch_size):
         with torch.no_grad():
             tile = torch.tensor(tiles[i : i + batch_size]).to(device)
             result = cnn_model.forward(tile)
         vectors = result[1].cpu().numpy()
         coverage_map.append(vectors)
+        percent = int(((i + batch_size) / total_tiles) * 100)
+        if percent // 5 > last_report:
+            last_report = percent // 5
+            _emit_status(status_callback, f"CNN inference {min(percent,100)}% complete.")
     coverage_map = np.concatenate(coverage_map, axis=0)
 
     # Convert from tiles (Ht*Wt, C, cnn_tile, cnn_tile) to (C, H, W)
@@ -104,6 +145,7 @@ def predict_cnn(cnn_model, array, num_segments, tile_size=256, device="cpu"):
         coverage_map,
         num_segments=num_segments,
         resolution=1,
+        status_callback=status_callback,
     )
 
     # Upsample to original size
@@ -116,6 +158,7 @@ def predict_cnn(cnn_model, array, num_segments, tile_size=256, device="cpu"):
     # Get rid of padding
     coverage_map = coverage_map[0, :, : array.shape[1], : array.shape[2]]
 
+    _emit_status(status_callback, "CNN segmentation map reconstructed.")
     return coverage_map.cpu().numpy()
 
 # Tile raster for CNN or K-means

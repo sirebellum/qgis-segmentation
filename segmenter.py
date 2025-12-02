@@ -16,6 +16,8 @@ from qgis.PyQt.QtCore import (
     QTranslator,
     QCoreApplication,
     QThread,
+    QObject,
+    pyqtSignal,
 )
 from qgis.PyQt.QtGui import QIcon, QPixmap
 from qgis.PyQt.QtWidgets import QAction
@@ -35,24 +37,13 @@ from .segmenter_dialog import SegmenterDialog
 import os.path
 
 from io import BytesIO
+from datetime import datetime
 import requests
 from osgeo import gdal
 
-# Install necessary packages
-import pkg_resources, pip
-def is_package_installed(package_name):
-    try:
-        pkg_resources.get_distribution(package_name)
-        return True
-    except pkg_resources.DistributionNotFound:
-        return False
+from .dependency_manager import ensure_dependencies
 
-if not is_package_installed("torch"):
-    pip.main(["install", "torch", "--index-url", "https://download.pytorch.org/whl/cu121"])
-if not is_package_installed("scikit-learn"):
-    pip.main(["install", "scikit-learn"])
-if not is_package_installed("numpy"):
-    pip.main(["install", "numpy"])
+ensure_dependencies()
 
 import torch
 from sklearn.cluster import KMeans
@@ -64,6 +55,10 @@ from .qgis_funcs import render_raster
 TILE_SIZE = 512
 
 
+class StatusEmitter(QObject):
+    message = pyqtSignal(str)
+
+
 # Multithreading stuff
 class Task(QgsTask):
     def __init__(self, function, *args, **kwargs):
@@ -73,16 +68,20 @@ class Task(QgsTask):
         self.kwargs = kwargs
         self.result = None
         QgsMessageLog.logMessage("Task initialized", "Segmenter", level=Qgis.Info)
+        self._status("Task queued")
 
     def run(self):
         QgsMessageLog.logMessage("Running task", "Segmenter", level=Qgis.Info)
+        self._status("Processing started")
         try:
             self.result = self.function(*self.args)
+            self._status("Processing completed successfully")
             return True
         except Exception as e:
             QgsMessageLog.logMessage(
                 f"Exception in task: {e}", "Segmenter", level=Qgis.Critical
             )
+            self._status(f"Processing failed: {e}")
             return False
 
     def finished(self, result):
@@ -95,6 +94,18 @@ class Task(QgsTask):
                 f"{self.kwargs['layer'].name()}_{self.kwargs['model']}_{self.kwargs['num_segments']}_{self.kwargs['resolution']}",
                 self.kwargs["canvas"].layer(0).crs().postgisSrid(),
             )
+            self._status("Segmentation layer rendered")
+        else:
+            self._status("Segmentation task failed")
+
+    def _status(self, message):
+        callback = self.kwargs.get("status_callback")
+        if not callback:
+            return
+        try:
+            callback(message)
+        except Exception:
+            pass
             
 def run_task(function, *args, **kwargs):
     task = Task(function, *args, **kwargs)
@@ -141,6 +152,10 @@ class Segmenter:
         QgsApplication.setMaxThreads(threadcount)
 
         self.task = None
+        self._status_buffer = []
+        self.status_emitter = StatusEmitter()
+        self.status_emitter.message.connect(self._handle_status_message)
+        self.model = "kmeans"
 
     # noinspection PyMethodMayBeStatic
     def tr(self, message):
@@ -156,6 +171,23 @@ class Segmenter:
         """
         # noinspection PyTypeChecker,PyArgumentList,PyCallByClass
         return QCoreApplication.translate("Segmenter", message)
+
+    def log_status(self, message):
+        self.status_emitter.message.emit(message)
+
+    def _handle_status_message(self, message):
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        entry = f"[{timestamp}] {message}"
+        if getattr(self, "dlg", None):
+            self.dlg.inputBox.appendPlainText(entry)
+        else:
+            self._status_buffer.append(entry)
+
+    def _flush_status_buffer(self):
+        if not getattr(self, "dlg", None):
+            return
+        while self._status_buffer:
+            self.dlg.inputBox.appendPlainText(self._status_buffer.pop(0))
 
     def add_action(
         self,
@@ -280,22 +312,34 @@ class Segmenter:
             "model": self.model,
             "num_segments": num_segments,
             "resolution": resolution,
+            "status_callback": self.log_status,
         }
 
         # set up args
         if self.model == "kmeans":
             func = predict_kmeans
-            args = (layer_array, num_segments, resolution)
+            args = (layer_array, num_segments, resolution, self.log_status)
         elif self.model == "cnn":
             func = predict_cnn
-            args = (self.load_model(resolution), layer_array, num_segments, TILE_SIZE, self.device)
+            args = (
+                self.load_model(resolution),
+                layer_array,
+                num_segments,
+                TILE_SIZE,
+                self.device,
+                self.log_status,
+            )
+
+        self.log_status(
+            f"Queued {self.model.upper()} segmentation with {num_segments} segments at {self.dlg.inputRes.currentText()} resolution."
+        )
 
         # Run task
         self.task = run_task(func, *args, **kwargs)
 
         # Display error if task stops running after a little bit
         if self.task.waitForFinished(1):
-            self.dlg.inputBox.setPlainText("An error occurred. Please try again.")
+            self.log_status("An error occurred. Please try again.")
 
     # Load model from disk
     def load_model(self, model_name):
@@ -353,9 +397,11 @@ class Segmenter:
             self.dlg = SegmenterDialog()
             self.canvas = self.iface.mapCanvas()
 
-            # Set device
+            # Set device (CUDA, CPU)
             if torch.cuda.is_available(): # Cuda
                 self.device = torch.device("cuda")
+            elif torch.backends.mps.is_available(): # Multi-Process Service
+                self.device = torch.device("mps")
             else: # CPU
                 self.device = torch.device("cpu")
 
@@ -369,8 +415,9 @@ class Segmenter:
             if self.device == torch.device("cpu"):
                 gpu_msg = "GPU not available. Using CPU instead."
 
-            # Display message
-            self.dlg.inputBox.setPlainText(gpu_msg)
+            self.dlg.inputBox.clear()
+            self._flush_status_buffer()
+            self.log_status(gpu_msg)
 
             # Attach inputs
             self.dlg.inputBox.textChanged.connect(self.submit)
