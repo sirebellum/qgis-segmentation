@@ -106,6 +106,10 @@ def _run_profile(device: torch.device, status_callback: Callable[[str], None] | 
 def _device_key(device: torch.device) -> str:
     if device.type == "cuda" and torch.cuda.is_available():
         idx = device.index if device.index is not None else torch.cuda.current_device()
+        props = torch.cuda.get_device_properties(idx)
+        uuid = getattr(props, "uuid", None)
+        if uuid is not None:
+            return f"cuda:{idx}:{uuid}"
         name = torch.cuda.get_device_name(idx)
         return f"cuda:{idx}:{name}"
     if device.type == "mps":
