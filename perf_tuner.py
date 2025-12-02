@@ -55,61 +55,104 @@ def load_or_profile_settings(
 
 
 def _run_profile(device: torch.device, status_callback: Callable[[str], None] | None = None) -> AdaptiveSettings:
-    combos = [AdaptiveSettings(safety_factor=s, prefetch_depth=p) for s in SAFETY_CHOICES for p in PREFETCH_CHOICES]
-    best_settings = AdaptiveSettings()
-    best_score = -float("inf")
-
+    """Profile device using a two-phase search to reduce iterations.
+    
+    Phase 1: Find best prefetch_depth with default safety_factor
+    Phase 2: Find best safety_factor with the best prefetch_depth
+    
+    This reduces iterations from 16 (4x4) to 8 (4+4).
+    """
     array = np.random.randint(0, 255, size=(3, 256, 256), dtype=np.uint8)
     dummy_model = _ProfilerModel().to(device)
-
-    for settings in combos:
-        set_adaptive_settings(settings)
-        start = time.perf_counter()
-        predict_cnn(
-            dummy_model,
-            array,
-            num_segments=3,
-        try:
-            predict_cnn(
-                dummy_model,
-                array,
-                num_segments=3,
-                tile_size=128,
-                device=device,
-                memory_budget=DEFAULT_BUDGET_BYTES,
-                prefetch_depth=settings.prefetch_depth,
-                status_callback=None,
-            )
-            if device.type == "cuda":
-                torch.cuda.synchronize(device)
-            elapsed = max(time.perf_counter() - start, 1e-6)
-            score = (array.shape[1] * array.shape[2]) / elapsed
-            score /= settings.prefetch_depth  # penalize large prefetch depths slightly
-            if status_callback:
-                status_callback(
-                    f"Profile safety {settings.safety_factor}, prefetch {settings.prefetch_depth}: {score:.2f} px/s"
-                )
-            if score > best_score:
-                best_score = score
-                best_settings = settings
-        except RuntimeError as e:
-            # Catch OOM or memory errors and skip this settings combo
-            if status_callback:
-                status_callback(
-                    f"Profile safety {settings.safety_factor}, prefetch {settings.prefetch_depth}: FAILED ({str(e).splitlines()[0]})"
-                )
-            continue
+    
+    default_safety = SAFETY_CHOICES[0]  # Start with lowest safety factor
+    total_steps = len(PREFETCH_CHOICES) + len(SAFETY_CHOICES)
+    current_step = 0
+    
+    # Phase 1: Find best prefetch_depth with default safety factor
+    best_prefetch = PREFETCH_CHOICES[0]
+    best_prefetch_score = -float("inf")
+    
+    for prefetch in PREFETCH_CHOICES:
+        current_step += 1
+        settings = AdaptiveSettings(safety_factor=default_safety, prefetch_depth=prefetch)
+        score = _benchmark_settings(
+            settings, dummy_model, array, device, status_callback,
+            phase=1, step=current_step, total=total_steps
+        )
+        if score is not None and score > best_prefetch_score:
+            best_prefetch_score = score
+            best_prefetch = prefetch
+    
+    # Phase 2: Find best safety_factor with the best prefetch_depth
+    best_settings = AdaptiveSettings(safety_factor=default_safety, prefetch_depth=best_prefetch)
+    best_score = best_prefetch_score
+    
+    for safety in SAFETY_CHOICES:
+        current_step += 1
+        settings = AdaptiveSettings(safety_factor=safety, prefetch_depth=best_prefetch)
+        score = _benchmark_settings(
+            settings, dummy_model, array, device, status_callback,
+            phase=2, step=current_step, total=total_steps
+        )
+        if score is not None and score > best_score:
+            best_score = score
+            best_settings = settings
+    
     set_adaptive_settings(best_settings)
     return best_settings
+
+
+def _benchmark_settings(
+    settings: AdaptiveSettings,
+    model: torch.nn.Module,
+    array: np.ndarray,
+    device: torch.device,
+    status_callback: Callable[[str], None] | None,
+    phase: int,
+    step: int,
+    total: int,
+) -> float | None:
+    """Run a single benchmark iteration and return the score, or None on failure."""
+    set_adaptive_settings(settings)
+    start = time.perf_counter()
+    try:
+        predict_cnn(
+            model,
+            array,
+            num_segments=3,
+            tile_size=128,
+            device=device,
+            memory_budget=DEFAULT_BUDGET_BYTES,
+            prefetch_depth=settings.prefetch_depth,
+            status_callback=None,
+        )
+        if device.type == "cuda":
+            torch.cuda.synchronize(device)
+        elapsed = max(time.perf_counter() - start, 1e-6)
+        score = (array.shape[1] * array.shape[2]) / elapsed
+        score /= settings.prefetch_depth  # penalize large prefetch depths slightly
+        if status_callback:
+            progress = int(100 * step / total)
+            status_callback(
+                f"[{progress}%] Phase {phase}: safety={settings.safety_factor}, "
+                f"prefetch={settings.prefetch_depth}: {score:.0f} px/s"
+            )
+        return score
+    except RuntimeError as e:
+        # Catch OOM or other runtime errors and skip this settings combo
+        if status_callback:
+            progress = int(100 * step / total)
+            status_callback(
+                f"[{progress}%] Phase {phase}: safety={settings.safety_factor}, "
+                f"prefetch={settings.prefetch_depth}: FAILED ({str(e).splitlines()[0]})"
+            )
+        return None
 
 
 def _device_key(device: torch.device) -> str:
     if device.type == "cuda" and torch.cuda.is_available():
         idx = device.index if device.index is not None else torch.cuda.current_device()
-        props = torch.cuda.get_device_properties(idx)
-        uuid = getattr(props, "uuid", None)
-        if uuid is not None:
-            return f"cuda:{idx}:{uuid}"
         name = torch.cuda.get_device_name(idx)
         return f"cuda:{idx}:{name}"
     if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
