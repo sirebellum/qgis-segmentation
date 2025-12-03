@@ -84,6 +84,16 @@ RESOLUTION_CHOICES = (
 )
 DEFAULT_RESOLUTION_LABEL = "low"
 RESOLUTION_VALUE_MAP = {label: value for label, value in RESOLUTION_CHOICES}
+PROGRESS_PERCENT_PATTERN = re.compile(r"(?P<percent>\d{1,3})\s*%")
+PROGRESS_STEP_PATTERN = re.compile(r"step\s+(?P<current>\d+)\s*/\s*(?P<total>\d+)", re.IGNORECASE)
+PROGRESS_TEXT_LIMIT = 80
+PROGRESS_STAGE_MAP = {
+    "prepare": (0.0, 25.0, "Preparing input..."),
+    "chunk_plan": (25.0, 40.0, "Estimating chunk plan..."),
+    "queue": (40.0, 55.0, "Starting segmentation task..."),
+    "inference": (55.0, 95.0, "Running segmentation..."),
+    "render": (95.0, 100.0, "Rendering output..."),
+}
 
 
 class StatusEmitter(QObject):
@@ -229,6 +239,8 @@ class Task(QgsTask):
         segmenter = self.kwargs.get("segmenter")
         if result and not self.isCanceled():
             # render raster
+            if segmenter:
+                segmenter._update_overall_progress("render", 20, "Rendering output...")
             render_raster(
                 self.result,
                 self.kwargs["layer"].extent(),
@@ -243,6 +255,12 @@ class Task(QgsTask):
         if segmenter:
             segmenter.task = None
             segmenter._set_stop_enabled(False)
+            if result and not self.isCanceled():
+                segmenter._finalize_progress("success")
+            elif self.isCanceled():
+                segmenter._finalize_progress("canceled")
+            else:
+                segmenter._finalize_progress("error")
 
     def _status(self, message):
         callback = self.kwargs.get("status_callback")
@@ -308,6 +326,9 @@ class Segmenter:
         self.autoencoder_manager: Optional[TextureAutoencoderManager] = None
         self._logo_hover = None
         self._layer_refresh_controller = None
+        self._progress_last_value = 0.0
+        self._progress_active = False
+        self._progress_stage = "idle"
 
     # noinspection PyMethodMayBeStatic
     def tr(self, message):
@@ -340,6 +361,7 @@ class Segmenter:
         if getattr(self, "dlg", None):
             if self._should_display_log(category, message):
                 self._append_log_entry(entry)
+            self._maybe_update_progress_from_message(category, message)
         else:
             self._status_buffer.append((category, message, timestamp))
 
@@ -364,6 +386,127 @@ class Segmenter:
         if getattr(self, "dlg", None):
             lines = list(self._log_history)[::-1]
             self.dlg.inputBox.setPlainText("\n".join(lines))
+
+    def _progress_widget(self):
+        dlg = getattr(self, "dlg", None)
+        if not dlg:
+            return None
+        return getattr(dlg, "jobProgress", None)
+
+    def _reset_progress_bar(self, text="Idle"):
+        self._progress_last_value = 0.0
+        self._progress_active = False
+        self._progress_stage = "idle"
+        bar = self._progress_widget()
+        if not bar:
+            return
+        bar.setRange(0, 100)
+        bar.setValue(0)
+        bar.setFormat(text)
+
+    def _start_progress_cycle(self, message="Preparing segmentation..."):
+        self._progress_active = True
+        self._update_overall_progress("prepare", 0, message)
+
+    def _update_overall_progress(self, stage: str, local_percent: float = 0.0, message: Optional[str] = None):
+        info = PROGRESS_STAGE_MAP.get(stage)
+        if not info:
+            return
+        start, end, default_text = info
+        span = max(end - start, 1e-6)
+        normalized = float(np.clip(local_percent, 0.0, 100.0)) / 100.0
+        value = start + span * normalized
+        self._progress_stage = stage
+        self._apply_progress_update(value, message or default_text)
+
+    def _apply_progress_update(self, percent, message=None):
+        bar = self._progress_widget()
+        if not bar:
+            return
+        self._progress_active = True
+        bar.setRange(0, 100)
+        value = float(np.clip(percent, 0.0, 100.0))
+        if value < self._progress_last_value:
+            value = self._progress_last_value
+        self._progress_last_value = value
+        bar.setValue(int(round(value)))
+        if message:
+            bar.setFormat(self._format_progress_text(message))
+
+    def _format_progress_text(self, message):
+        cleaned = (message or "").strip()
+        if not cleaned:
+            return "Working..."
+        if len(cleaned) > PROGRESS_TEXT_LIMIT:
+            return cleaned[: PROGRESS_TEXT_LIMIT - 3] + "..."
+        return cleaned
+
+    def _set_progress_message(self, message, indeterminate=False):
+        bar = self._progress_widget()
+        if not bar or not message:
+            return
+        if indeterminate:
+            bar.setRange(0, 0)
+        elif bar.maximum() == 0:
+            bar.setRange(0, 100)
+        bar.setFormat(self._format_progress_text(message))
+
+    def _finalize_progress(self, status="idle"):
+        bar = self._progress_widget()
+        if not bar:
+            return
+        self._progress_active = False
+        bar.setRange(0, 100)
+        if status == "success":
+            self._update_overall_progress("render", 100, "Segmentation complete")
+        elif status == "canceled":
+            bar.setValue(int(round(self._progress_last_value)))
+            bar.setFormat("Canceled")
+        elif status == "error":
+            value = self._progress_last_value if self._progress_last_value > 0 else 0
+            bar.setValue(int(round(value)))
+            bar.setFormat("Failed")
+        else:
+            self._reset_progress_bar()
+            return
+        if status in {"success", "canceled", "error"}:
+            self._progress_stage = "idle"
+
+    def _maybe_update_progress_from_message(self, category, message):
+        if category not in {"worker", "general"}:
+            return
+        percent = self._extract_inference_percent(message)
+        if percent is None:
+            return
+        self._update_overall_progress("inference", percent, message)
+
+    def _extract_inference_percent(self, message):
+        if not message:
+            return None
+        normalized = message.lower()
+        if "inference" in normalized or "encoding textures" in normalized:
+            match = PROGRESS_PERCENT_PATTERN.search(message)
+            if not match:
+                return None
+            try:
+                value = int(match.group("percent"))
+            except (TypeError, ValueError):
+                return None
+            return int(np.clip(value, 0, 100))
+        if "autoencoder" in normalized and "step" in normalized:
+            match = PROGRESS_STEP_PATTERN.search(message)
+            if not match:
+                return None
+            try:
+                current = int(match.group("current"))
+                total = int(match.group("total"))
+            except (TypeError, ValueError):
+                return None
+            if total <= 0:
+                return None
+            ratio = max(0.0, min(1.0, current / total))
+            return int(round(ratio * 100))
+        return None
 
     def _set_stop_enabled(self, enabled):
         dlg = getattr(self, "dlg", None)
@@ -479,6 +622,7 @@ class Segmenter:
             QgsApplication.taskManager().cancelTask(task_id)
         self.task.cancel()
         self._set_stop_enabled(False)
+        self._set_progress_message("Cancelling task...")
         self.log_status("Cancellation requested; attempting to stop the worker immediately.")
 
     def _init_logo_interactions(self):
@@ -586,23 +730,29 @@ class Segmenter:
 
     # Predict coverage map
     def predict(self):
+        self._start_progress_cycle("Preparing segmentation...")
+        self._update_overall_progress("prepare", 10, "Validating layer selection...")
 
         # Load user specified raster
         layer_name = self.dlg.inputLayer.currentText()
         layers = QgsProject.instance().mapLayersByName(layer_name)
         if not layers:
             self.log_status("Selected layer is no longer available. Please choose another layer.")
+            self._reset_progress_bar()
             return
         layer = layers[0]
         if not self._is_supported_raster_layer(layer):
             self.log_status("Selected layer is not a supported 3-band GeoTIFF raster.")
+            self._reset_progress_bar()
             return
         assert layer.isValid(), f"Invalid raster layer! \n{layer_name}"
         raster = gdal.Open(layer.source())
         layer_array = raster.ReadAsArray()
+        self._update_overall_progress("prepare", 60, "Analyzing raster data...")
 
         if self.autoencoder_manager is None:
             self.log_status("Autoencoder unavailable; please reopen the Segmenter dialog to reinitialize.")
+            self._reset_progress_bar()
             return
         self.autoencoder_manager.set_device(self.device)
 
@@ -611,16 +761,19 @@ class Segmenter:
         if not segments_raw:
             self.log_status("Please enter the desired number of segments and try again.")
             self.dlg.inputSegments.setFocus()
+            self._reset_progress_bar()
             return
         try:
             num_segments = int(segments_raw)
         except ValueError:
             self.log_status("Number of segments must be an integer value.")
             self.dlg.inputSegments.setFocus()
+            self._reset_progress_bar()
             return
         if num_segments <= 0:
             self.log_status("Number of segments must be a positive integer.")
             self.dlg.inputSegments.setFocus()
+            self._reset_progress_bar()
             return
 
         # Get user specified resolution
@@ -640,6 +793,7 @@ class Segmenter:
         self.log_status(
             f"Prepared chunk plan: window {chunk_plan.chunk_size}px with {chunk_plan.overlap}px overlap (using {chunk_plan.ratio * 100:.2f}% of free VRAM, ~{budget_mb:.1f} MB)."
         )
+        self._update_overall_progress("chunk_plan", 100, "Chunk plan ready.")
 
         kwargs = {
             "layer": layer,
@@ -693,13 +847,17 @@ class Segmenter:
             )
         else:
             self.log_status(f"Unsupported model selection: {self.model}")
+            self._reset_progress_bar()
             return
 
+        self._update_overall_progress("queue", 60, "Configuring segmentation task...")
         self.log_status(
             f"Queued {self.model.upper()} segmentation with {num_segments} segments at {self.dlg.inputRes.currentText()} resolution."
         )
+        self._update_overall_progress("queue", 100, "Task queued; starting worker...")
 
         # Run task
+        self._update_overall_progress("inference", 0, "Running segmentation...")
         self.task = run_task(func, *args, **kwargs)
         self._set_stop_enabled(True)
 
@@ -812,6 +970,7 @@ class Segmenter:
             self.first_start = False
             self.dlg = SegmenterDialog()
             self.canvas = self.iface.mapCanvas()
+            self._reset_progress_bar()
 
             # Set device (CUDA, CPU)
             if torch.cuda.is_available(): # Cuda
@@ -872,6 +1031,8 @@ class Segmenter:
 
         # show the dialog
         self.render_layers()
+        if not self.task:
+            self._reset_progress_bar()
         self.dlg.show()
 
     def _init_layer_refresh(self):

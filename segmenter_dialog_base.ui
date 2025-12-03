@@ -58,7 +58,7 @@
    <property name="geometry">
     <rect>
       <x>30</x>
-      <y>380</y>
+      <y>400</y>
       <width>370</width>
       <height>140</height>
     </rect>
@@ -71,6 +71,31 @@
    </property>
    <property name="backgroundVisible">
     <bool>false</bool>
+   </property>
+  </widget>
+  <widget class="QProgressBar" name="jobProgress">
+   <property name="geometry">
+    <rect>
+      <x>30</x>
+      <y>360</y>
+      <width>370</width>
+      <height>28</height>
+    </rect>
+   </property>
+   <property name="minimum">
+    <number>0</number>
+   </property>
+   <property name="maximum">
+    <number>100</number>
+   </property>
+   <property name="value">
+    <number>0</number>
+   </property>
+   <property name="format">
+    <string>Idle</string>
+   </property>
+   <property name="textVisible">
+    <bool>true</bool>
    </property>
   </widget>
   <widget class="QLabel" name="imageLarge">

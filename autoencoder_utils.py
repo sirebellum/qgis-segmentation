@@ -21,22 +21,42 @@ def _safe_status(callback, message):
 
 
 class PatchAutoencoder(nn.Module):
-    def __init__(self, in_channels: int = 3, latent_dim: int = 24):
+    def __init__(self, in_channels: int = 3, latent_dim: int = 24, patch_size: int = 96):
         super().__init__()
+        full_kernel = max(3, int(patch_size))
+        padding = full_kernel // 2
+        self.base_grid = max(4, patch_size // 4)
         self.encoder = nn.Sequential(
-            nn.Conv2d(in_channels, 32, kernel_size=3, stride=2, padding=1),
+            nn.Conv2d(in_channels, 48, kernel_size=full_kernel, stride=1, padding=padding, bias=False),
             nn.ReLU(inplace=True),
-            nn.Conv2d(32, 64, kernel_size=3, stride=2, padding=1),
+            nn.Conv2d(48, 48, kernel_size=full_kernel, stride=1, padding=padding, bias=False),
             nn.ReLU(inplace=True),
+            nn.Conv2d(48, 32, kernel_size=full_kernel, stride=1, padding=padding, bias=False),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=2, stride=2, ceil_mode=True),
+            nn.Conv2d(32, 64, kernel_size=5, stride=1, padding=2),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(kernel_size=2, stride=2, ceil_mode=True),
             nn.Conv2d(64, latent_dim, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(inplace=True),
+            nn.AdaptiveAvgPool2d(1),
+            nn.Conv2d(latent_dim, latent_dim, kernel_size=1, bias=True),
             nn.ReLU(inplace=True),
         )
         self.decoder = nn.Sequential(
-            nn.ConvTranspose2d(latent_dim, 64, kernel_size=3, stride=1, padding=1),
+            nn.Flatten(1),
+            nn.Linear(latent_dim, latent_dim * self.base_grid * self.base_grid),
             nn.ReLU(inplace=True),
-            nn.ConvTranspose2d(64, 32, kernel_size=4, stride=2, padding=1),
+            nn.Unflatten(1, (latent_dim, self.base_grid, self.base_grid)),
+            nn.Conv2d(latent_dim, 64, kernel_size=3, stride=1, padding=1),
             nn.ReLU(inplace=True),
-            nn.ConvTranspose2d(32, in_channels, kernel_size=4, stride=2, padding=1),
+            nn.Upsample(scale_factor=2, mode="bilinear", align_corners=False),
+            nn.Conv2d(64, 48, kernel_size=5, stride=1, padding=2),
+            nn.ReLU(inplace=True),
+            nn.Upsample(scale_factor=2, mode="bilinear", align_corners=False),
+            nn.Conv2d(48, 32, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(32, in_channels, kernel_size=1),
             nn.Sigmoid(),
         )
 
@@ -79,6 +99,7 @@ class TextureAutoencoderManager:
         self._smoothness_weight = 0.12
         self._fib_cache = {}
         self._local_emphasis = 0.65
+        self._permutation_chunk_scale = 32
 
     def set_device(self, device: torch.device) -> None:
         if device != self.device:
@@ -111,7 +132,7 @@ class TextureAutoencoderManager:
     def _load_model(self):
         if self._model is not None:
             return self._model
-        model = PatchAutoencoder(latent_dim=self.latent_dim)
+        model = PatchAutoencoder(latent_dim=self.latent_dim, patch_size=self.patch_size)
         if self._weights_path.exists():
             try:
                 state_dict = torch.load(self._weights_path, map_location="cpu")
@@ -137,21 +158,21 @@ class TextureAutoencoderManager:
 
     def _training_schedule(self) -> _Schedule:
         runs = int(self._state.get("runs", 0))
-        base_steps = 512
-        decay = 0.7
-        min_steps = 64
+        base_steps = 768
+        decay = 0.8
+        min_steps = 128
         steps = int(max(min_steps, base_steps * (decay ** runs)))
-        lr_min = 2e-4
-        base_lr = 2e-3
-        lr = max(lr_min, base_lr * (0.65 ** runs))
+        lr_min = 1.5e-4
+        base_lr = 2.5e-3
+        lr = max(lr_min, base_lr * (0.6 ** runs))
         if runs == 0:
             batch = 32
         elif runs < 4:
             batch = 24
         else:
             batch = 16
-        betas = (0.9, 0.92) if runs < 2 else (0.9, 0.98)
-        weight_decay = 0.01 if runs < 3 else 0.006
+        betas = (0.9, 0.93) if runs < 2 else (0.9, 0.985)
+        weight_decay = 0.012 if runs < 3 else 0.007
         return _Schedule(steps=steps, lr=lr, batch_size=batch, betas=betas, weight_decay=weight_decay)
 
     def _train_model(self, raster: np.ndarray, sched: _Schedule, status_callback=None) -> None:
@@ -227,6 +248,9 @@ class TextureAutoencoderManager:
             x0 = 0 if width == pw else np.random.randint(0, width - pw + 1)
             patch_view = raster[:, y0 : y0 + ph, x0 : x0 + pw]
             patches[idx] = patch_view / 255.0
+        chunk_estimate = self._estimate_tile_count(height, width, patch)
+        copies = self._permutation_copies_for_chunks(chunk_estimate)
+        patches = self._augment_patch_batch(patches, copies)
         tensor = torch.from_numpy(patches)
         return tensor
 
@@ -448,6 +472,64 @@ class TextureAutoencoderManager:
         gy, gx = np.gradient(gray)
         energy = np.sqrt(gy * gy + gx * gx)
         return float(np.mean(energy))
+
+    def _augment_patch_batch(self, patches: np.ndarray, copies: int) -> np.ndarray:
+        copies = max(0, int(copies))
+        if patches.size == 0:
+            return patches
+        permuted_batches = [patches]
+        base = patches.copy()
+        for _ in range(copies):
+            permuted = np.empty_like(base)
+            for idx in range(base.shape[0]):
+                permuted[idx] = self._permute_patch(base[idx])
+            permuted_batches.append(permuted)
+        augmented = []
+        for batch in permuted_batches:
+            augmented.extend(self._geometric_permutations(batch))
+        return np.concatenate(augmented, axis=0)
+
+    @staticmethod
+    def _geometric_permutations(batch: np.ndarray) -> list:
+        variants = []
+        if batch.size == 0:
+            return [batch]
+        for flip in (False, True):
+            working = np.flip(batch, axis=3) if flip else batch
+            for rotation in range(4):
+                rotated = np.rot90(working, k=rotation, axes=(2, 3))
+                variants.append(rotated.copy())
+        return variants
+
+    @staticmethod
+    def _permute_patch(patch: np.ndarray) -> np.ndarray:
+        result = patch.copy()
+        if result.shape[1] > 1:
+            perm_y = np.random.permutation(result.shape[1])
+            result = result[:, perm_y, :]
+        if result.shape[2] > 1:
+            perm_x = np.random.permutation(result.shape[2])
+            result = result[:, :, perm_x]
+        if result.shape[0] > 1 and np.random.rand() < 0.5:
+            perm_c = np.random.permutation(result.shape[0])
+            result = result[perm_c, :, :]
+        if np.random.rand() < 0.3:
+            axis = 1 if np.random.rand() < 0.5 else 2
+            result = np.flip(result, axis=axis)
+        return result
+
+    @staticmethod
+    def _estimate_tile_count(height: int, width: int, tile: int) -> int:
+        tile = max(1, int(tile))
+        rows = max(1, math.ceil(height / tile))
+        cols = max(1, math.ceil(width / tile))
+        return rows * cols
+
+    def _permutation_copies_for_chunks(self, chunk_count: int) -> int:
+        chunk_count = max(1, int(chunk_count))
+        scale = max(1, int(self._permutation_chunk_scale))
+        copies = int(max(0, math.ceil(chunk_count / scale) - 1))
+        return min(copies, 8)
 
 
 def default_autoencoder_path(plugin_dir: str) -> str:

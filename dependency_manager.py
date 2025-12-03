@@ -29,6 +29,18 @@ _PROFILED_POST_INSTALL = False
 _LOGGER = logging.getLogger(__name__)
 
 
+def _configure_openmp_runtime() -> None:
+    """Mitigate macOS libomp clashes between PyTorch, scikit-learn, and QGIS."""
+    if platform.system().lower() != "darwin":
+        return
+
+    os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+    os.environ.setdefault("OMP_NUM_THREADS", "1")
+
+
+_configure_openmp_runtime()
+
+
 def ensure_dependencies() -> None:
     """Install runtime dependencies into the plugin's vendor folder if needed."""
     global _ENSURED
@@ -59,7 +71,7 @@ def _skip_requested() -> bool:
 def _package_specs() -> Iterable[Dict[str, object]]:
     torch_spec = os.environ.get("SEGMENTER_TORCH_SPEC")
     if not torch_spec:
-        torch_spec = "torch==2.2.2"
+        torch_spec = _default_torch_spec()
 
     specs: List[Dict[str, object]] = [
         {
@@ -81,6 +93,16 @@ def _package_specs() -> Iterable[Dict[str, object]]:
         },
     ]
     return specs
+
+
+def _default_torch_spec() -> str:
+    """Return the default torch spec compatible with the current interpreter."""
+    version = sys.version_info
+    if version >= (3, 13):
+        return "torch>=2.5.1,<3.0"
+    if version >= (3, 12):
+        return "torch>=2.3.1,<3.0"
+    return "torch==2.2.2"
 
 
 def _torch_index_args() -> List[str]:
