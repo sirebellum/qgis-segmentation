@@ -12,6 +12,7 @@
  ***************************************************************************/
 """
 from collections import deque
+import math
 import os
 import re
 import threading
@@ -25,11 +26,14 @@ from qgis.PyQt.QtCore import (
     QObject,
     pyqtSignal,
     QUrl,
+    Qt,
+    QEvent,
 )
-from qgis.PyQt.QtGui import QIcon, QPixmap, QDesktopServices
+from qgis.PyQt.QtGui import QIcon, QPixmap, QDesktopServices, QColor, QCursor
 from qgis.PyQt.QtWidgets import (
     QAction,
     QMessageBox,
+    QGraphicsDropShadowEffect,
 )
 from qgis.core import (
     QgsTask,
@@ -71,6 +75,15 @@ from .qgis_funcs import render_raster
 TILE_SIZE = 512
 SUPPORTED_RASTER_EXTENSIONS = {".tif", ".tiff"}
 GITHUB_ISSUES_URL = "https://github.com/sirebellum/qgis-segmentation/issues/new/choose"
+PROFILE_MODEL_SIZES = {"high": 4, "medium": 8, "low": 16}
+BUY_ME_A_COFFEE_URL = "https://buymeacoffee.com/sirebellum"
+RESOLUTION_CHOICES = (
+    ("low", 16),
+    ("medium", 8),
+    ("high", 4),
+)
+DEFAULT_RESOLUTION_LABEL = "low"
+RESOLUTION_VALUE_MAP = {label: value for label, value in RESOLUTION_CHOICES}
 
 
 class StatusEmitter(QObject):
@@ -105,6 +118,69 @@ class CancellationToken:
     def raise_if_cancelled(self) -> None:
         if self.is_cancelled():
             raise SegmentationCanceled()
+
+
+class _LogoHoverController(QObject):
+    def __init__(self, label, click_callback):
+        super().__init__(label)
+        self._label = label
+        self._click_callback = click_callback
+        self._hover_radius = max(60.0, min(label.width(), label.height()) * 0.6)
+        self._glow = QGraphicsDropShadowEffect(label)
+        self._glow.setOffset(0, 0)
+        self._glow.setBlurRadius(0)
+        self._glow.setColor(QColor(255, 215, 0, 0))
+        label.setGraphicsEffect(self._glow)
+        label.setCursor(Qt.ArrowCursor)
+
+    def eventFilter(self, obj, event):
+        if obj is not self._label:
+            return False
+        if event.type() == QEvent.MouseMove:
+            self._update_glow(event.pos())
+        elif event.type() == QEvent.Enter:
+            self._update_glow(self._label.mapFromGlobal(QCursor.pos()))
+        elif event.type() == QEvent.Leave:
+            self._reset_glow()
+        elif event.type() == QEvent.MouseButtonRelease and getattr(event, "button", lambda: None)() == Qt.LeftButton:
+            if callable(self._click_callback):
+                self._click_callback()
+            return True
+        return False
+
+    def _update_glow(self, pos):
+        center = self._label.rect().center()
+        dx = pos.x() - center.x()
+        dy = pos.y() - center.y()
+        distance = math.hypot(dx, dy)
+        radius = max(self._hover_radius, 1.0)
+        intensity = max(0.0, 1.0 - (distance / radius))
+        blur = 8 + (28 * intensity)
+        alpha = int(80 + 120 * intensity)
+        color = QColor(255, 215, 0, min(255, max(0, alpha)))
+        self._glow.setBlurRadius(blur if intensity > 0 else 0)
+        self._glow.setColor(color)
+        self._label.setCursor(Qt.PointingHandCursor if intensity > 0.1 else Qt.ArrowCursor)
+
+    def _reset_glow(self):
+        self._glow.setBlurRadius(0)
+        self._glow.setColor(QColor(255, 215, 0, 0))
+        self._label.setCursor(Qt.ArrowCursor)
+
+
+class _ComboRefreshController(QObject):
+    def __init__(self, combo_box, refresh_callback):
+        super().__init__(combo_box)
+        self._combo = combo_box
+        self._refresh_callback = refresh_callback
+
+    def eventFilter(self, obj, event):
+        if obj is not self._combo:
+            return False
+        if event.type() == QEvent.MouseButtonPress:
+            if callable(self._refresh_callback):
+                self._refresh_callback()
+        return False
 
 
 # Multithreading stuff
@@ -230,6 +306,8 @@ class Segmenter:
         self.model = "cnn"
         self._logged_missing_layers = False
         self.autoencoder_manager: Optional[TextureAutoencoderManager] = None
+        self._logo_hover = None
+        self._layer_refresh_controller = None
 
     # noinspection PyMethodMayBeStatic
     def tr(self, message):
@@ -295,17 +373,20 @@ class Segmenter:
         if button is not None:
             button.setEnabled(bool(enabled))
 
-    def _collect_heuristics(self):
+    def _collect_heuristics(self, resolution_label: Optional[str] = None):
         dlg = getattr(self, "dlg", None)
+        multiplier = self._heuristic_scale(resolution_label)
         if dlg is None:
-            return {"smoothness": 0.25, "speed": 0.5, "accuracy": 0.65}
+            base = {"smoothness": 0.25, "speed": 0.5, "accuracy": 0.65}
+            return {k: float(np.clip(v * multiplier, 0.0, 1.0)) for k, v in base.items()}
 
         def _value(name, default=0.5):
             slider = getattr(dlg, name, None)
             if not slider:
-                return default
+                return float(np.clip(default * multiplier, 0.0, 1.0))
             maximum = max(1, slider.maximum())
-            return np.clip(slider.value() / maximum, 0.0, 1.0)
+            raw = slider.value() / maximum
+            return float(np.clip(raw * multiplier, 0.0, 1.0))
 
         return {
             "smoothness": _value("sliderSmoothness", 0.25),
@@ -313,8 +394,8 @@ class Segmenter:
             "accuracy": _value("sliderAccuracy", 0.65),
         }
 
-    def _build_heuristic_overrides(self):
-        heuristics = self._collect_heuristics()
+    def _build_heuristic_overrides(self, resolution_label: Optional[str] = None):
+        heuristics = self._collect_heuristics(resolution_label)
         smooth = heuristics["smoothness"]
         speed = heuristics["speed"]
         accuracy = heuristics["accuracy"]
@@ -344,6 +425,19 @@ class Segmenter:
             "latent_knn": latent_cfg,
         }
 
+    def _heuristic_scale(self, resolution_label: Optional[str]) -> float:
+        if not resolution_label:
+            return 1.0
+        key = resolution_label.strip().lower()
+        size = PROFILE_MODEL_SIZES.get(key)
+        if not size:
+            return 1.0
+        numerator = float(size)
+        denominator = float(max(PROFILE_MODEL_SIZES.values()))
+        if denominator <= 0:
+            return 1.0
+        return np.clip(numerator / denominator, 0.1, 1.0)
+
     def open_feedback_link(self):
         if not getattr(self, "dlg", None):
             return
@@ -355,6 +449,19 @@ class Segmenter:
                 self.dlg,
                 "Unable to open link",
                 "Could not launch the browser. Please visit the issues page manually.",
+            )
+
+    def _open_support_link(self):
+        if not getattr(self, "dlg", None):
+            return
+        opened = QDesktopServices.openUrl(QUrl(BUY_ME_A_COFFEE_URL))
+        if opened:
+            self.log_status("Thanks for considering supporting development!")
+        else:
+            QMessageBox.warning(
+                self.dlg,
+                "Unable to open link",
+                "Could not launch the browser. Please try again later.",
             )
 
     def stop_current_task(self):
@@ -373,6 +480,16 @@ class Segmenter:
         self.task.cancel()
         self._set_stop_enabled(False)
         self.log_status("Cancellation requested; attempting to stop the worker immediately.")
+
+    def _init_logo_interactions(self):
+        logo = getattr(self.dlg, "imageLarge", None)
+        if not logo:
+            return
+        logo.setAttribute(Qt.WA_Hover, True)
+        logo.setMouseTracking(True)
+        if self._logo_hover is None:
+            self._logo_hover = _LogoHoverController(logo, self._open_support_link)
+            logo.installEventFilter(self._logo_hover)
 
     def add_action(
         self,
@@ -506,16 +623,13 @@ class Segmenter:
             self.dlg.inputSegments.setFocus()
             return
 
-        resolution_map = {
-            "high": 4,
-            "medium": 8,
-            "low": 16,
-        }
-
         # Get user specified resolution
-        resolution_label = self.dlg.inputRes.currentText()
-        resolution = resolution_map[resolution_label]
-        profile_tier = (resolution_label or "low").strip().lower()
+        resolution_label = self.dlg.inputRes.currentData()
+        if not resolution_label:
+            resolution_label = self.dlg.inputRes.currentText() or DEFAULT_RESOLUTION_LABEL
+        resolution_label = str(resolution_label).strip().lower()
+        resolution = RESOLUTION_VALUE_MAP.get(resolution_label, RESOLUTION_VALUE_MAP[DEFAULT_RESOLUTION_LABEL])
+        profile_tier = resolution_label
 
         # Set up kwargs
         if not hasattr(self, "device"):
@@ -539,6 +653,8 @@ class Segmenter:
         }
 
         heuristic_overrides = None
+        func = None
+        args = ()
 
         # set up args
         if self.model == "kmeans":
@@ -552,8 +668,8 @@ class Segmenter:
                 self.autoencoder_manager,
             )
         elif self.model == "cnn":
-            heuristic_overrides = self._build_heuristic_overrides()
-            heuristics = self._collect_heuristics()
+            heuristic_overrides = self._build_heuristic_overrides(resolution_label)
+            heuristics = self._collect_heuristics(resolution_label)
             self.log_status(
                 "Heuristic tuning — smoothness {:.2f}, speed {:.2f}, accuracy {:.2f}.".format(
                     heuristics["smoothness"], heuristics["speed"], heuristics["accuracy"]
@@ -575,6 +691,9 @@ class Segmenter:
                 heuristic_overrides,
                 self.autoencoder_manager,
             )
+        else:
+            self.log_status(f"Unsupported model selection: {self.model}")
+            return
 
         self.log_status(
             f"Queued {self.model.upper()} segmentation with {num_segments} segments at {self.dlg.inputRes.currentText()} resolution."
@@ -646,12 +765,13 @@ class Segmenter:
 
     # Display resolutions in dropdown
     def render_resolutions(self):
-        res_list = ["low", "medium", "high"]
         self.dlg.inputRes.clear()
-        for res in res_list:
-            self.dlg.inputRes.addItem(str(res))
-        default_res = "low"
-        index = self.dlg.inputRes.findText(default_res)
+        for label, value in RESOLUTION_CHOICES:
+            display = f"{label.title()} ({value})"
+            self.dlg.inputRes.addItem(display, label)
+        index = self.dlg.inputRes.findData(DEFAULT_RESOLUTION_LABEL)
+        if index < 0:
+            index = self.dlg.inputRes.findText(DEFAULT_RESOLUTION_LABEL, Qt.MatchFixedString)
         if index >= 0:
             self.dlg.inputRes.setCurrentIndex(index)
 
@@ -721,6 +841,8 @@ class Segmenter:
             self.render_models()
             self.render_layers()
             self.render_resolutions()
+            if not (self.dlg.inputSegments.text() or "").strip():
+                self.dlg.inputSegments.setText("3")
 
             # Set gpu message
             gpu_msg = "GPU available."
@@ -745,7 +867,20 @@ class Segmenter:
             img_path = os.path.join(self.plugin_dir, "logo.png")
             pix = QPixmap(img_path)
             self.dlg.imageLarge.setPixmap(pix)
+            self._init_logo_interactions()
+            self._init_layer_refresh()
 
         # show the dialog
         self.render_layers()
         self.dlg.show()
+
+    def _init_layer_refresh(self):
+        dlg = getattr(self, "dlg", None)
+        if not dlg:
+            return
+        combo = getattr(dlg, "inputLayer", None)
+        if not combo:
+            return
+        if self._layer_refresh_controller is None:
+            self._layer_refresh_controller = _ComboRefreshController(combo, self.render_layers)
+            combo.installEventFilter(self._layer_refresh_controller)

@@ -1,8 +1,9 @@
 import json
+import math
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 import torch
@@ -50,6 +51,8 @@ class _Schedule:
     steps: int
     lr: float
     batch_size: int
+    betas: Tuple[float, float]
+    weight_decay: float
 
 
 class TextureAutoencoderManager:
@@ -70,6 +73,12 @@ class TextureAutoencoderManager:
         self._weights_path = self.storage_dir / "workspace_autoencoder.pt"
         self._state = self._load_state()
         self._model: Optional[PatchAutoencoder] = None
+        self._prior_weight = 0.4
+        self._prior_min_weight = 0.05
+        self._variance_template: Optional[torch.Tensor] = None
+        self._smoothness_weight = 0.12
+        self._fib_cache = {}
+        self._local_emphasis = 0.65
 
     def set_device(self, device: torch.device) -> None:
         if device != self.device:
@@ -87,14 +96,15 @@ class TextureAutoencoderManager:
             return None
         if raster.ndim != 3:
             return None
-        self._load_model()
+        model = self._load_model()
         schedule = self._training_schedule()
         if schedule.steps > 0:
             _safe_status(status_callback, f"Autoencoder tuning for {schedule.steps} steps (lr={schedule.lr:.4e}).")
             self._train_model(raster, schedule, status_callback)
             self._state["runs"] = int(self._state.get("runs", 0)) + 1
             self._save_state()
-            torch.save(self._model.state_dict(), self._weights_path)
+            if model is not None:
+                torch.save(model.state_dict(), self._weights_path)
         grayscale = self._remap_labels_with_texture(raster, label_map, status_callback)
         return grayscale
 
@@ -127,25 +137,39 @@ class TextureAutoencoderManager:
 
     def _training_schedule(self) -> _Schedule:
         runs = int(self._state.get("runs", 0))
-        base_steps = 480
-        decay = 0.65
+        base_steps = 512
+        decay = 0.7
         min_steps = 64
         steps = int(max(min_steps, base_steps * (decay ** runs)))
         lr_min = 2e-4
-        lr = max(lr_min, 1e-3 * (0.75 ** runs))
-        batch = 24 if runs < 4 else 16
-        return _Schedule(steps=steps, lr=lr, batch_size=batch)
+        base_lr = 2e-3
+        lr = max(lr_min, base_lr * (0.65 ** runs))
+        if runs == 0:
+            batch = 32
+        elif runs < 4:
+            batch = 24
+        else:
+            batch = 16
+        betas = (0.9, 0.92) if runs < 2 else (0.9, 0.98)
+        weight_decay = 0.01 if runs < 3 else 0.006
+        return _Schedule(steps=steps, lr=lr, batch_size=batch, betas=betas, weight_decay=weight_decay)
 
     def _train_model(self, raster: np.ndarray, sched: _Schedule, status_callback=None) -> None:
         if self._model is None:
             return
+        model = self._model
         array = raster.astype(np.float32, copy=False)
         channels, height, width = array.shape
         patch = int(min(self.patch_size, height, width))
         if patch < 16:
             _safe_status(status_callback, "Raster too small for autoencoder training. Skipping update.")
             return
-        optimizer = torch.optim.Adam(self._model.parameters(), lr=sched.lr, weight_decay=1e-5)
+        optimizer = torch.optim.AdamW(
+            self._model.parameters(),
+            lr=sched.lr,
+            betas=sched.betas,
+            weight_decay=sched.weight_decay,
+        )
         loss_fn = nn.MSELoss()
         batches = max(1, sched.batch_size)
         for step in range(sched.steps):
@@ -154,12 +178,42 @@ class TextureAutoencoderManager:
                 break
             batch = batch.to(self.device)
             optimizer.zero_grad(set_to_none=True)
-            recon = self._model(batch)
-            loss = loss_fn(recon, batch)
+            latent = model.encoder(batch)
+            recon = model.decoder(latent)
+            base_loss = loss_fn(recon, batch)
+            prior_loss = self._latent_prior_penalty(latent)
+            smooth_loss = self._multiscale_total_variation(recon)
+            prior_weight = self._scheduled_prior_weight(step, sched.steps)
+            loss = base_loss + (prior_weight * prior_loss) + (self._smoothness_weight * smooth_loss)
+            should_log = step % max(1, sched.steps // 6) == 0 or step == sched.steps - 1
+            grad_norms = None
+            if should_log:
+                grad_norms = self._collect_grad_norms(model, base_loss, prior_loss, smooth_loss)
+            loss_value = float(loss.detach())
             loss.backward()
             optimizer.step()
-            if step % max(1, sched.steps // 6) == 0 or step == sched.steps - 1:
-                _safe_status(status_callback, f"Autoencoder step {step + 1}/{sched.steps} — loss {loss.item():.4f}")
+            if should_log:
+                recon_grad, prior_grad, smooth_grad = grad_norms if grad_norms else (float("nan"),) * 3
+                _safe_status(
+                    status_callback,
+                    (
+                        "Autoencoder step {step}/{total} — total {total_loss:.4f}, "
+                        "recon {recon_loss:.4f} (grad {recon_grad:.3e}), "
+                        "prior {prior_loss:.4f} w={prior_w:.3f} (grad {prior_grad:.3e}), "
+                        "smooth {smooth_loss:.4f} (grad {smooth_grad:.3e})"
+                    ).format(
+                        step=step + 1,
+                        total=sched.steps,
+                        total_loss=loss_value,
+                        recon_loss=base_loss.item(),
+                        prior_loss=prior_loss.item(),
+                        smooth_loss=smooth_loss.item(),
+                        prior_w=prior_weight,
+                        recon_grad=recon_grad,
+                        prior_grad=prior_grad,
+                        smooth_grad=smooth_grad,
+                    ),
+                )
 
     def _sample_batch(self, raster: np.ndarray, patch: int, batch: int) -> Optional[torch.Tensor]:
         channels, height, width = raster.shape
@@ -204,6 +258,8 @@ class TextureAutoencoderManager:
         tile = max(128, self.tile_size)
         sums: Dict[int, np.ndarray] = {}
         counts: Dict[int, int] = {}
+        local_weighted: Dict[int, np.ndarray] = {}
+        local_weight_mass: Dict[int, float] = {}
         total_tiles = max(1, ((height + tile - 1) // tile) * ((width + tile - 1) // tile))
         processed = 0
         for y0 in range(0, height, tile):
@@ -226,14 +282,21 @@ class TextureAutoencoderManager:
                 label_low = label_low.squeeze().cpu().numpy().astype(np.int64)
                 latent_flat = latent.reshape(self.latent_dim, -1).T
                 label_flat = label_low.reshape(-1)
+                grad_energy = self._compute_patch_gradient_energy(patch)
+                local_weight = 1.0 + (grad_energy * 4.0)
                 unique_labels = np.unique(label_flat)
                 for label in unique_labels:
                     mask = label_flat == label
                     if not np.any(mask):
                         continue
+                    pixel_count = int(mask.sum())
                     vec_sum = latent_flat[mask].sum(axis=0, dtype=np.float64)
                     sums[label] = sums.get(label, np.zeros(self.latent_dim, dtype=np.float64)) + vec_sum
-                    counts[label] = counts.get(label, 0) + int(mask.sum())
+                    counts[label] = counts.get(label, 0) + pixel_count
+                    tile_mean = vec_sum / max(pixel_count, 1)
+                    weighted = tile_mean * local_weight
+                    local_weighted[label] = local_weighted.get(label, np.zeros_like(tile_mean)) + weighted
+                    local_weight_mass[label] = local_weight_mass.get(label, 0.0) + local_weight
                 processed += 1
                 if processed % 4 == 0:
                     percent = int((processed / total_tiles) * 100)
@@ -243,15 +306,37 @@ class TextureAutoencoderManager:
             count = counts.get(label, 0)
             if count <= 0:
                 continue
-            centroids[label] = (total / count).astype(np.float32)
+            global_vec = (total / count).astype(np.float32)
+            local_sum = local_weighted.get(label)
+            weight_mass = local_weight_mass.get(label, 0.0)
+            local_vec = None
+            if local_sum is not None and weight_mass > 0:
+                local_vec = (local_sum / weight_mass).astype(np.float32)
+            centroids[label] = self._blend_local_global_vector(global_vec, local_vec, weight_mass, count)
         return centroids
 
+    def _blend_local_global_vector(
+        self,
+        global_vec: np.ndarray,
+        local_vec: Optional[np.ndarray],
+        local_weight: float,
+        global_count: int,
+    ) -> np.ndarray:
+        if local_vec is None:
+            return global_vec
+        emphasis = float(np.clip(self._local_emphasis, 0.0, 1.0))
+        denom = max(local_weight + float(global_count), 1e-6)
+        local_ratio = np.clip(local_weight / denom, 0.0, 1.0)
+        alpha = float(np.clip(emphasis * local_ratio, 0.05, 0.9))
+        return ((1.0 - alpha) * global_vec) + (alpha * local_vec)
+
     def _encode_patch(self, patch: np.ndarray) -> Optional[np.ndarray]:
-        if patch.size == 0:
+        if patch.size == 0 or self._model is None:
             return None
+        model = self._model
         tensor = torch.from_numpy(patch[np.newaxis].astype(np.float32) / 255.0).to(self.device)
         with torch.no_grad():
-            latent = self._model.encoder(tensor)
+            latent = model.encoder(tensor)
         return latent.cpu().numpy()[0]
 
     def _build_grayscale_lookup(self, centroids: Dict[int, np.ndarray]) -> Dict[int, int]:
@@ -276,6 +361,93 @@ class TextureAutoencoderManager:
         normalized = (scores - min_score) / denom
         lookup = {label: int(np.clip(value, 0.0, 1.0) * 255) for label, value in zip(labels, normalized)}
         return lookup
+
+    def _latent_prior_penalty(self, latent: torch.Tensor) -> torch.Tensor:
+        if latent.ndim != 4:
+            return torch.zeros((), device=latent.device)
+        dims = (0, 2, 3)
+        channel_mean = latent.mean(dim=dims)
+        channel_var = latent.var(dim=dims, unbiased=False)
+        mean_penalty = torch.mean(channel_mean ** 2)
+        template = self._adaptive_variance_template(channel_var)
+        var_penalty = torch.mean((channel_var - template) ** 2)
+        return mean_penalty + 0.5 * var_penalty
+
+    def _multiscale_total_variation(self, recon: torch.Tensor) -> torch.Tensor:
+        if recon.ndim != 4:
+            return torch.zeros((), device=recon.device)
+        loss = self._total_variation(recon)
+        pooled = recon
+        for _ in range(2):
+            pooled = F.avg_pool2d(pooled, kernel_size=2, stride=2, ceil_mode=True)
+            loss = loss + 0.5 * self._total_variation(pooled)
+        return loss
+
+    def _total_variation(self, tensor: torch.Tensor) -> torch.Tensor:
+        dh = tensor[:, :, 1:, :] - tensor[:, :, :-1, :]
+        dw = tensor[:, :, :, 1:] - tensor[:, :, :, :-1]
+        return dh.abs().mean() + dw.abs().mean()
+
+    def _fibonacci_variance_template(self, channels: int, device: torch.device) -> torch.Tensor:
+        if channels <= 0:
+            return torch.ones(1, device=device)
+        cache_key = (channels, device.type)
+        cached = self._fib_cache.get(cache_key)
+        if cached is not None and cached.device == device:
+            return cached
+        seq = [1.0, 1.0]
+        while len(seq) < channels:
+            seq.append(seq[-1] + seq[-2])
+        seq = seq[:channels]
+        template = torch.tensor(seq, dtype=torch.float32, device=device)
+        template = template / template.mean().clamp(min=1e-6)
+        self._fib_cache[cache_key] = template
+        return template
+
+    def _adaptive_variance_template(self, channel_var: torch.Tensor) -> torch.Tensor:
+        latent_dim = channel_var.shape[-1]
+        device = channel_var.device
+        base = self._fibonacci_variance_template(latent_dim, device)
+        if self._variance_template is None or self._variance_template.shape[0] != latent_dim:
+            self._variance_template = base.detach().clone()
+        if self._variance_template.device != device:
+            self._variance_template = self._variance_template.to(device)
+        momentum = 0.9
+        self._variance_template = (
+            momentum * self._variance_template + (1.0 - momentum) * channel_var.detach()
+        )
+        self._variance_template = self._variance_template / self._variance_template.mean().clamp(min=1e-6)
+        return self._variance_template.detach()
+
+    def _scheduled_prior_weight(self, step: int, total_steps: int) -> float:
+        if total_steps <= 1:
+            return self._prior_weight
+        progress = min(max(step / (total_steps - 1), 0.0), 1.0)
+        return float(self._prior_min_weight + (self._prior_weight - self._prior_min_weight) * progress)
+
+    def _collect_grad_norms(self, model: PatchAutoencoder, *terms: torch.Tensor) -> Tuple[float, float, float]:
+        norms = []
+        params = tuple(model.parameters())
+        for term in terms:
+            grads = torch.autograd.grad(term, params, retain_graph=True, allow_unused=True)
+            total = 0.0
+            for grad in grads:
+                if grad is None:
+                    continue
+                total += float(torch.sum(grad * grad))
+            norms.append(math.sqrt(total) if total > 0 else 0.0)
+        return tuple(norms)
+
+    @staticmethod
+    def _compute_patch_gradient_energy(patch: np.ndarray) -> float:
+        if patch.size == 0:
+            return 0.0
+        gray = patch.astype(np.float32, copy=False).mean(axis=0)
+        if gray.size == 0:
+            return 0.0
+        gy, gx = np.gradient(gray)
+        energy = np.sqrt(gy * gy + gx * gx)
+        return float(np.mean(energy))
 
 
 def default_autoencoder_path(plugin_dir: str) -> str:

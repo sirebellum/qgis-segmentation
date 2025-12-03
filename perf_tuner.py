@@ -3,11 +3,12 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Callable, Dict, Tuple, List, Optional, Union, Any
+from typing import Callable, Dict, Tuple, List, Optional, Union, Any, Sequence
 
 import numpy as np
 import torch
@@ -55,10 +56,11 @@ ProfileRunner = Callable[
     ],
 ]
 
+MB = 1024 * 1024
 PROFILE_FILENAME = "perf_profile.json"
-SAFETY_CHOICES = (4, 6, 8, 10)
-PREFETCH_CHOICES = (1, 2, 3, 4)
-DEFAULT_BUDGET_BYTES = 64 * 1024 * 1024
+PREFETCH_CHOICES = (1, 3, 5)
+SPATIAL_CHOICES = (4, 8, 12)
+DEFAULT_BUDGET_BYTES = 64 * MB
 PROFILE_TIERS = ("high", "medium", "low")
 PROFILE_TILE_SIZES = {
     "high": 256,
@@ -70,6 +72,69 @@ PROFILE_BUDGETS = {
     "medium": int(DEFAULT_BUDGET_BYTES * 0.75),
     "low": int(DEFAULT_BUDGET_BYTES * 0.5),
 }
+PROFILE_TILE_STACK = (256, 512, 768, 1024)
+BASE_BACKEND_BUDGETS = {
+    "cuda": 320 * MB,
+    "mps": 224 * MB,
+    "cpu": 160 * MB,
+}
+
+
+def _build_max_safe_matrix() -> Dict[int, Dict[int, Dict[str, int]]]:
+    matrix: Dict[int, Dict[int, Dict[str, int]]] = {}
+    base_scale = 0.55
+    for pref_idx, prefetch in enumerate(PREFETCH_CHOICES):
+        matrix[prefetch] = {}
+        for spatial_idx, spatial in enumerate(SPATIAL_CHOICES):
+            scale = base_scale + 0.06 * pref_idx + 0.04 * spatial_idx
+            entry: Dict[str, int] = {}
+            for backend, budget in BASE_BACKEND_BUDGETS.items():
+                backend_scale = 1.0
+                if backend == "mps":
+                    backend_scale = 0.85
+                elif backend == "cpu":
+                    backend_scale = 0.6
+                multiplier = min(1.6, max(0.35, scale * backend_scale))
+                entry[backend] = int(budget * multiplier)
+            matrix[prefetch][spatial] = entry
+    return matrix
+
+
+MAX_SAFE_VRAM = _build_max_safe_matrix()
+
+
+def _backend_key(device: torch.device) -> str:
+    if device.type == "cuda" and torch.cuda.is_available():
+        return "cuda"
+    if device.type == "mps" and hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
+
+def _max_safe_budget(prefetch: int, spatial: int, backend: str, fallback: int) -> int:
+    entry = MAX_SAFE_VRAM.get(prefetch, {}).get(spatial)
+    if not entry:
+        return fallback
+    budget = entry.get(backend)
+    if not budget:
+        return fallback
+    return max(32 * MB, budget)
+PROFILE_TILE_STACK = (256, 512, 768, 1024)
+
+
+def _synthetic_tile_batch(seed: int, tile_sizes: Sequence[int] = PROFILE_TILE_STACK) -> List[np.ndarray]:
+    rng = np.random.default_rng(seed)
+    return [
+        rng.integers(0, 255, size=(3, size, size), dtype=np.uint8)
+        for size in tile_sizes
+    ]
+
+
+def _synchronize_device(device: torch.device) -> None:
+    if device.type == "cuda" and torch.cuda.is_available():
+        torch.cuda.synchronize(device)
+    elif device.type == "mps" and hasattr(torch, "mps"):
+        torch.mps.synchronize()
 
 
 def _clone_setting(settings: AdaptiveSettings) -> AdaptiveSettings:
@@ -178,7 +243,10 @@ def load_or_profile_settings(
 
 
 def _run_profile(
-    device: torch.device, status_callback: Optional[Callable[[str], None]] = None
+    device: torch.device,
+    status_callback: Optional[Callable[[str], None]] = None,
+    tile_stack: Optional[Sequence[int]] = None,
+    tiers: Optional[Sequence[str]] = None,
 ) -> ProfilePayload:
     """Profile each resolution tier and capture throughput metrics per tier."""
 
@@ -186,18 +254,22 @@ def _run_profile(
     tier_settings: Dict[str, AdaptiveSettings] = {}
     tier_options: Dict[str, List[Tuple[int, AdaptiveSettings]]] = {}
     tier_metrics: Dict[str, Dict[str, float]] = {}
+    active_tiers: Sequence[str] = tuple(tiers) if tiers else PROFILE_TIERS
+    tile_stack = tuple(tile_stack) if tile_stack else PROFILE_TILE_STACK
 
-    for tier in PROFILE_TIERS:
-        tile_size = PROFILE_TILE_SIZES.get(tier, 256)
+    for tier in active_tiers:
+        tile_size = PROFILE_TILE_SIZES.get(tier, PROFILE_TILE_SIZES["high"])
         memory_budget = PROFILE_BUDGETS.get(tier, DEFAULT_BUDGET_BYTES)
-        array = np.random.randint(0, 255, size=(3, tile_size, tile_size), dtype=np.uint8)
+        seed = (hash((tier, tuple(tile_stack))) & 0xFFFF) or 1
+        tile_batch = _synthetic_tile_batch(seed, tile_stack)
         best_settings, options, metrics = _profile_single_tier(
             tier,
             model,
-            array,
+            tile_batch,
             device,
             status_callback,
             memory_budget,
+            tile_size,
         )
         tier_settings[tier] = _clone_setting(best_settings)
         tier_options[tier] = options
@@ -221,16 +293,17 @@ def _run_profile(
 def _profile_single_tier(
     tier: str,
     model: torch.nn.Module,
-    array: np.ndarray,
+    arrays: Sequence[np.ndarray],
     device: torch.device,
     status_callback: Optional[Callable[[str], None]],
     memory_budget: int,
+    tile_size: int,
 ) -> Tuple[AdaptiveSettings, List[Tuple[int, AdaptiveSettings]], Dict[str, float]]:
-    default_safety = SAFETY_CHOICES[0]
-    total_steps = len(PREFETCH_CHOICES) + len(SAFETY_CHOICES)
+    total_steps = len(PREFETCH_CHOICES) * len(SPATIAL_CHOICES)
     step = 0
     candidates: list[tuple[int, float, AdaptiveSettings]] = []
     score_map: Dict[Tuple[int, int], float] = {}
+    backend = _backend_key(device)
 
     def _record_candidate(settings: AdaptiveSettings, score: Optional[float]):
         if score is None:
@@ -240,51 +313,31 @@ def _profile_single_tier(
         candidates.append((est_bytes, score, copy))
         score_map[(settings.prefetch_depth, settings.safety_factor)] = score
 
-    best_prefetch = PREFETCH_CHOICES[0]
-    best_prefetch_score = -float("inf")
-    for prefetch in PREFETCH_CHOICES:
-        step += 1
-        settings = AdaptiveSettings(safety_factor=default_safety, prefetch_depth=prefetch)
-        score = _benchmark_settings(
-            settings,
-            model,
-            array,
-            device,
-            status_callback,
-            phase=1,
-            step=step,
-            total=total_steps,
-            tier=tier,
-            memory_budget=memory_budget,
-            tile_size=array.shape[1],
-        )
-        _record_candidate(settings, score)
-        if score is not None and score > best_prefetch_score:
-            best_prefetch_score = score
-            best_prefetch = prefetch
+    best_settings = AdaptiveSettings(safety_factor=SPATIAL_CHOICES[0], prefetch_depth=PREFETCH_CHOICES[0])
+    best_score = -float("inf")
 
-    best_settings = AdaptiveSettings(safety_factor=default_safety, prefetch_depth=best_prefetch)
-    best_score = best_prefetch_score
-    for safety in SAFETY_CHOICES:
-        step += 1
-        settings = AdaptiveSettings(safety_factor=safety, prefetch_depth=best_prefetch)
-        score = _benchmark_settings(
-            settings,
-            model,
-            array,
-            device,
-            status_callback,
-            phase=2,
-            step=step,
-            total=total_steps,
-            tier=tier,
-            memory_budget=memory_budget,
-            tile_size=array.shape[1],
-        )
-        _record_candidate(settings, score)
-        if score is not None and (best_score is None or score > best_score):
-            best_score = score
-            best_settings = settings
+    for prefetch in PREFETCH_CHOICES:
+        for spatial in SPATIAL_CHOICES:
+            step += 1
+            settings = AdaptiveSettings(safety_factor=spatial, prefetch_depth=prefetch)
+            budget_hint = _max_safe_budget(prefetch, spatial, backend, memory_budget)
+            score = _benchmark_settings(
+                settings,
+                model,
+                arrays,
+                device,
+                status_callback,
+                phase=None,
+                step=step,
+                total=total_steps,
+                tier=tier,
+                memory_budget=budget_hint,
+                tile_size=tile_size,
+            )
+            _record_candidate(settings, score)
+            if score is not None and score > best_score:
+                best_score = score
+                best_settings = settings
 
     options = _build_adaptive_options(candidates)
     metrics = _summarize_tier_metrics(score_map, best_settings, best_score)
@@ -296,8 +349,11 @@ def _summarize_tier_metrics(
     best_settings: AdaptiveSettings,
     best_score: Optional[float],
 ) -> Dict[str, float]:
-    best = float(best_score) if best_score is not None and best_score != float("inf") else 0.0
-    baseline_key = (PREFETCH_CHOICES[0], SAFETY_CHOICES[0])
+    if best_score is None or not math.isfinite(best_score):
+        best = 0.0
+    else:
+        best = float(best_score)
+    baseline_key = (PREFETCH_CHOICES[0], SPATIAL_CHOICES[0])
     baseline = float(scores.get(baseline_key, 0.0))
     speedup = best / baseline if baseline > 0 else 0.0
     return {
@@ -312,7 +368,7 @@ def _summarize_tier_metrics(
 def _benchmark_settings(
     settings: AdaptiveSettings,
     model: torch.nn.Module,
-    array: np.ndarray,
+    arrays: Sequence[np.ndarray],
     device: torch.device,
     status_callback: Optional[Callable[[str], None]],
     phase: Optional[int] = None,
@@ -324,25 +380,34 @@ def _benchmark_settings(
 ) -> Optional[float]:
     """Run predict_cnn with the supplied settings and return throughput."""
 
+    if not arrays:
+        return None
+
     set_adaptive_settings({tier: settings}, default_tier=tier)
     start = time.perf_counter()
+    total_pixels = 0
+    sample_count = 0
+    effective_budget = max(32 * MB, int(memory_budget))
     try:
-        predict_cnn(
-            model,
-            array,
-            num_segments=3,
-            tile_size=tile_size,
-            device=device,
-            memory_budget=memory_budget,
-            prefetch_depth=settings.prefetch_depth,
-            status_callback=None,
-            profile_tier=tier,
-        )
-        if device.type == "cuda":
-            torch.cuda.synchronize(device)
-        elapsed = max(time.perf_counter() - start, 1e-6)
-        score = (array.shape[1] * array.shape[2]) / elapsed
-        score /= max(settings.prefetch_depth, 1)
+        for array in arrays:
+            predict_cnn(
+                model,
+                array,
+                num_segments=3,
+                tile_size=tile_size,
+                device=device,
+                memory_budget=effective_budget,
+                prefetch_depth=settings.prefetch_depth,
+                status_callback=None,
+                profile_tier=tier,
+            )
+            _synchronize_device(device)
+            total_pixels += array.shape[1] * array.shape[2]
+            sample_count += 1
+        elapsed_total = max(time.perf_counter() - start, 1e-6)
+        avg_elapsed = elapsed_total / max(sample_count, 1)
+        avg_pixels = total_pixels / max(sample_count, 1)
+        score = avg_pixels / max(avg_elapsed, 1e-6)
         if status_callback:
             progress = int(100 * step / total) if step is not None and total else None
             prefix = f"[{tier}] "
@@ -350,7 +415,7 @@ def _benchmark_settings(
                 prefix = f"{prefix}[Phase {phase}] "
             suffix = f" ({progress}% complete)" if progress is not None else ""
             status_callback(
-                f"{prefix}safety={settings.safety_factor}, prefetch={settings.prefetch_depth}: {score:.2f} px/s{suffix}"
+                f"{prefix}safety={settings.safety_factor}, prefetch={settings.prefetch_depth}, budget={effective_budget // (1024 * 1024)}MB: {score:,.0f} px/s{suffix}"
             )
         return score
     except RuntimeError as exc:
@@ -361,7 +426,7 @@ def _benchmark_settings(
                 prefix = f"{prefix}[Phase {phase}] "
             suffix = f" ({progress}% complete)" if progress is not None else ""
             status_callback(
-                f"{prefix}safety={settings.safety_factor}, prefetch={settings.prefetch_depth}: FAILED {suffix} ({exc})"
+                f"{prefix}safety={settings.safety_factor}, prefetch={settings.prefetch_depth}, budget={effective_budget // (1024 * 1024)}MB: FAILED {suffix} ({exc})"
             )
         logger.debug("Profiling settings failed", exc_info=True)
         return None
@@ -490,7 +555,7 @@ def _start_profiling_popup() -> Optional[Any]:
     box.setWindowTitle("Segmenter Profiling")
     box.setText(
         "Profiling this device for optimal batching...\n"
-        "This runs once and should finish shortly."
+        "This runs once and typically takes 5–10 minutes."
     )
     box.setStandardButtons(QMessageBox.NoButton)
     box.setIcon(QMessageBox.Information)

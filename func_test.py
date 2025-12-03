@@ -1,4 +1,6 @@
 import json
+import time
+
 import numpy as np
 import pytest
 import torch
@@ -20,7 +22,7 @@ from funcs import (
     _ChunkAggregator,
     _chunked_gaussian_blur,
 )
-from perf_tuner import load_or_profile_settings, ProfilePayload
+from perf_tuner import load_or_profile_settings, ProfilePayload, _run_profile
 from raster_utils import ensure_channel_first
 
 
@@ -55,6 +57,55 @@ class _StubAutoencoder:
 def _rand_array(seed, shape):
     rng = np.random.default_rng(seed)
     return rng.integers(0, 255, size=shape, dtype=np.uint8)
+
+
+def _rand_tile_batch(seed, tile_sizes):
+    batch = []
+    for idx, size in enumerate(tile_sizes):
+        batch.append(_rand_array(seed + idx, (3, size, size)))
+    return batch
+
+
+def _available_gpu_device():
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        return torch.device("mps")
+    return None
+
+
+def _synchronize_device(device):
+    if device is None:
+        return
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+    elif device.type == "mps" and hasattr(torch, "mps"):
+        torch.mps.synchronize()
+
+
+def _benchmark_predict(model, arrays, device, settings, tile_size):
+    samples = list(arrays)
+    if not samples:
+        raise ValueError("arrays must not be empty")
+    set_adaptive_settings({"default": settings}, default_tier="default")
+    start = time.perf_counter()
+    total_pixels = 0
+    for array in samples:
+        predict_cnn(
+            model,
+            array,
+            num_segments=3,
+            tile_size=tile_size,
+            device=device,
+            memory_budget=64 * 1024 * 1024,
+        )
+        _synchronize_device(device)
+        total_pixels += array.shape[1] * array.shape[2]
+    elapsed_total = time.perf_counter() - start
+    avg_elapsed = elapsed_total / max(len(samples), 1)
+    avg_pixels = total_pixels / max(len(samples), 1)
+    throughput = avg_pixels / max(avg_elapsed, 1e-6)
+    return {"elapsed": avg_elapsed, "throughput": throughput}
 
 
 def test_tile_raster_reassembles_original_extent():
@@ -268,3 +319,65 @@ def test_chunked_gaussian_blur_matches_single_pass():
     full = _chunked_gaussian_blur(array, sigma, max_chunk_bytes=1_000_000_000)
     chunked = _chunked_gaussian_blur(array, sigma, max_chunk_bytes=32 * 1024)
     np.testing.assert_allclose(chunked, full, atol=1e-4)
+
+
+@pytest.mark.performance
+def test_predict_cnn_gpu_prefetch_throughput(gpu_metric_recorder, tmp_path):
+    device = _available_gpu_device()
+    if device is None:
+        pytest.skip("No CUDA or MPS backend available for GPU throughput test.")
+
+    tile_sizes = (256, 512, 768, 1024)
+    tile_batch = _rand_tile_batch(11, tile_sizes)
+    model = _DummyModel().to(device)
+
+    # Warm-up to stabilize kernels/cache before measuring.
+    for sample in tile_batch:
+        predict_cnn(
+            model,
+            sample,
+            num_segments=3,
+            tile_size=128,
+            device=device,
+            memory_budget=32 * 1024 * 1024,
+            prefetch_depth=1,
+        )
+    _synchronize_device(device)
+
+    profile_dir = tmp_path / "profile"
+    profile_dir.mkdir()
+
+    def _runner(dev, status):
+        return _run_profile(dev, status, tile_stack=tile_sizes, tiers=("high",))
+
+    profiled_settings, _ = load_or_profile_settings(str(profile_dir), device, benchmark_runner=_runner)
+    baseline_settings = AdaptiveSettings(safety_factor=12, prefetch_depth=1)
+
+    baseline = _benchmark_predict(model, tile_batch, device, baseline_settings, tile_size=128)
+    optimized = _benchmark_predict(model, tile_batch, device, profiled_settings, tile_size=128)
+
+    gpu_metric_recorder(
+        {
+            "label": "baseline",
+            "device": device.type,
+            "prefetch": baseline_settings.prefetch_depth,
+            "throughput": baseline["throughput"],
+            "elapsed": baseline["elapsed"],
+            "tile_sizes": tile_sizes,
+            "is_baseline": True,
+        }
+    )
+    gpu_metric_recorder(
+        {
+            "label": "optimized",
+            "device": device.type,
+            "prefetch": profiled_settings.prefetch_depth,
+            "throughput": optimized["throughput"],
+            "elapsed": optimized["elapsed"],
+            "tile_sizes": tile_sizes,
+            "safety": profiled_settings.safety_factor,
+        }
+    )
+
+    # Allow modest variance on MPS while ensuring optimized path is not slower.
+    assert optimized["throughput"] >= baseline["throughput"] * 0.8

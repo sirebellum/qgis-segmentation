@@ -3,6 +3,7 @@ import math
 import os
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Dict, List, Tuple, Optional
 
@@ -227,8 +228,9 @@ def _process_in_chunks(
         chunk = array[:, y:y_end, x:x_end]
         if status_callback:
             status_callback(f"Chunk {idx}/{total}: rows {y}-{y_end}, cols {x}-{x_end}")
-        labels = infer_fn(chunk)
-        aggregator.add(labels, (y, x, y_end, x_end))
+        inference_result = infer_fn(chunk)
+        labels, scores = _normalize_inference_output(inference_result)
+        aggregator.add(labels, (y, x, y_end, x_end), chunk_data=chunk, scores=scores)
 
     if status_callback:
         megapixels = (height * width) / 1_000_000
@@ -247,6 +249,25 @@ def _compute_chunk_starts(length, chunk_size, stride):
     if last_start > 0 and (not starts or starts[-1] != last_start):
         starts.append(last_start)
     return sorted(set(starts))
+
+
+def _normalize_inference_output(result):
+    scores = None
+    labels = result
+    if isinstance(result, dict):
+        labels = result.get("labels")
+        scores = result.get("scores")
+    elif isinstance(result, (list, tuple)) and len(result) == 2:
+        labels, scores = result
+    if labels is None:
+        raise ValueError("Inference result must include labels.")
+    return labels, scores
+
+
+def _label_to_one_hot(label_map, num_segments):
+    labels = np.clip(label_map.astype(np.int64, copy=False), 0, num_segments - 1)
+    one_hot = np.eye(num_segments, dtype=np.float32)[labels]
+    return one_hot.transpose(2, 0, 1)
 
 
 def _derive_chunk_size(array_shape, device, profile_tier: Optional[str] = None):
@@ -305,16 +326,27 @@ class _ChunkAggregator:
         self.chunk_size = chunk_size
         self._status_callback = status_callback
         self._smoothing_scale = max(0.1, float(smoothing_scale))
+        # Track running color prototypes to align labels across tiles.
+        self._palette_threshold = 24.0
+        self._feature_dim = None
+        self._prototype_vectors = None
+        self._prototype_counts = np.zeros(num_segments, dtype=np.int64)
 
-    def add(self, labels, region):
+    def add(self, labels, region, chunk_data=None, scores=None):
         y0, x0, y1, x1 = region
         h = y1 - y0
         w = x1 - x0
-        chunk = labels[:h, :w].astype(np.int64, copy=False)
+        harmonized = self._harmonize_labels(labels[:h, :w], chunk_data)
+        chunk = harmonized.astype(np.int64, copy=False)
         mask = self.weight_template[:h, :w]
-        one_hot = np.eye(self.num_segments, dtype=np.float32)[chunk]
-        one_hot = one_hot.transpose(2, 0, 1)
-        self.scores[:, y0:y1, x0:x1] += one_hot * mask
+        if scores is not None:
+            chunk_scores = scores[:, :h, :w].astype(np.float32, copy=False)
+            weighted_scores = chunk_scores * mask[np.newaxis, ...]
+        else:
+            one_hot = np.eye(self.num_segments, dtype=np.float32)[chunk]
+            chunk_scores = one_hot.transpose(2, 0, 1)
+            weighted_scores = chunk_scores * mask
+        self.scores[:, y0:y1, x0:x1] += weighted_scores
         self.weight[y0:y1, x0:x1] += mask
 
     def finalize(self):
@@ -335,6 +367,82 @@ class _ChunkAggregator:
         weight = np.maximum(smoothed_weight, 1e-6)
         probs = smoothed_scores / weight
         return np.argmax(probs, axis=0).astype(np.uint8)
+
+    def _harmonize_labels(self, labels, chunk_data):
+        if chunk_data is None:
+            return labels
+        label_vectors = self._extract_label_vectors(chunk_data, labels)
+        if not label_vectors:
+            return labels
+        if self._feature_dim is None:
+            sample = next(iter(label_vectors.values()))
+            self._feature_dim = sample.shape[0]
+            self._prototype_vectors = np.zeros((self.num_segments, self._feature_dim), dtype=np.float32)
+        remapped = labels.copy()
+        used_targets = set()
+        for label_id, vector in label_vectors.items():
+            target = self._select_target_index(vector, used_targets)
+            if target is None:
+                continue
+            used_targets.add(target)
+            self._update_prototype(target, vector)
+            if target != label_id:
+                remapped[labels == label_id] = target
+        return remapped
+
+    def _extract_label_vectors(self, chunk_data, labels):
+        if chunk_data.ndim != 3:
+            return {}
+        channels = chunk_data.shape[0]
+        flat_pixels = chunk_data.reshape(channels, -1).astype(np.float32, copy=False)
+        flat_labels = labels.reshape(-1)
+        vectors = {}
+        for label_id in np.unique(flat_labels):
+            mask = flat_labels == label_id
+            if not np.any(mask):
+                continue
+            pixels = flat_pixels[:, mask]
+            vectors[int(label_id)] = pixels.mean(axis=1)
+        return vectors
+
+    def _select_target_index(self, vector, used_targets):
+        if self._prototype_vectors is None:
+            return self._next_unused_index(used_targets)
+        active_indices = [idx for idx, count in enumerate(self._prototype_counts) if count > 0 and idx not in used_targets]
+        candidate = None
+        min_distance = None
+        for idx in active_indices:
+            distance = float(np.linalg.norm(self._prototype_vectors[idx] - vector))
+            if min_distance is None or distance < min_distance:
+                min_distance = distance
+                candidate = idx
+        if candidate is not None and min_distance is not None and min_distance <= self._palette_threshold:
+            return candidate
+        fallback = self._next_unused_index(used_targets)
+        if fallback is not None:
+            return fallback
+        return candidate
+
+    def _update_prototype(self, idx, vector):
+        if self._prototype_vectors is None:
+            return
+        current = self._prototype_counts[idx]
+        vector = vector.astype(np.float32, copy=False)
+        if current == 0:
+            self._prototype_vectors[idx] = vector
+        else:
+            total = current + 1
+            self._prototype_vectors[idx] = (self._prototype_vectors[idx] * current + vector) / total
+        self._prototype_counts[idx] = current + 1
+
+    def _next_unused_index(self, used_targets):
+        for idx in range(self.num_segments):
+            if self._prototype_counts[idx] == 0 and idx not in used_targets:
+                return idx
+        for idx in range(self.num_segments):
+            if idx not in used_targets:
+                return idx
+        return None
 
 
 def _resize_latent_map(latent_map, size):
@@ -388,12 +496,16 @@ def _latent_knn_soft_refine(
     status_callback=None,
     config=None,
     cancel_token=None,
+    return_posteriors=False,
 ):
     cfg = dict(LATENT_KNN_DEFAULTS)
     if config:
         cfg.update({k: v for k, v in config.items() if v is not None})
     if not cfg.get("enabled", False):
-        return lowres_labels.astype(np.uint8, copy=False)
+        result = lowres_labels.astype(np.uint8, copy=False)
+        if return_posteriors:
+            return result, None
+        return result
 
     h, w = lowres_labels.shape
     factor = max(int(cfg.get("hierarchy_factor", 1)), 1)
@@ -430,6 +542,7 @@ def _latent_knn_soft_refine(
         status_callback,
         stage_label="fine",
         cancel_token=cancel_token,
+        return_posteriors=return_posteriors,
     )
     return refined
 
@@ -443,6 +556,7 @@ def _latent_knn_core(
     status_callback,
     stage_label="latent",
     cancel_token=None,
+    return_posteriors=False,
 ):
     h, w = seed_labels.shape
     channels = latent_map.shape[0]
@@ -500,7 +614,11 @@ def _latent_knn_core(
         )
 
     refined = np.argmax(posteriors, axis=1)
-    return refined.reshape(h, w).astype(np.uint8)
+    refined_map = refined.reshape(h, w).astype(np.uint8)
+    if return_posteriors:
+        scores = posteriors.reshape(h, w, num_segments).transpose(2, 0, 1).astype(np.float32, copy=False)
+        return refined_map, scores
+    return refined_map
 
 
 def _softmax(x):
@@ -696,6 +814,7 @@ def execute_cnn_segmentation(
                 profile_tier=profile_tier,
                 latent_knn_config=latent_knn_config,
                 cancel_token=cancel_token,
+                return_scores=True,
             ),
             status_callback,
             smoothing_scale=smoothing_scale,
@@ -829,6 +948,7 @@ def predict_cnn(
     profile_tier: Optional[str] = None,
     latent_knn_config: Optional[Dict[str, object]] = None,
     cancel_token=None,
+    return_scores=False,
 ):
     _maybe_raise_cancel(cancel_token)
     effective_budget = memory_budget or DEFAULT_MEMORY_BUDGET
@@ -855,13 +975,16 @@ def predict_cnn(
     )
     coverage_map = []
     last_report = -1
+    amp_enabled = bool(device.type == "cuda" and torch.cuda.is_available())
+    amp_context = torch.cuda.amp.autocast if amp_enabled else nullcontext
 
     for tensor_batch, start, end, total in _prefetch_batches(
         tiles, batch_size, device, depth=prefetch_depth, cancel_token=cancel_token
     ):
         _maybe_raise_cancel(cancel_token)
         with torch.no_grad():
-            result = cnn_model.forward(tensor_batch)
+            with amp_context():
+                result = cnn_model.forward(tensor_batch)
         vectors = result[1].detach().cpu().numpy()
         coverage_map.append(vectors)
         percent = int((end / total) * 100)
@@ -906,8 +1029,9 @@ def predict_cnn(
         lowres_labels = None
         centers = None
 
+    lowres_scores = None
     if lowres_labels is not None and centers is not None:
-        refined_lowres = _latent_knn_soft_refine(
+        refined_output = _latent_knn_soft_refine(
             latent_grid,
             lowres_labels,
             centers,
@@ -915,11 +1039,20 @@ def predict_cnn(
             status_callback=status_callback,
             config=latent_knn_config,
             cancel_token=cancel_token,
+            return_posteriors=return_scores,
         )
+        if return_scores:
+            refined_lowres, lowres_scores = refined_output
+        else:
+            refined_lowres = refined_output
     elif lowres_labels is not None:
         refined_lowres = lowres_labels.astype(np.uint8, copy=False)
+        if return_scores:
+            lowres_scores = _label_to_one_hot(refined_lowres, num_segments)
     else:
         refined_lowres = kmeans_outputs[0] if isinstance(kmeans_outputs, tuple) else kmeans_outputs
+        if return_scores:
+            lowres_scores = _label_to_one_hot(refined_lowres, num_segments)
 
     coverage_map = torch.tensor(refined_lowres).unsqueeze(0).unsqueeze(0)
     coverage_map = torch.nn.Upsample(
@@ -930,7 +1063,25 @@ def predict_cnn(
 
     _emit_status(status_callback, "CNN segmentation map reconstructed.")
     _maybe_raise_cancel(cancel_token)
-    return coverage_map.cpu().numpy()
+    labels_full = coverage_map.cpu().numpy()
+    labels_full, rotation_plan = _auto_orient_tile_grid(labels_full, tile_size)
+    if not return_scores:
+        return labels_full
+
+    if lowres_scores is None:
+        lowres_scores = _label_to_one_hot(refined_lowres, num_segments)
+    score_tensor = torch.from_numpy(lowres_scores).unsqueeze(0)
+    score_tensor = F.interpolate(
+        score_tensor,
+        size=(array.shape[1] + height_pad, array.shape[2] + width_pad),
+        mode="bilinear",
+        align_corners=False,
+    )
+    score_tensor = score_tensor[0, :, : array.shape[1], : array.shape[2]]
+    scores_np = score_tensor.cpu().numpy()
+    if rotation_plan is not None:
+        scores_np = _apply_rotation_plan_to_volume(scores_np, tile_size, rotation_plan)
+    return labels_full, scores_np
 
 def tile_raster(array, tile_size):
     padding = lambda shape: 0 if shape % tile_size == 0 else tile_size - shape % tile_size
@@ -966,6 +1117,96 @@ def tile_raster(array, tile_size):
     return tiles, (height_pad[1], width_pad[1]), grid_shape
 
 
+def _auto_orient_tile_grid(label_map: np.ndarray, tile_size: int):
+    if tile_size <= 1:
+        return label_map, None
+    height, width = label_map.shape
+    rows = max(1, math.ceil(height / tile_size))
+    cols = max(1, math.ceil(width / tile_size))
+    oriented = np.zeros_like(label_map)
+    rotation_plan = np.zeros((rows, cols), dtype=np.uint8)
+    changed = False
+
+    for r in range(rows):
+        y0 = r * tile_size
+        if y0 >= height:
+            break
+        y1 = min(y0 + tile_size, height)
+        for c in range(cols):
+            x0 = c * tile_size
+            if x0 >= width:
+                break
+            x1 = min(x0 + tile_size, width)
+            tile = label_map[y0:y1, x0:x1]
+            if tile.size == 0:
+                continue
+            if tile.shape[0] != tile.shape[1]:
+                oriented[y0:y1, x0:x1] = tile
+                rotation_plan[r, c] = 0
+                continue
+            top_edge = oriented[y0 - 1, x0:x1] if y0 > 0 else None
+            left_edge = oriented[y0:y1, x0 - 1] if x0 > 0 else None
+            best_k, best_tile = _select_tile_rotation(tile, top_edge, left_edge)
+            rotation_plan[r, c] = best_k
+            if best_k != 0:
+                changed = True
+            oriented[y0:y1, x0:x1] = best_tile
+
+    if not changed:
+        return label_map, None
+    return oriented, rotation_plan
+
+
+def _select_tile_rotation(tile: np.ndarray, top_edge: Optional[np.ndarray], left_edge: Optional[np.ndarray]):
+    best_k = 0
+    best_score = float("-inf")
+    best_tile = tile
+    for k in range(4):
+        candidate = np.rot90(tile, k=k)
+        score = 0.0
+        if top_edge is not None and top_edge.size > 0:
+            overlap = min(candidate.shape[1], top_edge.shape[-1])
+            if overlap > 0:
+                score += float(np.mean(candidate[0, :overlap] == top_edge[:overlap]))
+        if left_edge is not None and left_edge.size > 0:
+            overlap = min(candidate.shape[0], left_edge.shape[0])
+            if overlap > 0:
+                score += float(np.mean(candidate[:overlap, 0] == left_edge[:overlap]))
+        if score > best_score + 1e-6:
+            best_score = score
+            best_k = k
+            best_tile = candidate
+    return best_k, best_tile
+
+
+def _apply_rotation_plan_to_volume(volume: np.ndarray, tile_size: int, plan: np.ndarray):
+    rotated = np.zeros_like(volume)
+    channels, height, width = volume.shape
+    rows, cols = plan.shape
+    for r in range(rows):
+        y0 = r * tile_size
+        if y0 >= height:
+            break
+        y1 = min(y0 + tile_size, height)
+        for c in range(cols):
+            x0 = c * tile_size
+            if x0 >= width:
+                break
+            x1 = min(x0 + tile_size, width)
+            tile = volume[:, y0:y1, x0:x1]
+            if tile.size == 0:
+                continue
+            if tile.shape[1] != tile.shape[2]:
+                rotated[:, y0:y1, x0:x1] = tile
+                continue
+            k = int(plan[r, c]) if plan is not None else 0
+            if k == 0:
+                rotated[:, y0:y1, x0:x1] = tile
+            else:
+                rotated[:, y0:y1, x0:x1] = np.rot90(tile, k=k, axes=(-2, -1))
+    return rotated
+
+
 def _normalize_cluster_labels(labels, centers):
     # Validate that all label indices are within bounds
     n_centers = centers.shape[0]
@@ -998,6 +1239,16 @@ def _recommended_batch_size(channels, height, width, memory_budget, settings):
 
 def _prefetch_batches(tiles, batch_size, device, depth=2, cancel_token=None):
     total = tiles.shape[0]
+    if total == 0:
+        return
+    if device.type == "cuda" and torch.cuda.is_available():
+        yield from _prefetch_batches_cuda(tiles, batch_size, device, cancel_token)
+        return
+    yield from _prefetch_batches_threaded(tiles, batch_size, device, depth, cancel_token)
+
+
+def _prefetch_batches_threaded(tiles, batch_size, device, depth=2, cancel_token=None):
+    total = tiles.shape[0]
     depth = max(1, depth or 1)
     executor = ThreadPoolExecutor(max_workers=depth)
     futures = deque()
@@ -1017,17 +1268,58 @@ def _prefetch_batches(tiles, batch_size, device, depth=2, cancel_token=None):
             try:
                 _maybe_raise_cancel(cancel_token)
                 yield future.result(), start, end, total
-            except Exception as exc:
-                # Ensure all remaining futures are awaited so exceptions are not lost
+            except Exception:
                 while futures:
                     leftover_future, _, _ = futures.popleft()
                     try:
                         leftover_future.result()
                     except Exception:
-                        pass  # Optionally log or collect these exceptions
+                        pass
                 raise
     finally:
         executor.shutdown(wait=True)
+
+
+def _prefetch_batches_cuda(tiles, batch_size, device, cancel_token=None):
+    total = tiles.shape[0]
+    if total == 0:
+        return
+    stream = torch.cuda.Stream(device=device)
+    next_start = 0
+    next_tensor = None
+    next_bounds = None
+
+    def _stage_copy(start, end):
+        _maybe_raise_cancel(cancel_token)
+        batch = torch.from_numpy(tiles[start:end])
+        if not batch.is_floating_point():
+            batch = batch.float()
+        pinned = batch.pin_memory()
+        with torch.cuda.stream(stream):
+            gpu_tensor = pinned.to(device, non_blocking=True)
+        del pinned
+        return gpu_tensor
+
+    if next_start < total:
+        staged_end = min(next_start + batch_size, total)
+        next_tensor = _stage_copy(next_start, staged_end)
+        next_bounds = (next_start, staged_end)
+        next_start = staged_end
+
+    current_stream = torch.cuda.current_stream(device)
+    while next_tensor is not None:
+        current_stream.wait_stream(stream)
+        tensor = next_tensor
+        start, end = next_bounds
+        if next_start < total:
+            staged_end = min(next_start + batch_size, total)
+            next_tensor = _stage_copy(next_start, staged_end)
+            next_bounds = (next_start, staged_end)
+            next_start = staged_end
+        else:
+            next_tensor = None
+            next_bounds = None
+        yield tensor, start, end, total
 
 
 def _batch_to_tensor(batch, device):
