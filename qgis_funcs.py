@@ -3,14 +3,24 @@ from tempfile import gettempdir
 from qgis.core import QgsRasterLayer, QgsProject
 import os
 
+import numpy as np
+
+try:
+    from .raster_utils import ensure_channel_first
+except ImportError:  # pragma: no cover
+    from raster_utils import ensure_channel_first
+
 # Render raster from array
 def render_raster(array, bounding_box, layer_name, epsg):
     driver = gdal.GetDriverByName("GTiff")
+    array = ensure_channel_first(array)
+    channels, height, width = array.shape
+
     dataset = driver.Create(
         os.path.join(gettempdir(), layer_name + ".tif"),
-        array.shape[2],
-        array.shape[1],
-        array.shape[0],
+        width,
+        height,
+        channels,
         gdal.GDT_Byte,
     )
 
@@ -22,15 +32,15 @@ def render_raster(array, bounding_box, layer_name, epsg):
     dataset.SetGeoTransform(
         (
             bounding_box.xMinimum(),  # 0
-            bounding_box.width() / array.shape[2],  # 1
+            bounding_box.width() / width,  # 1
             0,  # 2
             bounding_box.yMaximum(),  # 3
             0,  # 4
-            -bounding_box.height() / array.shape[1],
+            -bounding_box.height() / height,
         )
     )
 
-    for c in range(array.shape[0]):
+    for c in range(channels):
         dataset.GetRasterBand(c + 1).WriteArray(array[c, :, :])
     dataset = None
 
