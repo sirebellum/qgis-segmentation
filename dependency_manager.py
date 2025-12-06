@@ -8,37 +8,41 @@ import platform
 import shutil
 import subprocess
 import sys
+import tempfile
+import threading
+import urllib.request
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 try:
+    from qgis.PyQt.QtCore import QThread  # type: ignore
     from qgis.PyQt.QtWidgets import QApplication, QMessageBox  # type: ignore
 except Exception:  # pragma: no cover - PyQt unavailable in tests
     QApplication = None
     QMessageBox = None
+    QThread = None
 
 _VENDOR_DIR = Path(__file__).resolve().parent / "vendor"
 _VENDOR_DIR.mkdir(exist_ok=True)
 _vendor_str = str(_VENDOR_DIR)
 while _vendor_str in sys.path:
     sys.path.remove(_vendor_str)
-sys.path.insert(0, _vendor_str)
+sys.path.append(_vendor_str)
+
+_PIP_BOOTSTRAP_DIR = _VENDOR_DIR / "_pip_bootstrap"
+_PIP_BOOTSTRAP_DIR.mkdir(exist_ok=True)
+
+_PIP_COMMAND: Optional[Tuple[Tuple[str, ...], Dict[str, str]]] = None
+_EXTERNAL_PIP_CMD: Optional[List[str]] = None
 
 _ENSURED = False
-_PROFILED_POST_INSTALL = False
 _LOGGER = logging.getLogger(__name__)
 
-
-def _configure_openmp_runtime() -> None:
-    """Mitigate macOS libomp clashes between PyTorch, scikit-learn, and QGIS."""
-    if platform.system().lower() != "darwin":
-        return
-
+_system = platform.system().lower()
+if _system == "darwin":
+    # macOS needs these guards to prevent libomp crashes inside the QGIS host.
     os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
     os.environ.setdefault("OMP_NUM_THREADS", "1")
-
-
-_configure_openmp_runtime()
 
 
 def ensure_dependencies() -> None:
@@ -51,14 +55,8 @@ def ensure_dependencies() -> None:
         _ENSURED = True
         return
 
-    installed_labels: List[str] = []
     for spec in _package_specs():
-        if _ensure_package(spec):
-            label = str(spec.get("label", spec.get("pip", "package")))
-            installed_labels.append(label)
-
-    if installed_labels:
-        _run_post_install_tasks(installed_labels)
+        _ensure_package(spec)
 
     _ENSURED = True
 
@@ -79,7 +77,6 @@ def _package_specs() -> Iterable[Dict[str, object]]:
             "pip": torch_spec,
             "label": "PyTorch",
             "extra_args": _torch_index_args(),
-            "validator": _torch_validator,
         },
         {
             "import": "numpy",
@@ -96,11 +93,11 @@ def _package_specs() -> Iterable[Dict[str, object]]:
 
 
 def _default_torch_spec() -> str:
-    """Return the default torch spec compatible with the current interpreter."""
-    version = sys.version_info
-    if version >= (3, 13):
+    major = sys.version_info.major
+    minor = sys.version_info.minor
+    if (major, minor) >= (3, 13):
         return "torch>=2.5.1,<3.0"
-    if version >= (3, 12):
+    if (major, minor) >= (3, 12):
         return "torch>=2.3.1,<3.0"
     return "torch==2.2.2"
 
@@ -116,32 +113,13 @@ def _torch_index_args() -> List[str]:
     return ["--index-url", "https://download.pytorch.org/whl/cu121"]
 
 
-def _torch_validator(torch_module: Any) -> bool:
-    return hasattr(torch_module, "_dynamo")
-
-
-def _module_satisfies(module: Any, validator: Optional[Any]) -> bool:
-    if validator is None:
-        return True
-    try:
-        return bool(validator(module))
-    except Exception:
-        return False
-
-
-def _ensure_package(spec: Dict[str, object]) -> bool:
+def _ensure_package(spec: Dict[str, object]) -> None:
     import_name = spec["import"]  # type: ignore[index]
-    validator = spec.get("validator")  # type: ignore[assignment]
     try:
-        module = importlib.import_module(import_name)  # type: ignore[arg-type]
+        importlib.import_module(import_name)  # type: ignore[arg-type]
+        return
     except ImportError:
-        module = None
-    else:
-        if validator is not None and not _module_satisfies(module, validator):
-            _purge_vendor_artifacts(module)
-            module = None
-    if module is not None and _module_satisfies(module, validator):
-        return False
+        pass
 
     pip_name = spec["pip"]  # type: ignore[index]
     raw_args = spec.get("extra_args")
@@ -152,71 +130,224 @@ def _ensure_package(spec: Dict[str, object]) -> bool:
     else:
         extra_args = list(raw_args)  # type: ignore[arg-type]
 
-    _bootstrap_pip()
-    command = [
-        _python_executable(),
-        "-m",
-        "pip",
-        "install",
-        pip_name,
-        "--target",
-        str(_VENDOR_DIR),
-        "--upgrade",
-        "--no-cache-dir",
-    ]
-    command.extend(extra_args)
+    pip_command, pip_env = _pip_command()
+    def _build_command(args: List[str]) -> List[str]:
+        cmd = pip_command + [
+            "install",
+            str(pip_name),
+            "--target",
+            str(_VENDOR_DIR),
+            "--upgrade",
+            "--no-cache-dir",
+        ]
+        cmd.extend(args)
+        return cmd
 
-    label = spec.get("label", pip_name)
-    dialog = _start_install_popup(str(label))
+    command = _build_command(extra_args)
+
+    label = str(spec.get("label", pip_name))
+    _log_dependency_status(f"Installing dependency: {label} ({pip_name})")
+    dialog = _start_install_popup(label)
     try:
-        subprocess.check_call(command)
+        subprocess.check_call(command, env=pip_env)
+        _log_dependency_status(f"Dependency installed: {label}")
     except (subprocess.CalledProcessError, OSError) as exc:
+        if import_name == "torch":
+            cpu_args = ["--index-url", "https://download.pytorch.org/whl/cpu"]
+            if extra_args != cpu_args:
+                _LOGGER.warning(
+                    "CUDA torch install failed (%s); retrying with CPU wheels.",
+                    exc,
+                )
+                _log_dependency_status("PyTorch CUDA install failed; retrying with CPU wheels.")
+                try:
+                    subprocess.check_call(_build_command(cpu_args), env=pip_env)
+                    _log_dependency_status("PyTorch CPU wheel installed successfully.")
+                    _close_install_popup(dialog)
+                    return
+                except (subprocess.CalledProcessError, OSError) as cpu_exc:
+                    exc = cpu_exc
         _close_install_popup(dialog)
         raise ImportError(
-            "Segmenter could not install dependency '" + str(pip_name) + "'. "
+            "Segmenter could not install dependency '" + str(pip_name) + "'."
             "Run QGIS Python console and install it manually."
         ) from exc
     _close_install_popup(dialog)
-    importlib.invalidate_caches()
-    if validator is not None:
-        module = importlib.import_module(import_name)  # type: ignore[arg-type]
-        if not _module_satisfies(module, validator):
-            raise ImportError(
-                f"Dependency '{pip_name}' did not satisfy validator even after installation."
-            )
-    return True
 
 
-def _purge_vendor_artifacts(module: Any) -> None:
-    module_file = getattr(module, "__file__", None)
-    if not module_file:
-        return
-    module_path = Path(module_file).resolve()
-    if _VENDOR_DIR not in module_path.parents and module_path.parent != _VENDOR_DIR:
-        return
-    root = module_path
-    while root.parent != _VENDOR_DIR and root.parent != root:
-        root = root.parent
-    if root.exists():
-        shutil.rmtree(root, ignore_errors=True)
-    prefix = root.stem.split(".")[0]
-    for dist_info in _VENDOR_DIR.glob(f"{prefix}-*.dist-info"):
-        shutil.rmtree(dist_info, ignore_errors=True)
+def _pip_command() -> Tuple[List[str], Dict[str, str]]:
+    global _PIP_COMMAND
+    if _PIP_COMMAND is not None:
+        command, env = _PIP_COMMAND
+        return list(command), dict(env)
+
+    python_exe = _python_executable()
+    env = _pip_environment()
+    external = _ensure_pip_available(python_exe, env)
+    if external:
+        command = tuple(external)
+        _PIP_COMMAND = (command, dict(env))
+        return list(command), dict(env)
+
+    command = (python_exe, "-m", "pip")
+    _PIP_COMMAND = (command, dict(env))
+    return [python_exe, "-m", "pip"], dict(env)
 
 
-def _bootstrap_pip() -> None:
+def _ensure_pip_available(python_exe: str, env: Dict[str, str]) -> Optional[List[str]]:
+    global _EXTERNAL_PIP_CMD
+    if _pip_available(python_exe, env):
+        return None
+
+    if _run_module(python_exe, "ensurepip", ["--default-pip"], env):
+        if _pip_available(python_exe, env):
+            return None
+
+    if _download_and_install_get_pip(python_exe, env):
+        if _pip_available(python_exe, env):
+            return None
+
+    if _EXTERNAL_PIP_CMD:
+        return _EXTERNAL_PIP_CMD
+
+    external = _system_pip_invocation()
+    if external:
+        _EXTERNAL_PIP_CMD = external
+        _LOGGER.warning(
+            "Using fallback pip executable: %s",
+            " ".join(external),
+        )
+        return external
+
+    raise ImportError(
+        "pip is not available in this Python runtime. "
+        "Install pip for the Python that launches QGIS, expose a pip3 executable on PATH, "
+        "or set SEGMENTER_PYTHON/SEGMENTER_PIP_EXECUTABLE to a runtime that ships pip."
+    )
+
+
+def _system_pip_invocation() -> Optional[List[str]]:
+    candidates: List[str] = []
+    override = os.environ.get("SEGMENTER_PIP_EXECUTABLE")
+    if override:
+        candidates.append(override)
+    candidates.extend(["pip3", "pip"])
+    for entry in candidates:
+        if not entry:
+            continue
+        path = shutil.which(entry)
+        if path and _pip_command_works([path]):
+            return [path]
+
+    for python_name in ("python3", "python"):
+        path = shutil.which(python_name)
+        if not path:
+            continue
+        cmd = [path, "-m", "pip"]
+        if _pip_command_works(cmd):
+            return cmd
+    return None
+
+
+def _pip_command_works(command: List[str]) -> bool:
     try:
-        import pip  # noqa: F401
-        return
-    except ModuleNotFoundError:
-        pass
+        subprocess.check_call(
+            command + ["--version"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return True
+    except (subprocess.CalledProcessError, OSError):
+        return False
 
+
+def _log_dependency_status(message: str) -> None:
     try:
-        import ensurepip
-    except ModuleNotFoundError as exc:  # pragma: no cover
-        raise ImportError("pip is not available in this Python runtime") from exc
+        from qgis.core import QgsMessageLog, Qgis  # type: ignore
+    except Exception:  # pragma: no cover - qgis not available in tests
+        QgsMessageLog = None  # type: ignore
+        Qgis = None  # type: ignore
 
-    ensurepip.bootstrap(upgrade=True)
+    logged = False
+    if QgsMessageLog and Qgis:
+        try:
+            QgsMessageLog.logMessage(message, "Segmenter", level=Qgis.Info)
+            logged = True
+        except Exception:
+            pass
+    if not logged:
+        try:
+            print(f"[Segmenter] {message}")
+        except Exception:
+            pass
+
+
+def _pip_available(python_exe: str, env: Dict[str, str]) -> bool:
+    try:
+        subprocess.check_call(
+            [python_exe, "-m", "pip", "--version"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            env=env,
+        )
+        return True
+    except (subprocess.CalledProcessError, OSError):
+        return False
+
+
+def _run_module(python_exe: str, module: str, args: List[str], env: Dict[str, str]) -> bool:
+    command = [python_exe, "-m", module]
+    command.extend(args)
+    try:
+        subprocess.check_call(
+            command,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            env=env,
+        )
+        return True
+    except (subprocess.CalledProcessError, OSError):
+        return False
+
+
+def _download_and_install_get_pip(python_exe: str, env: Dict[str, str]) -> bool:
+    url = os.environ.get(
+        "SEGMENTER_GET_PIP_URL", "https://bootstrap.pypa.io/get-pip.py"
+    )
+    try:
+        with urllib.request.urlopen(url, timeout=30) as response:
+            script_bytes = response.read()
+    except Exception:
+        return False
+
+    tmp_dir = tempfile.mkdtemp(prefix="segmenter_get_pip_")
+    script_path = Path(tmp_dir) / "get-pip.py"
+    try:
+        script_path.write_bytes(script_bytes)
+        command = [
+            python_exe,
+            str(script_path),
+            "--target",
+            str(_PIP_BOOTSTRAP_DIR),
+            "--no-warn-script-location",
+        ]
+        subprocess.check_call(command, env=env)
+        return True
+    except (subprocess.CalledProcessError, OSError):
+        return False
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def _pip_environment() -> Dict[str, str]:
+    env = os.environ.copy()
+    bootstrap_path = str(_PIP_BOOTSTRAP_DIR)
+    existing = env.get("PYTHONPATH")
+    if existing:
+        env["PYTHONPATH"] = bootstrap_path + os.pathsep + existing
+    else:
+        env["PYTHONPATH"] = bootstrap_path
+    return env
 
 
 def _python_executable() -> str:
@@ -250,16 +381,34 @@ def _python_executable() -> str:
     return sys.executable
 
 
+def _is_gui_thread() -> bool:
+    if QApplication is None:
+        return False
+    app = QApplication.instance()
+    if app is None:
+        return False
+    if threading.current_thread() is not threading.main_thread():
+        return False
+    if QThread is None:
+        return False
+    current = QThread.currentThread()
+    return current is not None and current == app.thread()
+
+
 def _start_install_popup(package_label: str) -> Optional[Any]:
     if QMessageBox is None:
         return None
-    _ = package_label  # parameter kept for backwards compatibility; message is generic now
+
+    if not _is_gui_thread():
+        _LOGGER.debug("Skipping dependency popup for %s: not on GUI/main thread", package_label)
+        return None
 
     box = QMessageBox()
-    box.setWindowTitle("Segmenter Setup")
+    box.setWindowTitle("Segmenter Dependencies")
     box.setText(
-        "Preparing the Segmenter plugin, please hold...\n"
-        "You can keep QGIS open; we'll resume automatically once setup completes."
+        "Installing "
+        + package_label
+        + "...\nThis may take a few minutes. QGIS will continue once this finishes."
     )
     box.setStandardButtons(QMessageBox.NoButton)
     box.setIcon(QMessageBox.Information)
@@ -274,43 +423,3 @@ def _close_install_popup(box: Optional[Any]) -> None:
         return
     box.hide()
     box.deleteLater()
-
-
-def _run_post_install_tasks(installed_labels: List[str]) -> None:
-    _profile_after_install()
-
-
-def _profile_after_install() -> None:
-    global _PROFILED_POST_INSTALL
-    if _PROFILED_POST_INSTALL:
-        return
-    try:
-        import torch  # noqa: WPS433 - runtime import
-    except Exception as exc:  # pragma: no cover - torch missing
-        _LOGGER.debug("Skipping post-install profiling: torch unavailable (%s)", exc)
-        return
-
-    try:
-        from . import perf_tuner  # type: ignore
-    except Exception as exc:  # pragma: no cover - avoid hard failure on import
-        _LOGGER.debug("Skipping post-install profiling: perf_tuner import failed (%s)", exc)
-        return
-
-    plugin_dir = str(Path(__file__).resolve().parent)
-    device = _select_profiling_device(torch)
-    try:
-        perf_tuner.load_or_profile_settings(plugin_dir, device)
-        _PROFILED_POST_INSTALL = True
-    except Exception as exc:  # pragma: no cover - best effort
-        _LOGGER.warning("Post-install profiling failed: %s", exc)
-
-
-def _select_profiling_device(torch_module):
-    try:
-        if torch_module.cuda.is_available():
-            return torch_module.device("cuda")
-        if hasattr(torch_module.backends, "mps") and torch_module.backends.mps.is_available():
-            return torch_module.device("mps")
-    except Exception:
-        pass
-    return torch_module.device("cpu")

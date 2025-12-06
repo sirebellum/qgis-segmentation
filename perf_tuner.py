@@ -5,21 +5,33 @@ import json
 import logging
 import math
 import os
+import threading
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Callable, Dict, Tuple, List, Optional, Union, Any, Sequence
 
 import numpy as np
-import torch
+
+try:
+    import torch
+except ImportError:  # pragma: no cover - resolved at runtime via bootstrap
+    try:
+        from .dependency_manager import ensure_dependencies
+    except ImportError:  # pragma: no cover
+        from dependency_manager import ensure_dependencies  # type: ignore
+    ensure_dependencies()
+    import torch  # type: ignore
 
 logger = logging.getLogger(__name__)
 
 try:  # UI feedback when available
+    from qgis.PyQt.QtCore import QThread  # type: ignore
     from qgis.PyQt.QtWidgets import QApplication, QMessageBox  # type: ignore
 except Exception:  # pragma: no cover - PyQt not available in tests
     QApplication = None
     QMessageBox = None
+    QThread = None
 
 try:
     from .funcs import (
@@ -547,8 +559,26 @@ def _estimate_memory_for_settings(settings: AdaptiveSettings) -> int:
     return int(max(16 * 1024 * 1024, estimate))
 
 
+def _is_gui_thread() -> bool:
+    if QApplication is None:
+        return False
+    app = QApplication.instance()
+    if app is None:
+        return False
+    if threading.current_thread() is not threading.main_thread():
+        return False
+    if QThread is None:
+        return False
+    current = QThread.currentThread()
+    return current is not None and current == app.thread()
+
+
 def _start_profiling_popup() -> Optional[Any]:
     if QMessageBox is None:
+        return None
+
+    if not _is_gui_thread():
+        logger.debug("Skipping profiling popup: not on GUI/main thread")
         return None
 
     box = QMessageBox()

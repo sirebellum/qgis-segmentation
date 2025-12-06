@@ -6,7 +6,7 @@
 name=Map Segmenter
 qgisMinimumVersion=3.0
 description=Uses machine learning to segment a map into areas of interest.
-version=2.3.0
+version=2.2.1
 author=Quant Civil
 email=joshua.herrera227@gmail.com
 

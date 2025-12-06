@@ -28,6 +28,7 @@ from qgis.PyQt.QtCore import (
     QUrl,
     Qt,
     QEvent,
+    QTimer,
 )
 from qgis.PyQt.QtGui import QIcon, QPixmap, QDesktopServices, QColor, QCursor
 from qgis.PyQt.QtWidgets import (
@@ -52,24 +53,18 @@ from .segmenter_dialog import SegmenterDialog
 
 from io import BytesIO
 from datetime import datetime
-from osgeo import gdal
-
 from .dependency_manager import ensure_dependencies
+from .perf_tuner import load_or_profile_settings
 
 ensure_dependencies()
 
 import torch
-from sklearn.cluster import KMeans
 import numpy as np
-from .autoencoder_utils import TextureAutoencoderManager, default_autoencoder_path
-
 from .funcs import (
-    recommended_chunk_plan,
-    execute_kmeans_segmentation,
-    execute_cnn_segmentation,
+    legacy_kmeans_segmentation,
+    legacy_cnn_segmentation,
     SegmentationCanceled,
 )
-from .perf_tuner import load_or_profile_settings
 from .qgis_funcs import render_raster
 
 TILE_SIZE = 512
@@ -88,11 +83,13 @@ PROGRESS_PERCENT_PATTERN = re.compile(r"(?P<percent>\d{1,3})\s*%")
 PROGRESS_STEP_PATTERN = re.compile(r"step\s+(?P<current>\d+)\s*/\s*(?P<total>\d+)", re.IGNORECASE)
 PROGRESS_TEXT_LIMIT = 80
 PROGRESS_STAGE_MAP = {
-    "prepare": (0.0, 25.0, "Preparing input..."),
-    "chunk_plan": (25.0, 40.0, "Estimating chunk plan..."),
-    "queue": (40.0, 55.0, "Starting segmentation task..."),
-    "inference": (55.0, 95.0, "Running segmentation..."),
-    "render": (95.0, 100.0, "Rendering output..."),
+    "prepare": (0.0, 20.0, "Preparing input..."),
+    "chunk_plan": (20.0, 35.0, "Estimating chunk plan..."),
+    "queue": (35.0, 50.0, "Starting segmentation task..."),
+    "inference": (50.0, 80.0, "Running segmentation..."),
+    "latent": (80.0, 90.0, "Refining latent features..."),
+    "smooth": (90.0, 97.0, "Smoothing segmentation map..."),
+    "render": (97.0, 100.0, "Rendering output..."),
 }
 
 
@@ -323,12 +320,13 @@ class Segmenter:
         self.status_emitter.message.connect(self._handle_status_message)
         self.model = "cnn"
         self._logged_missing_layers = False
-        self.autoencoder_manager: Optional[TextureAutoencoderManager] = None
         self._logo_hover = None
         self._layer_refresh_controller = None
         self._progress_last_value = 0.0
         self._progress_active = False
         self._progress_stage = "idle"
+        self._profiling_thread = None
+        self._profiling_ready = False
 
     # noinspection PyMethodMayBeStatic
     def tr(self, message):
@@ -475,38 +473,60 @@ class Segmenter:
     def _maybe_update_progress_from_message(self, category, message):
         if category not in {"worker", "general"}:
             return
-        percent = self._extract_inference_percent(message)
-        if percent is None:
+        stage, percent = self._extract_progress_hint(message)
+        if stage is None or percent is None:
             return
-        self._update_overall_progress("inference", percent, message)
+        self._update_overall_progress(stage, percent, message)
 
-    def _extract_inference_percent(self, message):
+    def _extract_progress_hint(self, message):
         if not message:
-            return None
+            return None, None
         normalized = message.lower()
-        if "inference" in normalized or "encoding textures" in normalized:
-            match = PROGRESS_PERCENT_PATTERN.search(message)
-            if not match:
-                return None
-            try:
-                value = int(match.group("percent"))
-            except (TypeError, ValueError):
-                return None
-            return int(np.clip(value, 0, 100))
-        if "autoencoder" in normalized and "step" in normalized:
-            match = PROGRESS_STEP_PATTERN.search(message)
-            if not match:
-                return None
-            try:
-                current = int(match.group("current"))
-                total = int(match.group("total"))
-            except (TypeError, ValueError):
-                return None
-            if total <= 0:
-                return None
-            ratio = max(0.0, min(1.0, current / total))
-            return int(round(ratio * 100))
-        return None
+        percent = self._extract_percent_token(message)
+        if percent is None:
+            percent = self._extract_step_percent(message)
+        if percent is None:
+            return None, None
+        stage = None
+        if "latent" in normalized or "knn" in normalized:
+            stage = "latent"
+        elif "smooth" in normalized or "blur" in normalized:
+            stage = "smooth"
+        elif "render" in normalized:
+            stage = "render"
+        elif "prepare" in normalized:
+            stage = "prepare"
+        elif "chunk" in normalized and "plan" in normalized:
+            stage = "chunk_plan"
+        elif "queue" in normalized:
+            stage = "queue"
+        else:
+            stage = "inference"
+        return stage, percent
+
+    def _extract_percent_token(self, message):
+        match = PROGRESS_PERCENT_PATTERN.search(message)
+        if not match:
+            return None
+        try:
+            value = int(match.group("percent"))
+        except (TypeError, ValueError):
+            return None
+        return int(np.clip(value, 0, 100))
+
+    def _extract_step_percent(self, message):
+        match = PROGRESS_STEP_PATTERN.search(message)
+        if not match:
+            return None
+        try:
+            current = int(match.group("current"))
+            total = int(match.group("total"))
+        except (TypeError, ValueError):
+            return None
+        if total <= 0:
+            return None
+        ratio = max(0.0, min(1.0, current / total))
+        return int(round(ratio * 100))
 
     def _set_stop_enabled(self, enabled):
         dlg = getattr(self, "dlg", None)
@@ -542,17 +562,24 @@ class Segmenter:
         smooth = heuristics["smoothness"]
         speed = heuristics["speed"]
         accuracy = heuristics["accuracy"]
+        resolution_value = RESOLUTION_VALUE_MAP.get(
+            resolution_label or DEFAULT_RESOLUTION_LABEL,
+            RESOLUTION_VALUE_MAP[DEFAULT_RESOLUTION_LABEL],
+        )
+        finest_resolution = min(RESOLUTION_VALUE_MAP.values()) or 1
+        coarseness = max(1.0, float(resolution_value) / float(finest_resolution))
 
         smoothing_scale = float(np.interp(smooth, [0.0, 1.0], [0.7, 1.9]))
+        smoothing_scale = float(np.clip(smoothing_scale * 0.1 * coarseness, 0.02, 0.45))
         tile_factor = float(np.interp(speed, [0.0, 1.0], [0.8, 1.35]))
         tile_size = int(np.clip(TILE_SIZE * tile_factor, 192, 768))
 
         latent_cfg = {
-            "mix": float(np.interp(smooth, [0.0, 1.0], [0.35, 0.85])),
+            "mix": float(np.interp(smooth, [0.0, 1.0], [0.35, 0.85])) * 0.01,
             "temperature": float(np.interp(accuracy, [0.0, 1.0], [3.5, 0.9])),
             "neighbors": int(np.round(np.interp(accuracy, [0.0, 1.0], [6, 28]))),
             "iterations": int(max(1, round(np.interp(smooth, [0.0, 1.0], [1, 4])))),
-            "spatial_weight": float(np.interp(accuracy, [0.0, 1.0], [0.04, 0.16])),
+            "spatial_weight": float(np.interp(accuracy, [0.0, 1.0], [0.04, 0.16])) * 0.01,
             "chunk_size": int(np.round(np.interp(speed, [0.0, 1.0], [20000, 65536]))),
             "index_points": int(np.round(np.interp(speed, [0.0, 1.0], [50000, 180000]))),
             "query_batch": int(np.round(np.interp(speed, [0.0, 1.0], [12000, 60000]))),
@@ -560,13 +587,23 @@ class Segmenter:
             "hierarchy_passes": 1 if accuracy < 0.7 else 2,
         }
 
-        latent_cfg["mix"] = np.clip(latent_cfg["mix"], 0.2, 0.95)
+        latent_cfg["mix"] = np.clip(latent_cfg["mix"] * coarseness, 0.01, 0.25)
+        latent_cfg["spatial_weight"] = float(np.clip(latent_cfg["spatial_weight"] * coarseness, 0.001, 0.03))
 
         return {
             "tile_size": tile_size,
             "smoothing_scale": smoothing_scale,
             "latent_knn": latent_cfg,
         }
+
+    def _legacy_blur_config(self, resolution_label: Optional[str] = None) -> dict:
+        heuristics = self._collect_heuristics(resolution_label)
+        smooth = heuristics["smoothness"]
+        kernel = int(np.round(np.interp(smooth, [0.0, 1.0], [1, 7])))
+        kernel = kernel | 1  # ensure odd kernel size
+        kernel = max(1, min(kernel, 9))
+        iterations = 1 if smooth < 0.7 else 2
+        return {"kernel_size": kernel, "iterations": iterations}
 
     def _heuristic_scale(self, resolution_label: Optional[str]) -> float:
         if not resolution_label:
@@ -733,7 +770,6 @@ class Segmenter:
         self._start_progress_cycle("Preparing segmentation...")
         self._update_overall_progress("prepare", 10, "Validating layer selection...")
 
-        # Load user specified raster
         layer_name = self.dlg.inputLayer.currentText()
         layers = QgsProject.instance().mapLayersByName(layer_name)
         if not layers:
@@ -746,17 +782,10 @@ class Segmenter:
             self._reset_progress_bar()
             return
         assert layer.isValid(), f"Invalid raster layer! \n{layer_name}"
-        raster = gdal.Open(layer.source())
-        layer_array = raster.ReadAsArray()
-        self._update_overall_progress("prepare", 60, "Analyzing raster data...")
+        raster_source = layer.source().split("|")[0]
+        self._update_overall_progress("prepare", 60, "Raster scheduled for background loading.")
+        self.log_status("Raster IO deferred to the worker thread to keep QGIS responsive.")
 
-        if self.autoencoder_manager is None:
-            self.log_status("Autoencoder unavailable; please reopen the Segmenter dialog to reinitialize.")
-            self._reset_progress_bar()
-            return
-        self.autoencoder_manager.set_device(self.device)
-
-        # Get user specified num segments
         segments_raw = (self.dlg.inputSegments.text() or "").strip()
         if not segments_raw:
             self.log_status("Please enter the desired number of segments and try again.")
@@ -775,25 +804,45 @@ class Segmenter:
             self.dlg.inputSegments.setFocus()
             self._reset_progress_bar()
             return
+        self._update_overall_progress("prepare", 80, "Segmentation parameters verified.")
 
-        # Get user specified resolution
         resolution_label = self.dlg.inputRes.currentData()
         if not resolution_label:
             resolution_label = self.dlg.inputRes.currentText() or DEFAULT_RESOLUTION_LABEL
         resolution_label = str(resolution_label).strip().lower()
         resolution = RESOLUTION_VALUE_MAP.get(resolution_label, RESOLUTION_VALUE_MAP[DEFAULT_RESOLUTION_LABEL])
-        profile_tier = resolution_label
 
-        # Set up kwargs
+        blur_config = self._legacy_blur_config(resolution_label)
+        heuristics = self._collect_heuristics(resolution_label)
+        heuristic_overrides = self._build_heuristic_overrides(resolution_label)
+        self.log_status(
+            "Heuristic tuning — smoothness {:.2f}, speed {:.2f}, accuracy {:.2f}.".format(
+                heuristics["smoothness"], heuristics["speed"], heuristics["accuracy"]
+            )
+        )
+        self.log_status(
+            f"Legacy blur configured: {blur_config['kernel_size']}px kernel, {blur_config['iterations']} pass(es)."
+        )
+        tile_override = heuristic_overrides.get("tile_size") if heuristic_overrides else None
+        if isinstance(tile_override, (int, float)):
+            self.log_status(f"CNN tile size override set to {int(tile_override)}px.")
+
+        effective_resolution = resolution
+        resolution_scale = float(np.interp(heuristics["speed"], [0.0, 1.0], [0.85, 1.35]))
+        scaled_resolution = int(max(1, round(resolution * resolution_scale)))
+        if scaled_resolution != resolution:
+            self.log_status(
+                f"Speed slider adjusted block resolution from {resolution} to {scaled_resolution}."
+            )
+            effective_resolution = scaled_resolution
+
+        sample_scale = float(np.interp(heuristics["accuracy"], [0.0, 1.0], [0.65, 1.35]))
+        self.log_status(
+            f"Accuracy slider sampling scale set to {sample_scale:.2f}x base population."
+        )
+
         if not hasattr(self, "device"):
             raise AttributeError("Segmenter instance must have a 'device' attribute set before calling predict().")
-        device = self.device
-        chunk_plan = recommended_chunk_plan(layer_array.shape, device, profile_tier=profile_tier)
-        budget_mb = chunk_plan.budget_bytes / (1024 * 1024)
-        self.log_status(
-            f"Prepared chunk plan: window {chunk_plan.chunk_size}px with {chunk_plan.overlap}px overlap (using {chunk_plan.ratio * 100:.2f}% of free VRAM, ~{budget_mb:.1f} MB)."
-        )
-        self._update_overall_progress("chunk_plan", 100, "Chunk plan ready.")
 
         kwargs = {
             "layer": layer,
@@ -806,62 +855,47 @@ class Segmenter:
             "segmenter": self,
         }
 
-        heuristic_overrides = None
         func = None
         args = ()
-
-        # set up args
         if self.model == "kmeans":
-            func = execute_kmeans_segmentation
+            func = legacy_kmeans_segmentation
             args = (
-                layer_array,
+                raster_source,
                 num_segments,
-                resolution,
-                chunk_plan,
+                effective_resolution,
                 self.worker_status,
-                self.autoencoder_manager,
+                blur_config,
+                sample_scale,
+                self.device,
             )
         elif self.model == "cnn":
-            heuristic_overrides = self._build_heuristic_overrides(resolution_label)
-            heuristics = self._collect_heuristics(resolution_label)
-            self.log_status(
-                "Heuristic tuning — smoothness {:.2f}, speed {:.2f}, accuracy {:.2f}.".format(
-                    heuristics["smoothness"], heuristics["speed"], heuristics["accuracy"]
-                )
-            )
-            self.log_status(
-                f"Adaptive overrides: tile {heuristic_overrides['tile_size']}px, smoothing x{heuristic_overrides['smoothing_scale']:.2f}."
-            )
-            func = execute_cnn_segmentation
+            func = legacy_cnn_segmentation
+            model_provider = lambda: self.load_model(resolution)
             args = (
-                self.load_model(resolution),
-                layer_array,
+                model_provider,
+                raster_source,
                 num_segments,
-                chunk_plan,
                 TILE_SIZE,
-                device,
+                self.device,
                 self.worker_status,
-                profile_tier,
+                blur_config,
                 heuristic_overrides,
-                self.autoencoder_manager,
+                resolution_label,
             )
         else:
             self.log_status(f"Unsupported model selection: {self.model}")
             self._reset_progress_bar()
             return
 
-        self._update_overall_progress("queue", 60, "Configuring segmentation task...")
+        self._update_overall_progress("queue", 90, "Dispatching legacy segmentation task...")
         self.log_status(
             f"Queued {self.model.upper()} segmentation with {num_segments} segments at {self.dlg.inputRes.currentText()} resolution."
         )
         self._update_overall_progress("queue", 100, "Task queued; starting worker...")
-
-        # Run task
         self._update_overall_progress("inference", 0, "Running segmentation...")
         self.task = run_task(func, *args, **kwargs)
         self._set_stop_enabled(True)
 
-        # Display error if task stops running after a little bit
         if self.task.waitForFinished(1):
             self.log_status("An error occurred. Please try again.")
 
@@ -980,28 +1014,14 @@ class Segmenter:
             else: # CPU
                 self.device = torch.device("cpu")
 
-            cache_dir = default_autoencoder_path(self.plugin_dir)
-            self.autoencoder_manager = TextureAutoencoderManager(cache_dir)
-            self.autoencoder_manager.set_device(self.device)
-
-            settings, profiled = load_or_profile_settings(
-                self.plugin_dir, self.device, self.log_status
-            )
-            if profiled:
-                self.log_status(
-                    f"Adaptive profiling complete (safety={settings.safety_factor}, prefetch={settings.prefetch_depth})."
-                )
-            else:
-                self.log_status(
-                    f"Loaded cached adaptive profile (safety={settings.safety_factor}, prefetch={settings.prefetch_depth})."
-                )
+            self._ensure_adaptive_profile()
 
             # Populate drop down menus
             self.render_models()
             self.render_layers()
             self.render_resolutions()
             if not (self.dlg.inputSegments.text() or "").strip():
-                self.dlg.inputSegments.setText("3")
+                self.dlg.inputSegments.setText("8")
 
             # Set gpu message
             gpu_msg = "GPU available."
@@ -1012,6 +1032,7 @@ class Segmenter:
             self.dlg.inputBox.clear()
             self._flush_status_buffer()
             self.log_status(gpu_msg)
+            self.log_status("Legacy segmentation mode active with blur post-processing.")
 
             # Attach inputs
             self.dlg.inputBox.textChanged.connect(self.submit)
@@ -1045,3 +1066,43 @@ class Segmenter:
         if self._layer_refresh_controller is None:
             self._layer_refresh_controller = _ComboRefreshController(combo, self.render_layers)
             combo.installEventFilter(self._layer_refresh_controller)
+
+    def _ensure_adaptive_profile(self):
+        if self._profiling_ready:
+            return
+        thread = getattr(self, "_profiling_thread", None)
+        if thread is not None and thread.is_alive():
+            return
+
+        device = getattr(self, "device", None)
+        if device is None:
+            return
+
+        dlg_ready = getattr(self, "dlg", None) is not None
+        show_progress = dlg_ready and not self.task
+        if show_progress:
+            self._set_progress_message("Profiling GPU performance", indeterminate=True)
+
+        def _run_profile():
+            try:
+                settings, created = load_or_profile_settings(
+                    self.plugin_dir,
+                    device,
+                    status_callback=self.log_status,
+                )
+                if created:
+                    self.log_status("Adaptive profiling complete; cached settings saved.")
+                else:
+                    self.log_status("Adaptive profiling cache loaded.")
+                self._profiling_ready = True
+            except Exception as exc:  # pragma: no cover - best effort logging
+                self.log_status(f"Adaptive profiling failed: {exc}")
+            finally:
+                self._profiling_thread = None
+                if show_progress:
+                    QTimer.singleShot(0, lambda: None if self.task else self._reset_progress_bar())
+
+        self.log_status("Profiling GPU performance (this only happens once).")
+        self.log_status("Calibrating adaptive batching (runs once per device)...")
+        self._profiling_thread = threading.Thread(target=_run_profile, name="SegmenterProfiler", daemon=True)
+        self._profiling_thread.start()
