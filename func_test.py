@@ -231,17 +231,19 @@ def test_perf_tuner_profiles_and_caches(tmp_path):
         }
         return ProfilePayload(settings=settings, options=options, default_tier="high", metrics=metrics)
 
-    settings, created = load_or_profile_settings(
+    settings, created, speedup = load_or_profile_settings(
         tmp_path, device, benchmark_runner=fake_runner
     )
     assert created
     assert settings.prefetch_depth == 3
     assert settings.safety_factor == 5
-    cached, created2 = load_or_profile_settings(
+    assert pytest.approx(speedup, rel=1e-6) == 1.25
+    cached, created2, cached_speedup = load_or_profile_settings(
         tmp_path, device, benchmark_runner=fake_runner
     )
     assert not created2
     assert cached.prefetch_depth == 3
+    assert pytest.approx(cached_speedup, rel=1e-6) == 1.25
     assert len(calls) == 1
     profile_file = tmp_path / "perf_profile.json"
     assert profile_file.exists()
@@ -350,7 +352,7 @@ def test_predict_cnn_gpu_prefetch_throughput(gpu_metric_recorder, tmp_path):
     def _runner(dev, status):
         return _run_profile(dev, status, tile_stack=tile_sizes, tiers=("high",))
 
-    profiled_settings, _ = load_or_profile_settings(str(profile_dir), device, benchmark_runner=_runner)
+    profiled_settings, _, _ = load_or_profile_settings(str(profile_dir), device, benchmark_runner=_runner)
     baseline_settings = AdaptiveSettings(safety_factor=12, prefetch_depth=1)
 
     baseline = _benchmark_predict(model, tile_batch, device, baseline_settings, tile_size=128)

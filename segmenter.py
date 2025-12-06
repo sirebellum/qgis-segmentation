@@ -28,7 +28,6 @@ from qgis.PyQt.QtCore import (
     QUrl,
     Qt,
     QEvent,
-    QTimer,
 )
 from qgis.PyQt.QtGui import QIcon, QPixmap, QDesktopServices, QColor, QCursor
 from qgis.PyQt.QtWidgets import (
@@ -1067,6 +1066,29 @@ class Segmenter:
             self._layer_refresh_controller = _ComboRefreshController(combo, self.render_layers)
             combo.installEventFilter(self._layer_refresh_controller)
 
+    def _profiling_speedup_summary(self, speedup_hint: Optional[float]) -> str:
+        ratio = float(speedup_hint) if speedup_hint and speedup_hint > 0 else 1.0
+        ratio = float(np.clip(ratio, 0.25, 8.0))
+        baseline_minutes = 60.0
+        improved_minutes = baseline_minutes / ratio if ratio > 0 else baseline_minutes
+        start_label = self._format_duration_hint(baseline_minutes)
+        end_label = self._format_duration_hint(improved_minutes)
+        return f"Adaptive profiling ready — estimated x{ratio:.2f} speedup (~{start_label} -> {end_label})."
+
+    def _format_duration_hint(self, minutes: float) -> str:
+        total_minutes = max(minutes, 1.0 / 60.0)
+        hours = int(total_minutes // 60)
+        mins = int(round(total_minutes % 60))
+        parts = []
+        if hours:
+            parts.append(f"{hours}h")
+        if mins:
+            parts.append(f"{mins}m")
+        if not parts:
+            seconds = max(1, int(round(total_minutes * 60)))
+            parts.append(f"{seconds}s")
+        return " ".join(parts)
+
     def _ensure_adaptive_profile(self):
         if self._profiling_ready:
             return
@@ -1078,14 +1100,9 @@ class Segmenter:
         if device is None:
             return
 
-        dlg_ready = getattr(self, "dlg", None) is not None
-        show_progress = dlg_ready and not self.task
-        if show_progress:
-            self._set_progress_message("Profiling GPU performance", indeterminate=True)
-
         def _run_profile():
             try:
-                settings, created = load_or_profile_settings(
+                settings, created, speedup = load_or_profile_settings(
                     self.plugin_dir,
                     device,
                     status_callback=self.log_status,
@@ -1094,13 +1111,14 @@ class Segmenter:
                     self.log_status("Adaptive profiling complete; cached settings saved.")
                 else:
                     self.log_status("Adaptive profiling cache loaded.")
+                summary = self._profiling_speedup_summary(speedup)
+                if summary:
+                    self.log_status(summary)
                 self._profiling_ready = True
             except Exception as exc:  # pragma: no cover - best effort logging
                 self.log_status(f"Adaptive profiling failed: {exc}")
             finally:
                 self._profiling_thread = None
-                if show_progress:
-                    QTimer.singleShot(0, lambda: None if self.task else self._reset_progress_bar())
 
         self.log_status("Profiling GPU performance (this only happens once).")
         self.log_status("Calibrating adaptive batching (runs once per device)...")

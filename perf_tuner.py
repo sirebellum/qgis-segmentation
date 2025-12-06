@@ -219,18 +219,28 @@ def _report_profile_metrics(
         status_callback(f"[{tier}] {label} peak {best:,.0f} px/s (x{speedup:.2f} vs baseline).")
 
 
+def _primary_speedup(payload: ProfilePayload) -> Optional[float]:
+    metrics = payload.metrics.get(payload.default_tier)
+    if not metrics:
+        return None
+    speedup = metrics.get("speedup_vs_prefetch1")
+    if speedup is None or not math.isfinite(speedup):
+        return None
+    return float(speedup)
+
+
 def load_or_profile_settings(
     plugin_dir: str,
     device: torch.device,
     status_callback: Optional[Callable[[str], None]] = None,
     benchmark_runner: Optional[ProfileRunner] = None,
-) -> Tuple[AdaptiveSettings, bool]:
+) -> Tuple[AdaptiveSettings, bool, Optional[float]]:
     """Load cached adaptive settings or profile the current device."""
 
     if os.environ.get("SEGMENTER_SKIP_PROFILING", "").lower() in {"1", "true"}:
         settings = AdaptiveSettings()
         set_adaptive_settings(settings)
-        return settings, False
+        return settings, False, None
 
     profile_path = Path(plugin_dir) / PROFILE_FILENAME
     data = _read_profile_file(profile_path)
@@ -239,7 +249,7 @@ def load_or_profile_settings(
         payload = _deserialize_profile_entry(data[key])
         set_adaptive_settings(payload.settings, payload.options, default_tier=payload.default_tier)
         _report_profile_metrics(payload, status_callback, cached=True)
-        return payload.primary(), False
+        return payload.primary(), False, _primary_speedup(payload)
 
     runner = benchmark_runner or _run_profile
     dialog = _start_profiling_popup()
@@ -247,11 +257,13 @@ def load_or_profile_settings(
         result = runner(device, status_callback)
     finally:
         _close_profiling_popup(dialog)
-        payload = _normalize_profile_result(result)
-        data[key] = _serialize_profile_entry(payload)
-        _write_profile_file(profile_path, data)
-        set_adaptive_settings(payload.settings, payload.options, default_tier=payload.default_tier)
-        return payload.primary(), True
+
+    payload = _normalize_profile_result(result)
+    data[key] = _serialize_profile_entry(payload)
+    _write_profile_file(profile_path, data)
+    set_adaptive_settings(payload.settings, payload.options, default_tier=payload.default_tier)
+    _report_profile_metrics(payload, status_callback, cached=False)
+    return payload.primary(), True, _primary_speedup(payload)
 
 
 def _run_profile(
