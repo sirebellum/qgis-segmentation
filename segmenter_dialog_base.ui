@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>384</width>
-    <height>292</height>
+    <width>420</width>
+    <height>520</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -25,10 +25,10 @@
   <widget class="QPushButton" name="buttonPredict">
    <property name="geometry">
     <rect>
-     <x>50</x>
-     <y>155</y>
-     <width>141</width>
-     <height>34</height>
+      <x>260</x>
+      <y>280</y>
+      <width>150</width>
+      <height>36</height>
     </rect>
    </property>
    <property name="toolTip">
@@ -38,18 +38,33 @@
     <string>Segment</string>
    </property>
   </widget>
+  <widget class="QPushButton" name="buttonStop">
+   <property name="enabled">
+    <bool>false</bool>
+   </property>
+   <property name="geometry">
+    <rect>
+      <x>260</x>
+      <y>320</y>
+      <width>150</width>
+      <height>32</height>
+    </rect>
+   </property>
+   <property name="text">
+    <string>Cancel Task</string>
+   </property>
+  </widget>
   <widget class="QPlainTextEdit" name="inputBox">
    <property name="geometry">
     <rect>
-     <x>40</x>
-     <y>220</y>
-     <width>291</width>
-     <height>51</height>
+      <x>30</x>
+      <y>400</y>
+      <width>370</width>
+      <height>140</height>
     </rect>
    </property>
    <property name="plainText">
-    <string>Please input key with dashes
-</string>
+        <string/>
    </property>
    <property name="overwriteMode">
     <bool>false</bool>
@@ -58,13 +73,38 @@
     <bool>false</bool>
    </property>
   </widget>
+  <widget class="QProgressBar" name="jobProgress">
+   <property name="geometry">
+    <rect>
+      <x>30</x>
+      <y>360</y>
+      <width>370</width>
+      <height>28</height>
+    </rect>
+   </property>
+   <property name="minimum">
+    <number>0</number>
+   </property>
+   <property name="maximum">
+    <number>100</number>
+   </property>
+   <property name="value">
+    <number>0</number>
+   </property>
+   <property name="format">
+    <string>Idle</string>
+   </property>
+   <property name="textVisible">
+    <bool>true</bool>
+   </property>
+  </widget>
   <widget class="QLabel" name="imageLarge">
    <property name="geometry">
     <rect>
-     <x>240</x>
-     <y>80</y>
-     <width>121</width>
-     <height>119</height>
+      <x>250</x>
+      <y>80</y>
+      <width>160</width>
+      <height>140</height>
     </rect>
    </property>
    <property name="styleSheet">
@@ -73,14 +113,17 @@
    <property name="text">
     <string/>
    </property>
+  <property name="alignment">
+   <set>Qt::AlignCenter</set>
+  </property>
   </widget>
   <widget class="QComboBox" name="inputLoadModel">
    <property name="geometry">
     <rect>
-     <x>20</x>
-     <y>30</y>
-     <width>101</width>
-     <height>32</height>
+      <x>20</x>
+      <y>30</y>
+      <width>101</width>
+      <height>32</height>
     </rect>
    </property>
    <property name="toolTip">
@@ -96,10 +139,10 @@
   <widget class="QLabel" name="labelLoadModel">
    <property name="geometry">
     <rect>
-     <x>50</x>
-     <y>10</y>
-     <width>81</width>
-     <height>18</height>
+      <x>50</x>
+      <y>10</y>
+      <width>81</width>
+      <height>18</height>
     </rect>
    </property>
    <property name="text">
@@ -109,75 +152,23 @@
   <widget class="QLabel" name="labelSegments">
    <property name="geometry">
     <rect>
-     <x>50</x>
-     <y>85</y>
-     <width>161</width>
-     <height>18</height>
+      <x>50</x>
+      <y>85</y>
+      <width>161</width>
+      <height>18</height>
     </rect>
    </property>
    <property name="text">
     <string comment="Number of segments to divide input into">Number of Segments</string>
    </property>
   </widget>
-  <widget class="Line" name="line">
-   <property name="geometry">
-    <rect>
-     <x>210</x>
-     <y>80</y>
-     <width>16</width>
-     <height>121</height>
-    </rect>
-   </property>
-   <property name="orientation">
-    <enum>Qt::Vertical</enum>
-   </property>
-  </widget>
-  <widget class="Line" name="line_2">
-   <property name="geometry">
-    <rect>
-     <x>20</x>
-     <y>70</y>
-     <width>200</width>
-     <height>20</height>
-    </rect>
-   </property>
-   <property name="orientation">
-    <enum>Qt::Horizontal</enum>
-   </property>
-  </widget>
-  <widget class="Line" name="line_3">
-   <property name="geometry">
-    <rect>
-     <x>19</x>
-     <y>190</y>
-     <width>200</width>
-     <height>20</height>
-    </rect>
-   </property>
-   <property name="orientation">
-    <enum>Qt::Horizontal</enum>
-   </property>
-  </widget>
-  <widget class="Line" name="line_4">
-   <property name="geometry">
-    <rect>
-     <x>10</x>
-     <y>80</y>
-     <width>16</width>
-     <height>121</height>
-    </rect>
-   </property>
-   <property name="orientation">
-    <enum>Qt::Vertical</enum>
-   </property>
-  </widget>
   <widget class="QComboBox" name="inputLayer">
    <property name="geometry">
     <rect>
-     <x>140</x>
-     <y>30</y>
-     <width>101</width>
-     <height>32</height>
+      <x>140</x>
+      <y>30</y>
+      <width>101</width>
+      <height>32</height>
     </rect>
    </property>
    <property name="toolTip">
@@ -193,10 +184,10 @@
   <widget class="QLabel" name="labelLoadModel_2">
    <property name="geometry">
     <rect>
-     <x>160</x>
-     <y>10</y>
-     <width>81</width>
-     <height>18</height>
+      <x>160</x>
+      <y>10</y>
+      <width>81</width>
+      <height>18</height>
     </rect>
    </property>
    <property name="text">
@@ -206,10 +197,10 @@
   <widget class="QLabel" name="labelLoadModel_3">
    <property name="geometry">
     <rect>
-     <x>270</x>
-     <y>10</y>
-     <width>81</width>
-     <height>18</height>
+      <x>300</x>
+      <y>10</y>
+      <width>81</width>
+      <height>18</height>
     </rect>
    </property>
    <property name="accessibleDescription">
@@ -222,10 +213,10 @@
   <widget class="QComboBox" name="inputRes">
    <property name="geometry">
     <rect>
-     <x>260</x>
-     <y>30</y>
-     <width>101</width>
-     <height>32</height>
+      <x>270</x>
+      <y>30</y>
+      <width>120</width>
+      <height>32</height>
     </rect>
    </property>
    <property name="toolTip">
@@ -241,11 +232,135 @@
   <widget class="QLineEdit" name="inputSegments">
    <property name="geometry">
     <rect>
-     <x>60</x>
-     <y>110</y>
-     <width>113</width>
-     <height>32</height>
+      <x>70</x>
+      <y>110</y>
+      <width>113</width>
+      <height>32</height>
     </rect>
+   </property>
+   <property name="text">
+    <string>8</string>
+   </property>
+   <property name="placeholderText">
+    <string/>
+   </property>
+  </widget>
+  <widget class="QLabel" name="labelSmoothness">
+   <property name="geometry">
+    <rect>
+     <x>40</x>
+     <y>185</y>
+     <width>151</width>
+     <height>21</height>
+    </rect>
+   </property>
+   <property name="text">
+    <string>Smoothness</string>
+   </property>
+  </widget>
+  <widget class="QSlider" name="sliderSmoothness">
+   <property name="geometry">
+    <rect>
+    <x>40</x>
+    <y>210</y>
+    <width>210</width>
+    <height>22</height>
+    </rect>
+   </property>
+   <property name="minimum">
+    <number>0</number>
+   </property>
+   <property name="maximum">
+    <number>100</number>
+   </property>
+   <property name="value">
+    <number>20</number>
+   </property>
+   <property name="orientation">
+    <enum>Qt::Horizontal</enum>
+   </property>
+  </widget>
+  <widget class="QLabel" name="labelSpeed">
+   <property name="geometry">
+    <rect>
+    <x>40</x>
+    <y>235</y>
+    <width>151</width>
+    <height>21</height>
+    </rect>
+   </property>
+   <property name="text">
+    <string>Speed</string>
+   </property>
+  </widget>
+  <widget class="QSlider" name="sliderSpeed">
+   <property name="geometry">
+    <rect>
+     <x>40</x>
+     <y>260</y>
+     <width>210</width>
+     <height>22</height>
+    </rect>
+   </property>
+   <property name="minimum">
+    <number>0</number>
+   </property>
+   <property name="maximum">
+    <number>100</number>
+   </property>
+   <property name="value">
+    <number>50</number>
+   </property>
+   <property name="orientation">
+    <enum>Qt::Horizontal</enum>
+   </property>
+  </widget>
+  <widget class="QLabel" name="labelAccuracy">
+   <property name="geometry">
+    <rect>
+     <x>40</x>
+     <y>285</y>
+     <width>151</width>
+     <height>21</height>
+    </rect>
+   </property>
+   <property name="text">
+    <string>Accuracy</string>
+   </property>
+  </widget>
+  <widget class="QSlider" name="sliderAccuracy">
+   <property name="geometry">
+    <rect>
+     <x>40</x>
+     <y>310</y>
+     <width>210</width>
+     <height>22</height>
+    </rect>
+   </property>
+   <property name="minimum">
+    <number>0</number>
+   </property>
+   <property name="maximum">
+    <number>100</number>
+   </property>
+   <property name="value">
+    <number>70</number>
+   </property>
+   <property name="orientation">
+    <enum>Qt::Horizontal</enum>
+   </property>
+  </widget>
+  <widget class="QPushButton" name="buttonFeedback">
+   <property name="geometry">
+    <rect>
+      <x>260</x>
+      <y>230</y>
+      <width>150</width>
+      <height>32</height>
+    </rect>
+   </property>
+   <property name="text">
+    <string>Provide Feedback</string>
    </property>
   </widget>
  </widget>

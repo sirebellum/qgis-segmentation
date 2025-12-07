@@ -12,11 +12,19 @@ Not anymore! Introducing the machine learning powered qgis plugin that will chan
 
 Segmenter now ships with a lightweight dependency bootstrapper. When the plugin loads it checks for `torch`, `scikit-learn`, and `numpy` and, if they are missing, installs them into `<plugin>/vendor` using the Python interpreter that ships with QGIS. This keeps the QGIS installation untouched while ensuring the models can run.
 
+The default PyTorch spec is chosen automatically based on the Python runtime that QGIS embeds (Python 3.13 gets a `torch>=2.5.1,<3.0` constraint, Python 3.12 uses `torch>=2.3.1,<3.0`, and older versions stay on `torch==2.2.2`). Override this behaviour anytime with `SEGMENTER_TORCH_SPEC="torch==<version>"` if you need to pin a particular wheel.
+
+On macOS we also set `KMP_DUPLICATE_LIB_OK=TRUE` and `OMP_NUM_THREADS=1` before loading PyTorch/scikit-learn to avoid the `libomp` duplication crash that can occur when the plugin spins up OpenMP workloads inside the QGIS process.
+
 On macOS the installer defaults to the CPU build of PyTorch. Windows and Linux systems default to the CUDA 12.1 build so that GPU acceleration remains available; set `SEGMENTER_TORCH_INDEX_URL` or `SEGMENTER_TORCH_SPEC` in the environment before starting QGIS to pin a different wheel. Set `SEGMENTER_SKIP_AUTO_INSTALL=1` if you prefer to manage dependencies yourself.
 
 If QGIS embeds Python in a non-standard way, set `SEGMENTER_PYTHON` to the absolute path of the interpreter that should run `pip`.
 
 While a model is running, the log panel in the dialog now streams live status updates (tiling progress, clustering stages, rendering) so you can monitor long operations.
+
+Large rasters are processed with a YOLO-style overlapping sliding window. The plugin inspects the available VRAM on CUDA devices (using 0.9% of the free memory) or MPS (0.75%) to pick a safe chunk size, then blends the overlapping predictions back together so you get a seamless output without exhausting GPU memory. Within each chunk the CNN tiles are now batched and prefetched to the GPU using the same memory budget, so utilization stays high without increasing peak RAM use.
+
+On first launch, Segmenter profiles your local GPU to pick the best safety factor and prefetch depth for the batching logic. Results are cached in `perf_profile.json` inside the plugin so later runs reuse them instantly. Set `SEGMENTER_SKIP_PROFILING=1` if you prefer the default heuristics.
 
 If you need to perform a manual install (for example on an offline machine), open the QGIS Python console and run:
 
@@ -28,7 +36,7 @@ subprocess.check_call([
 	"-m",
 	"pip",
 	"install",
-	"torch==2.2.2",
+	"torch>=2.5.1,<3.0",
 	"scikit-learn>=1.1,<2.0",
 	"numpy>=1.23,<2.0",
 	"--target",
