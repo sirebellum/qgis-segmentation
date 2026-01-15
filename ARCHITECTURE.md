@@ -39,6 +39,6 @@ Copyright (c) 2026 Quant Civil
 
 ## Training scaffolding (isolated)
 - Location: [training/](training) (pure PyTorch, eager mode). Not wired into QGIS runtime.
-- Components: config dataclasses, synthetic/optional raster datasets with paired-view augmentations, monolithic model (encoder stride/4, elevation FiLM injection, soft k-means head, fast/learned refinement lanes), unsupervised losses (consistency, entropy shaping, edge-aware smoothness), proxy metrics, CLI train/eval runners.
+- Components: config dataclasses, synthetic/optional raster datasets with paired-view augmentations, monolithic model (encoder stride/4, elevation FiLM injection with per-sample masks, soft k-means head, fast/learned refinement lanes), unsupervised losses (consistency, entropy shaping, edge-aware smoothness), proxy metrics, CLI train/eval runners.
 - Contract: forward(rgb, K, elev?) → probabilities [B,K,512,512] (K ≤ 16) + embeddings stride/4; elevation optional and gated.
-- CLI: `python -m training.train --synthetic --steps 3` for smoke training; `python -m training.eval --synthetic` for proxy metrics.
+- CLI: `python -m training.train --synthetic --steps 3 --grad-accum 2` for smoke training; `python -m training.eval --synthetic` for proxy metrics.

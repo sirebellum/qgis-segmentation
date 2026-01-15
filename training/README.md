@@ -12,7 +12,7 @@ Copyright (c) 2026 Quant Civil
 - No labels required; eval labels remain optional for offline checks.
 
 ## Model contract (training-time)
-- Forward signature: `(rgb[B,3,512,512], K, elev[B,1,512,512]|None, elev_present)`.
+- Forward signature: `(rgb[B,3,512,512], K, elev[B,1,512,512]|None, elev_present)` where `elev_present` may be a bool or per-sample mask.
 - Outputs: per-pixel probabilities `P[B,K,512,512]` (argmax are labels), latent embeddings stride/4 `E[B,D,128,128]`, prototypes, logits.
 - Constraints: `2 <= K <= 16`; elevation injected post-encoder via gated FiLM; differentiable soft k-means/EM head with configurable iterations; two refinement lanes (fast smoothing + learned conv stub).
 
@@ -22,7 +22,7 @@ Copyright (c) 2026 Quant Civil
 - Edge-aware smoothness (RGB gradients + optional elevation gradients weight the penalty).
 
 ## Running
-- Synthetic smoke train (CPU ok): `python -m training.train --synthetic --steps 3 --amp 0 --seed 123 --checkpoint_dir /tmp/seg_ckpt`.
+- Synthetic smoke train (CPU ok): `python -m training.train --synthetic --steps 3 --amp 0 --seed 123 --checkpoint_dir /tmp/seg_ckpt --grad-accum 2`.
 - Synthetic eval: `python -m training.eval --synthetic --seed 123`.
 - Config overrides: pass a python file exporting `get_config()`/`CONFIG` (see `training/config.py`).
 - TensorBoard (local dashboard):
@@ -32,7 +32,8 @@ Copyright (c) 2026 Quant Civil
 
 ## Knobs & randomness
 - Per-batch randomization: `K ∈ {2,4,8,16}`, downsample factor {1,2}, cluster iters range, smooth iters range, smoothing lane choice.
-- Elevation dropout applies even when elevation is present.
+- Elevation dropout applies even when elevation is present; per-sample masks are carried into FiLM gating and losses.
+- Optional gradient accumulation: `--grad-accum N` (defaults to config `train.grad_accum`).
 
 ## Notes
 - Training code is isolated from the QGIS runtime; no TorchScript export required in this phase.

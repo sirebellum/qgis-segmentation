@@ -18,17 +18,9 @@ Copyright (c) 2026 Quant Civil
 - Profiling: `load_or_profile_settings` (perf_profile.json in plugin root) benchmarks throughput once per device to set safety factor/prefetch depth per tier; gated by `SEGMENTER_SKIP_PROFILING` env. Status surfaced through `Segmenter.log_status`.
 - Dependency bootstrap: [dependency_manager.py](dependency_manager.py) installs torch/numpy/scikit-learn into `vendor/` at import time unless `SEGMENTER_SKIP_AUTO_INSTALL` is set; accepts `SEGMENTER_TORCH_SPEC`, `SEGMENTER_TORCH_INDEX_URL`, `SEGMENTER_PYTHON` for overrides.
 
-## Training (Planned — unsupervised)
-- Status: not implemented; current models are TorchScript binaries shipped in `models/`.
-- Data: unlabeled imagery only; assume 3-channel RGB input; any labels for evaluation remain optional.
-- Model export contract: TorchScript returning `(mask, features)` or `(None, features)` compatible with `predict_cnn` latent usage (see training/README.md).
-- TODO:
-  - Populate training/data layout and config specs in `training/` (unlabeled inputs, optional eval labels).
-  - Define augmentation strategy suitable for unlabeled data (e.g., color jitter, random crops/rotations).
-  - Add evaluation hooks for proxy metrics (e.g., feature diversity, clustering stability) once design settles.
-  - Record architecture/loss choices in `training/MODEL_HISTORY.md` as experiments proceed.
-
-## Next-gen training pipeline (unsupervised — scaffolding)
-- Model contract: monolithic eager-PyTorch model taking RGB (B,3,512,512) and optional elevation (B,1,512,512), producing per-pixel probabilities P ∈ [B,K,512,512] with K ∈ [2,16]; embeddings stride/4 (B,D,128,128); FiLM-like elevation injection at latent stage; differentiable soft k-means/EM head with configurable iterations; two refinement lanes (fast deterministic smoothing + learned conv stub).
-- Losses: two-view consistency (symmetric KL on warped probabilities), entropy shaping (pixel entropy minimization + marginal entropy maximization for cluster utilization), edge-aware smoothness weighted by RGB gradients (optionally elevation gradients).
-- Knobs: per-batch random K, downsample factor, cluster_iters, smooth_iters, smoothing lane; elevation dropout even when elevation is present. Training remains isolated from QGIS runtime (no TorchScript export required in this phase).
+## Training (unsupervised — implemented, isolated)
+- Status: eager-PyTorch pipeline in [training/](training); not wired into QGIS runtime.
+- Model contract: monolithic model taking RGB (B,3,512,512) and optional elevation (B,1,512,512) with per-sample masks, producing probabilities P ∈ [B,K,512,512] for K ∈ [2,16] and embeddings stride/4 (B,D,128,128); FiLM-like elevation injection; differentiable soft k-means/EM head; fast vs learned refinement lanes.
+- Losses: two-view consistency (symmetric KL on warped probabilities), entropy shaping (pixel entropy minimization + marginal entropy maximization), edge-aware smoothness weighted by RGB and optional elevation gradients.
+- Knobs: per-batch random K, downsample factor, cluster_iters, smooth_iters, smoothing lane; elevation dropout even when elevation is present; optional gradient accumulation.
+- Export: TorchScript export still out-of-scope; runtime plugin continues to consume legacy TorchScript CNNs.

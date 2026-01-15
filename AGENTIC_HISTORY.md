@@ -66,3 +66,19 @@ Copyright (c) 2026 Quant Civil
   - Static reasoning on shapes/contracts; synthetic-focused tests included but not executed here.
 - Risks/Notes:
   - Real raster IO remains a stub (rasterio optional); runtime integration deferred; TorchScript export intentionally omitted.
+
+## Phase 4 — Training Hardening (2026-01-15)
+- Intent: Harden the unsupervised training scaffold with elevation masks, gradient accumulation, and smoothing correctness while keeping runtime untouched.
+- Summary:
+  - Added per-sample elevation masks through collate → FiLM gate; kept dropout behavior and mask-aware smoothness inputs.
+  - Fixed fast smoothing depthwise kernel for arbitrary K; wired optional grad accumulation into CLI loop and logs.
+  - Kept synthetic-first default in train/eval; refreshed docs (ARCHITECTURE, MODEL_NOTES, training/README, training/MODEL_HISTORY) and added CODE_SCRIPTURE registry.
+- Files Touched:
+  - Modified: training/models/{model.py,elevation_inject.py,refine.py}, training/train.py, training/eval.py, training/README.md, training/MODEL_HISTORY.md, ARCHITECTURE.md, MODEL_NOTES.md.
+  - Added: CODE_SCRIPTURE.md.
+- Commands:
+  - None executed this phase (reasoned changes only; tests not run here).
+- Validation:
+  - Static inspection of tensor shapes, mask broadcasting, grad-accum loop; existing pytest suite expected to cover shapes/losses/smoke.
+- Risks/Notes:
+  - Real raster IO still stubbed; dataloader masks assume consistent spatial dims. Synthetic-first stance maintained until real data backend is implemented.

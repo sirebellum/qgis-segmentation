@@ -21,3 +21,9 @@ Copyright (c) 2026 Quant Civil
 - Data: synthetic paired views with optional elevation + dropout; geometry shared; photometric jitter per view.
 - Metrics tracked: cluster utilization, speckle, boundary density, view consistency.
 - Notes: eager PyTorch only; refinement lanes (fast box blur, learned conv stub) selectable by knob.
+
+### 2026-01-15 — Elevation masks + grad accumulation
+- Config tweaks: per-sample elevation masks honored end-to-end (collate, FiLM gate); fast smoothing kernel fixed for any K; grad accumulation exposed via CLI/config.
+- Data: synthetic default path remains; real rasters still stubbed. Mixed elevation/non-elevation batches supported via masks.
+- Training loop: optional `--grad-accum` averaging loss; logs include micro_step vs step.
+- Notes: synthetic-first by design; real IO to be added in later phases once raster backend is wired.

@@ -7,7 +7,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Tuple, Optional
 
 import torch
 from torch.utils.data import DataLoader
@@ -29,22 +29,31 @@ def _device() -> torch.device:
     return torch.device("cpu")
 
 
+def _stack_optional(tensors: list[Optional[torch.Tensor]]) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
+    present = [t is not None for t in tensors]
+    if not any(present):
+        return None, None
+    template = next(t for t in tensors if t is not None)
+    filled = [t if p else torch.zeros_like(template) for t, p in zip(tensors, present)]
+    stacked = torch.cat(filled, dim=0)
+    mask = torch.tensor(present, dtype=torch.bool).view(-1, 1, 1, 1)
+    return stacked, mask
+
+
 def _collate(batch: list[Dict]) -> Dict:
     # Stack tensors across batch dimension.
     view1_rgb = torch.cat([item["view1"]["rgb"] for item in batch], dim=0)
     view2_rgb = torch.cat([item["view2"]["rgb"] for item in batch], dim=0)
-    view1_elev = [item["view1"].get("elev") for item in batch]
-    view2_elev = [item["view2"].get("elev") for item in batch]
-    elev1_items = [e for e in view1_elev if e is not None]
-    elev2_items = [e for e in view2_elev if e is not None]
-    elev1 = torch.cat(elev1_items, dim=0) if elev1_items else None
-    elev2 = torch.cat(elev2_items, dim=0) if elev2_items else None
+    view1_elev, view1_mask = _stack_optional([item["view1"].get("elev") for item in batch])
+    view2_elev, view2_mask = _stack_optional([item["view2"].get("elev") for item in batch])
     grid = torch.cat([item["warp_grid"] for item in batch], dim=0)
     return {
         "view1_rgb": view1_rgb,
         "view2_rgb": view2_rgb,
-        "view1_elev": elev1,
-        "view2_elev": elev2,
+        "view1_elev": view1_elev,
+        "view2_elev": view2_elev,
+        "view1_mask": view1_mask,
+        "view2_mask": view2_mask,
         "grid": grid,
     }
 
@@ -65,6 +74,7 @@ def main():
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--steps", type=int, default=None)
     parser.add_argument("--amp", type=int, default=1)
+    parser.add_argument("--grad-accum", type=int, default=None, help="Gradient accumulation steps")
     parser.add_argument("--checkpoint_dir", type=str, default=None)
     parser.add_argument("--logdir", type=str, default=None, help="TensorBoard log directory (default: checkpoint_dir/tb or runs/train)")
     args = parser.parse_args()
@@ -72,6 +82,8 @@ def main():
     cfg = load_config(args.config)
     if args.steps:
         cfg.train.steps = args.steps
+    if args.grad_accum:
+        cfg.train.grad_accum = max(1, args.grad_accum)
     cfg.train.amp = bool(args.amp)
     set_seed(args.seed)
 
@@ -80,7 +92,9 @@ def main():
     opt = torch.optim.Adam(model.parameters(), lr=cfg.train.lr, weight_decay=cfg.train.weight_decay)
     scaler = torch.cuda.amp.GradScaler(enabled=cfg.train.amp and device.type == "cuda")
 
-    loader = build_dataloader(cfg, synthetic=args.synthetic or True, with_elev=cfg.data.allow_mixed_elevation)
+    # Real raster loading is still stubbed; default to synthetic unless explicitly replaced later.
+    use_synth = True  # Real raster loading is stubbed; synthetic remains the default path.
+    loader = build_dataloader(cfg, synthetic=use_synth, with_elev=cfg.data.allow_mixed_elevation)
 
     run_root = Path(args.checkpoint_dir) if args.checkpoint_dir else Path("runs") / "train"
     run_root.mkdir(parents=True, exist_ok=True)
@@ -89,9 +103,20 @@ def main():
     writer = SummaryWriter(str(tb_dir))
     log_path = run_root / "train_log.jsonl"
 
-    for step, batch in enumerate(loader, start=1):
-        if step > cfg.train.steps:
-            break
+    target_steps = cfg.train.steps
+    accum = max(1, cfg.train.grad_accum)
+    step = 0
+    micro_step = 0
+    loader_iter = iter(loader)
+    opt.zero_grad(set_to_none=True)
+
+    while step < target_steps:
+        try:
+            batch = next(loader_iter)
+        except StopIteration:
+            loader_iter = iter(loader)
+            batch = next(loader_iter)
+        micro_step += 1
         knobs = model.sample_knobs()
         k = min(cfg.model.max_k, max(2, knobs["k"]))
         cluster_iters = knobs["cluster_iters"]
@@ -104,14 +129,15 @@ def main():
         grid = batch["grid"].to(device)
         v1_elev = batch["view1_elev"].to(device) if batch["view1_elev"] is not None else None
         v2_elev = batch["view2_elev"].to(device) if batch["view2_elev"] is not None else None
+        v1_mask = batch["view1_mask"].to(device) if batch["view1_mask"] is not None else None
+        v2_mask = batch["view2_mask"].to(device) if batch["view2_mask"] is not None else None
 
-        opt.zero_grad(set_to_none=True)
         with torch.cuda.amp.autocast(enabled=scaler.is_enabled()):
             out1 = model(
                 v1_rgb,
                 k=k,
                 elev=v1_elev,
-                elev_present=v1_elev is not None,
+                elev_present=v1_mask if v1_mask is not None else v1_elev is not None,
                 downsample=downsample,
                 cluster_iters=cluster_iters,
                 smooth_iters=smooth_iters,
@@ -121,7 +147,7 @@ def main():
                 v2_rgb,
                 k=k,
                 elev=v2_elev,
-                elev_present=v2_elev is not None,
+                elev_present=v2_mask if v2_mask is not None else v2_elev is not None,
                 downsample=downsample,
                 cluster_iters=cluster_iters,
                 smooth_iters=smooth_iters,
@@ -137,15 +163,20 @@ def main():
                 v1_elev,
                 v2_elev,
             )
-            loss = losses["loss"]
+            loss = losses["loss"] / float(accum)
         scaler.scale(loss).backward()
-        scaler.step(opt)
-        scaler.update()
 
-        if step % cfg.train.log_interval == 0 or step == 1:
+        if micro_step % accum == 0:
+            scaler.step(opt)
+            scaler.update()
+            opt.zero_grad(set_to_none=True)
+            step += 1
+
+        if step > 0 and (step % cfg.train.log_interval == 0 or step == 1):
             msg = {
                 "step": step,
-                "loss": float(loss.detach().cpu()),
+                "micro_step": micro_step,
+                "loss": float((loss * accum).detach().cpu()),
                 "consistency": float(losses["consistency"].cpu()),
                 "entropy_pixel": float(losses["entropy_pixel"].cpu()),
                 "entropy_marginal": float(losses["entropy_marginal"].cpu()),
@@ -155,6 +186,7 @@ def main():
                 "smooth_iters": smooth_iters,
                 "smoothing_lane": smoothing_lane,
                 "downsample": downsample,
+                "grad_accum": accum,
             }
             print(json.dumps(msg))
             with log_path.open("a") as f:
@@ -169,6 +201,7 @@ def main():
             writer.add_scalar("hparams/cluster_iters", cluster_iters, step)
             writer.add_scalar("hparams/smooth_iters", smooth_iters, step)
             writer.add_scalar("hparams/downsample", downsample, step)
+            writer.add_scalar("hparams/grad_accum", accum, step)
 
             # Images: input RGB and float probability map (first 3 channels padded if needed)
             rgb_vis = v1_rgb[0].detach().cpu().clamp(0, 1)

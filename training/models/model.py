@@ -33,7 +33,7 @@ class MonolithicSegmenter(nn.Module):
         rgb: torch.Tensor,
         k: int,
         elev: Optional[torch.Tensor] = None,
-        elev_present: Optional[bool] = None,
+        elev_present: Optional[torch.Tensor | bool] = None,
         downsample: int = 1,
         cluster_iters: Optional[int] = None,
         smooth_iters: Optional[int] = None,
@@ -47,10 +47,12 @@ class MonolithicSegmenter(nn.Module):
         rgb_ds = downsample_factor(rgb, ds)
         emb = self.encoder(rgb_ds)
 
-        elev_present_flag = bool(elev_present) if elev_present is not None else elev is not None
-        if elev is not None and elev_present_flag:
+        elev_mask = elev_present
+        if isinstance(elev_present, bool) or elev_present is None:
+            elev_mask = bool(elev_present) if elev_present is not None else elev is not None
+        if elev is not None and (not isinstance(elev_mask, bool) or elev_mask):
             elev = resample_to_match(elev, rgb_ds.shape)
-            emb = self.elev_gate(emb, elev, elev_present_flag)
+            emb = self.elev_gate(emb, elev, elev_mask)
 
         cluster_iters = int(cluster_iters) if cluster_iters is not None else int(
             sum(self.cfg.cluster_iters) / 2

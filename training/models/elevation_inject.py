@@ -22,10 +22,26 @@ class ElevationFiLM(nn.Module):
             nn.Conv2d(hidden, embed_dim * 2, 1),
         )
 
-    def forward(self, embeddings: torch.Tensor, elev: torch.Tensor, elev_present: bool) -> torch.Tensor:
-        if elev is None or not elev_present:
+    def forward(self, embeddings: torch.Tensor, elev: torch.Tensor, elev_present) -> torch.Tensor:
+        if elev is None:
             return embeddings
+
+        mask = None
+        if isinstance(elev_present, torch.Tensor):
+            mask = elev_present.to(embeddings.device)
+            if mask.dim() == 1:
+                mask = mask.view(-1, 1, 1, 1)
+            elif mask.dim() == 4:
+                pass
+            else:
+                raise ValueError("elev_present mask must be 1D batch or broadcastable")
+        elif not elev_present:
+            return embeddings
+
         elev_ds = resample_to_match(elev, embeddings.shape)
         film = self.mlp(elev_ds)
         gamma, beta = torch.chunk(film, 2, dim=1)
+        if mask is not None:
+            gamma = gamma * mask
+            beta = beta * mask
         return embeddings * (1 + gamma) + beta

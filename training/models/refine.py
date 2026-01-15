@@ -28,8 +28,10 @@ class RefineHead(nn.Module):
 def fast_smooth(probs: torch.Tensor, iters: int = 1) -> torch.Tensor:
     if iters <= 0:
         return probs
-    kernel = torch.ones(1, 1, 3, 3, device=probs.device) / 9.0
+    channels = probs.shape[1]
+    # Depthwise box filter per class channel.
+    kernel = torch.ones(channels, 1, 3, 3, device=probs.device) / 9.0
     x = probs
     for _ in range(iters):
-        x = F.conv2d(x, kernel, padding=1, groups=x.shape[1])
+        x = F.conv2d(x, kernel, padding=1, groups=channels)
     return x

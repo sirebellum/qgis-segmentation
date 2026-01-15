@@ -39,7 +39,8 @@ def main():
     model = MonolithicSegmenter(cfg.model).to(device)
     model.eval()
 
-    if args.synthetic or True:
+    use_synth = True  # Real data eval remains stubbed; synthetic path is default.
+    if use_synth:
         base_ds = SyntheticDataset(num_samples=2, with_elevation=cfg.data.allow_mixed_elevation)
     else:
         raise NotImplementedError("Real data eval not implemented")

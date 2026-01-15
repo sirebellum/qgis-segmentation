@@ -4,7 +4,7 @@ Copyright (c) 2026 Quant Civil
 -->
 # CODE_DESCRIPTION
 
-- Purpose: concise registry of modules and their current phase of stewardship.
+- Purpose: concise registry of modules and their current phase of stewardship (replaces CODE_SCRIPTURE.md).
 
 ## Runtime (Phase 0–2, stable)
 - segmenter.py / segmenter_dialog.py / segmenter_dialog_base.ui: QGIS UI + task dispatch; legacy K-Means/CNN inference only.
@@ -20,6 +20,12 @@ Copyright (c) 2026 Quant Civil
 - training/utils/: warp/gradients/resample/seed helpers.
 - training/train.py, eval.py: CLI runners (synthetic-ready, eager PyTorch).
 - training/tests/: pytest coverage (shapes, losses, synthetic smoke).
+
+## Training (Phase 4, hardening)
+- Elevation masks threaded through collate → FiLM gate; dropout preserved.
+- Fast smoothing fixed to depthwise kernel for arbitrary K; optional grad accumulation exposed in CLI/train loop.
+- Synthetic-first default retained; real raster IO still stubbed.
+- Docs aligned: ARCHITECTURE.md, MODEL_NOTES.md, training/README.md, training/MODEL_HISTORY.md.
 
 ## Notes
 - TorchScript export and QGIS runtime integration are intentionally out-of-scope for Phase 3.
