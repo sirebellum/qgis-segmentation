@@ -3,7 +3,7 @@ A [Quant Civil](https://www.quantcivil.ai) product
 
 ![image](https://github.com/sirebellum/qgis-segmentation/assets/25124443/898b5b91-830f-47b1-9300-ca173fe093de)
 
-Welcome to the plugin scripture!
+Welcome to the plugin description!
 
 Ever needed to intelligently divide your map into different sections? Have you been drawing polygons for days?
 Not anymore! Introducing the machine learning powered qgis plugin that will change your workflow.

@@ -50,3 +50,19 @@ Copyright (c) 2026 Quant Civil
   - compileall succeeded; no runtime tests run this phase.
 - Risks/Notes:
   - Latent doc references to autoencoder/chunked paths were scrubbed; future updates should add back only if new entrypoints are wired through Segmenter.
+
+## Phase 3 — Training Scaffolding (2026-01-15)
+- Intent: Add eager-PyTorch unsupervised training scaffold (variable-K model with optional elevation) without touching runtime inference.
+- Summary:
+  - Introduced training package: configs, data/augmentations (paired views, elevation dropout), synthetic dataset, monolithic model (encoder stride/4, FiLM elevation gate, soft k-means head, fast/learned refinement lanes), unsupervised losses/metrics, utilities, CLI train/eval runners.
+  - Added pytest coverage for shapes/losses/synthetic smoke training.
+  - Updated docs (training README, MODEL_HISTORY, MODEL_NOTES, ARCHITECTURE) and added CODE_DESCRIPTION for new modules.
+- Files Touched:
+  - Added: training/ (config.py, config_loader.py, train.py, eval.py, losses.py, metrics.py, data/, models/, utils/, tests/).
+  - Modified: training/README.md, training/MODEL_HISTORY.md, MODEL_NOTES.md, ARCHITECTURE.md, AGENTIC_HISTORY.md, CODE_DESCRIPTION.md.
+- Commands:
+  - Not run in this phase: compileall/pytest (instructions provided in docs for future execution).
+- Validation:
+  - Static reasoning on shapes/contracts; synthetic-focused tests included but not executed here.
+- Risks/Notes:
+  - Real raster IO remains a stub (rasterio optional); runtime integration deferred; TorchScript export intentionally omitted.

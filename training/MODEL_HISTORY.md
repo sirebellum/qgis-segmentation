@@ -14,3 +14,10 @@ Copyright (c) 2026 Quant Civil
 
 ## Future entries
 - Add dated sections noting: config, loss mix, augmentations, hardware, metrics, and any regressions/improvements.
+
+### 2026-01-15 — Next-gen unsupervised scaffold
+- Config: default in `training/config.py` (K randomized in [2,16], soft k-means head, FiLM elevation gate, stride/4 embeddings).
+- Loss mix: consistency (symmetric KL), entropy min/max (pixel vs marginal), edge-aware smoothness.
+- Data: synthetic paired views with optional elevation + dropout; geometry shared; photometric jitter per view.
+- Metrics tracked: cluster utilization, speckle, boundary density, view consistency.
+- Notes: eager PyTorch only; refinement lanes (fast box blur, learned conv stub) selectable by knob.

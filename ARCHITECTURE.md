@@ -36,3 +36,9 @@ Copyright (c) 2026 Quant Civil
 - Batch/tiling: `_recommended_batch_size` respects `memory_budget` and prefetch depth; `_prefetch_batches` uses threads or CUDA streams.
 - Cancellation: `CancellationToken` checked via `_maybe_raise_cancel` across loops; task cancel cancels token and updates UI.
 - Logging/progress: worker emits status strings parsed by `_maybe_update_progress_from_message` to keep UI progress bar moving; history buffered in dialog log.
+
+## Training scaffolding (isolated)
+- Location: [training/](training) (pure PyTorch, eager mode). Not wired into QGIS runtime.
+- Components: config dataclasses, synthetic/optional raster datasets with paired-view augmentations, monolithic model (encoder stride/4, elevation FiLM injection, soft k-means head, fast/learned refinement lanes), unsupervised losses (consistency, entropy shaping, edge-aware smoothness), proxy metrics, CLI train/eval runners.
+- Contract: forward(rgb, K, elev?) → probabilities [B,K,512,512] (K ≤ 16) + embeddings stride/4; elevation optional and gated.
+- CLI: `python -m training.train --synthetic --steps 3` for smoke training; `python -m training.eval --synthetic` for proxy metrics.

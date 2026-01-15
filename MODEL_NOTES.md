@@ -27,3 +27,8 @@ Copyright (c) 2026 Quant Civil
   - Define augmentation strategy suitable for unlabeled data (e.g., color jitter, random crops/rotations).
   - Add evaluation hooks for proxy metrics (e.g., feature diversity, clustering stability) once design settles.
   - Record architecture/loss choices in `training/MODEL_HISTORY.md` as experiments proceed.
+
+## Next-gen training pipeline (unsupervised — scaffolding)
+- Model contract: monolithic eager-PyTorch model taking RGB (B,3,512,512) and optional elevation (B,1,512,512), producing per-pixel probabilities P ∈ [B,K,512,512] with K ∈ [2,16]; embeddings stride/4 (B,D,128,128); FiLM-like elevation injection at latent stage; differentiable soft k-means/EM head with configurable iterations; two refinement lanes (fast deterministic smoothing + learned conv stub).
+- Losses: two-view consistency (symmetric KL on warped probabilities), entropy shaping (pixel entropy minimization + marginal entropy maximization for cluster utilization), edge-aware smoothness weighted by RGB gradients (optionally elevation gradients).
+- Knobs: per-batch random K, downsample factor, cluster_iters, smooth_iters, smoothing lane; elevation dropout even when elevation is present. Training remains isolated from QGIS runtime (no TorchScript export required in this phase).
