@@ -1,3 +1,7 @@
+"""
+SPDX-License-Identifier: BSD-3-Clause
+Copyright (c) 2026 Quant Civil
+"""
 import json
 import time
 
@@ -14,6 +18,7 @@ from funcs import (
     get_adaptive_settings,
     _normalize_cluster_labels,
 )
+from model import load_runtime_model
 from perf_tuner import load_or_profile_settings, ProfilePayload, _run_profile
 from raster_utils import ensure_channel_first
 
@@ -243,6 +248,72 @@ def test_tile_raster_shape_preservation(
     assert height_pad == expected_height_pad
     assert width_pad == expected_width_pad
     assert tiles.shape == expected_tile_shape
+
+
+def test_runtime_numpy_smoke(tmp_path):
+    meta = {
+        "version": "test",
+        "max_k": 4,
+        "embed_dim": 4,
+        "temperature": 1.0,
+        "cluster_iters_default": 2,
+        "smooth_iters_default": 0,
+        "input_mean": [0.0, 0.0, 0.0],
+        "input_std": [1.0, 1.0, 1.0],
+        "input_scale": 1.0,
+        "stride": 4,
+        "supports_elevation": False,
+        "supports_learned_refine": False,
+    }
+    weights = {
+        "stem.conv1.weight": np.zeros((2, 3, 3, 3), dtype=np.float32),
+        "stem.conv1.bias": np.zeros((2,), dtype=np.float32),
+        "stem.bn1.weight": np.ones((2,), dtype=np.float32),
+        "stem.bn1.bias": np.zeros((2,), dtype=np.float32),
+        "stem.bn1.running_mean": np.zeros((2,), dtype=np.float32),
+        "stem.bn1.running_var": np.ones((2,), dtype=np.float32),
+        "stem.conv2.weight": np.zeros((4, 2, 3, 3), dtype=np.float32),
+        "stem.conv2.bias": np.zeros((4,), dtype=np.float32),
+        "stem.bn2.weight": np.ones((4,), dtype=np.float32),
+        "stem.bn2.bias": np.zeros((4,), dtype=np.float32),
+        "stem.bn2.running_mean": np.zeros((4,), dtype=np.float32),
+        "stem.bn2.running_var": np.ones((4,), dtype=np.float32),
+        "block1.conv1.weight": np.zeros((4, 4, 3, 3), dtype=np.float32),
+        "block1.conv1.bias": np.zeros((4,), dtype=np.float32),
+        "block1.bn1.weight": np.ones((4,), dtype=np.float32),
+        "block1.bn1.bias": np.zeros((4,), dtype=np.float32),
+        "block1.bn1.running_mean": np.zeros((4,), dtype=np.float32),
+        "block1.bn1.running_var": np.ones((4,), dtype=np.float32),
+        "block1.conv2.weight": np.zeros((4, 4, 3, 3), dtype=np.float32),
+        "block1.conv2.bias": np.zeros((4,), dtype=np.float32),
+        "block1.bn2.weight": np.ones((4,), dtype=np.float32),
+        "block1.bn2.bias": np.zeros((4,), dtype=np.float32),
+        "block1.bn2.running_mean": np.zeros((4,), dtype=np.float32),
+        "block1.bn2.running_var": np.ones((4,), dtype=np.float32),
+        "block2.conv1.weight": np.zeros((4, 4, 3, 3), dtype=np.float32),
+        "block2.conv1.bias": np.zeros((4,), dtype=np.float32),
+        "block2.bn1.weight": np.ones((4,), dtype=np.float32),
+        "block2.bn1.bias": np.zeros((4,), dtype=np.float32),
+        "block2.bn1.running_mean": np.zeros((4,), dtype=np.float32),
+        "block2.bn1.running_var": np.ones((4,), dtype=np.float32),
+        "block2.conv2.weight": np.zeros((4, 4, 3, 3), dtype=np.float32),
+        "block2.conv2.bias": np.zeros((4,), dtype=np.float32),
+        "block2.bn2.weight": np.ones((4,), dtype=np.float32),
+        "block2.bn2.bias": np.zeros((4,), dtype=np.float32),
+        "block2.bn2.running_mean": np.zeros((4,), dtype=np.float32),
+        "block2.bn2.running_var": np.ones((4,), dtype=np.float32),
+        "seed_proj.weight": np.zeros((4, 4, 1, 1), dtype=np.float32),
+        "seed_proj.bias": np.zeros((4,), dtype=np.float32),
+    }
+    model_dir = tmp_path / "best"
+    model_dir.mkdir(parents=True, exist_ok=True)
+    np.savez(model_dir / "model.npz", **weights)
+    (model_dir / "meta.json").write_text(json.dumps(meta))
+    runtime = load_runtime_model(str(model_dir))
+    rgb = np.ones((3, 32, 32), dtype=np.float32)
+    labels = runtime.predict_labels(rgb, k=3)
+    assert labels.shape == (32, 32)
+    assert labels.max() == 0
 @pytest.mark.performance
 def test_predict_cnn_gpu_prefetch_throughput(gpu_metric_recorder, tmp_path):
     device = _available_gpu_device()

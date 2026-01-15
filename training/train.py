@@ -19,6 +19,7 @@ from .data.naip_3dep_dataset import build_dataset_from_manifest
 from .data.synthetic import SyntheticDataset
 from .losses import total_loss
 from .models.model import MonolithicSegmenter
+from .export import export_numpy_artifacts
 from .utils.seed import set_seed
 
 
@@ -83,6 +84,9 @@ def main():
     parser.add_argument("--logdir", type=str, default=None, help="TensorBoard log directory (default: checkpoint_dir/tb or runs/train)")
     parser.add_argument("--manifest", type=str, default=None, help="Path to NAIP/3DEP manifest.jsonl")
     parser.add_argument("--max-samples", type=int, default=None, help="Optional limit on samples for smoke runs")
+    parser.add_argument("--export-best-to", type=str, default="model/best", help="Directory to write best-model numpy artifacts")
+    parser.add_argument("--export-training-mirror", type=str, default="training/best_model", help="Mirror directory for training-ledger copy")
+    parser.add_argument("--no-export", action="store_true", help="Disable numpy export (useful for profiling-only runs)")
     args = parser.parse_args()
 
     cfg = load_config(args.config)
@@ -122,6 +126,7 @@ def main():
     micro_step = 0
     loader_iter = iter(loader)
     opt.zero_grad(set_to_none=True)
+    best_score = float("inf")
 
     while step < target_steps:
         try:
@@ -215,6 +220,23 @@ def main():
             writer.add_scalar("hparams/smooth_iters", smooth_iters, step)
             writer.add_scalar("hparams/downsample", downsample, step)
             writer.add_scalar("hparams/grad_accum", accum, step)
+
+            if not args.no_export:
+                current_score = msg["loss"]
+                if current_score < best_score:
+                    best_score = current_score
+                    try:
+                        export_numpy_artifacts(
+                            model.state_dict(),
+                            cfg,
+                            score=current_score,
+                            step=step,
+                            out_dir=args.export_best_to,
+                            mirror_dir=args.export_training_mirror,
+                        )
+                        print(json.dumps({"event": "export_best", "score": current_score, "step": step}))
+                    except Exception as exc:  # pragma: no cover - best-effort export
+                        print(json.dumps({"event": "export_failed", "error": str(exc)}))
 
             # Images: input RGB and float probability map (first 3 channels padded if needed)
             rgb_vis = v1_rgb[0].detach().cpu().clamp(0, 1)

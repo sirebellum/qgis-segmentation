@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Quant Civil
 """
 /***************************************************************************
  Segmenter
@@ -62,8 +64,10 @@ import numpy as np
 from .funcs import (
     legacy_kmeans_segmentation,
     legacy_cnn_segmentation,
+    predict_nextgen_numpy,
     SegmentationCanceled,
 )
+from .model import load_runtime_model
 from .qgis_funcs import render_raster
 
 TILE_SIZE = 512
@@ -326,6 +330,7 @@ class Segmenter:
         self._progress_stage = "idle"
         self._profiling_thread = None
         self._profiling_ready = False
+        self.nextgen_model_dir = os.path.join(self.plugin_dir, "model", "best")
 
     # noinspection PyMethodMayBeStatic
     def tr(self, message):
@@ -881,6 +886,21 @@ class Segmenter:
                 heuristic_overrides,
                 resolution_label,
             )
+        elif self.model == "nextgen":
+            model_dir = self.nextgen_model_dir
+            if not os.path.isdir(model_dir):
+                self.log_status(f"Next-gen model artifacts not found at {model_dir}. Run training with export enabled.")
+                self._reset_progress_bar()
+                return
+            func = predict_nextgen_numpy
+            model_provider = lambda: self.load_nextgen_runtime(model_dir)
+            args = (
+                model_provider,
+                raster_source,
+                num_segments,
+                TILE_SIZE,
+                self.worker_status,
+            )
         else:
             self.log_status(f"Unsupported model selection: {self.model}")
             self._reset_progress_bar()
@@ -911,13 +931,21 @@ class Segmenter:
 
         return model
 
+    def load_nextgen_runtime(self, model_dir: Optional[str] = None):
+        target = model_dir or self.nextgen_model_dir
+        try:
+            return load_runtime_model(target, status_callback=self.log_status)
+        except FileNotFoundError as exc:
+            self.log_status(str(exc))
+            raise
+
     # Process user input box
     def submit(self):
         return
 
     #  Display models in dropdown
     def render_models(self):
-        model_list = ["K-Means", "CNN"]
+        model_list = ["K-Means", "CNN", "Next-Gen (Numpy)"]
         self.dlg.inputLoadModel.clear()
         for model in model_list:
             self.dlg.inputLoadModel.addItem(model)
@@ -973,6 +1001,8 @@ class Segmenter:
             self.model = "kmeans"
         elif model == "CNN":
             self.model = "cnn"
+        elif model == "Next-Gen (Numpy)":
+            self.model = "nextgen"
 
     def _is_supported_raster_layer(self, layer):
         if not isinstance(layer, QgsRasterLayer):

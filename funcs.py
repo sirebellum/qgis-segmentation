@@ -1,3 +1,7 @@
+"""
+SPDX-License-Identifier: BSD-3-Clause
+Copyright (c) 2026 Quant Civil
+"""
 import itertools
 import math
 import os
@@ -257,6 +261,54 @@ def legacy_cnn_segmentation(
         cancel_token=cancel_token,
     )
     return _apply_legacy_blur(labels, blur_config, status_callback, cancel_token=cancel_token)
+
+
+def predict_nextgen_numpy(
+    model_loader: Callable[[], Any],
+    array,
+    num_segments: int,
+    tile_size: int,
+    status_callback=None,
+    cancel_token=None,
+):
+    """Numpy-only runtime path for the next-gen model.
+
+    Args:
+        model_loader: callable returning an initialized NumpySegmenter.
+        array: raster source (np.ndarray or path).
+        num_segments: requested K (clipped to model max).
+        tile_size: tiling size in pixels.
+    """
+    _emit_status(status_callback, "Running next-gen numpy segmentation...")
+    raster = _materialize_raster(array)
+    _maybe_raise_cancel(cancel_token)
+    model = model_loader()
+    tiles, (height_pad, width_pad), grid_shape = tile_raster(raster, tile_size)
+    rows, cols = grid_shape
+    h_src, w_src = raster.shape[1], raster.shape[2]
+    full_h = rows * tile_size
+    full_w = cols * tile_size
+    canvas = np.zeros((full_h, full_w), dtype=np.uint8)
+    total_tiles = tiles.shape[0]
+    last_report = -1
+
+    for idx, tile in enumerate(tiles):
+        _maybe_raise_cancel(cancel_token)
+        tile_float = tile.astype(np.float32, copy=False)
+        labels_tile = model.predict_labels(tile_float, k=num_segments)
+        r = idx // cols
+        c = idx % cols
+        y0 = r * tile_size
+        x0 = c * tile_size
+        canvas[y0 : y0 + tile_size, x0 : x0 + tile_size] = labels_tile
+        percent = int(((idx + 1) / max(total_tiles, 1)) * 100)
+        if percent // 5 > last_report:
+            last_report = percent // 5
+            _emit_status(status_callback, f"Next-gen numpy inference {percent}% complete.")
+
+    result = canvas[: h_src, : w_src]
+    _emit_status(status_callback, "Next-gen numpy segmentation complete.")
+    return result
 
 DEFAULT_MEMORY_BUDGET = 128 * 1024 * 1024
 

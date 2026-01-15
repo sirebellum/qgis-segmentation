@@ -99,3 +99,19 @@ Copyright (c) 2026 Quant Civil
   - compileall succeeded; manifest loader test not executed due to missing pytest binary in PATH/system interpreter.
 - Risks/Notes:
   - Requires GDAL CLI availability and network access to TNM; DEM tier fallback applied when 1 m unavailable. PyYAML needed for YAML configs; pytest missing in system interpreter (install to run tests).
+
+## Phase 6 — NextGen Numpy Runtime Wiring (2026-01-15)
+- Intent: Begin runtime integration of the variable-K model via a numpy-only path and auto-export best checkpoints to `model/best` without breaking legacy K-Means/CNN flows.
+- Summary:
+  - Added numpy runtime (`model/runtime_numpy.py`, `model/__init__.py`) plus smoke script and packaging updates; plugin exposes "Next-Gen (Numpy)" option and dispatches through `predict_nextgen_numpy` with graceful missing-artifact messaging.
+  - Training now tracks best loss and exports numpy artifacts via `training/export.py`, writing to `model/best` and `training/best_model`; new artifact contract documented in `model/README.md`.
+  - Added dummy runtime test in `func_test.py`; ignored bulky training artifacts in `.gitignore`; updated pb_tool to ship runtime module.
+- Files Touched:
+  - Added: model/__init__.py, model/runtime_numpy.py, model/README.md, scripts/smoke_runtime_nextgen.py, training/export.py.
+  - Modified: segmenter.py, funcs.py, training/train.py, func_test.py, pb_tool.cfg, .gitignore, CODE_DESCRIPTION.md, MODEL_NOTES.md, ARCHITECTURE.md.
+- Commands:
+  - Not run in this phase (pending user confirmation and environment constraints).
+- Validation:
+  - Static reasoning only; added unit smoke for numpy runtime (not executed here). Legacy tests not re-run.
+- Risks/Notes:
+  - Numpy runtime may be slow on large rasters; learned refine/elevation unsupported in this phase. Legacy TorchScript weights still required for CNN mode; next-gen artifacts must be exported via training CLI before use.

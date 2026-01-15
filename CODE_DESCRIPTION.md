@@ -6,11 +6,13 @@ Copyright (c) 2026 Quant Civil
 
 - Purpose: concise registry of modules and their current phase of stewardship (replaces CODE_SCRIPTURE.md).
 
-## Runtime (Phase 0–2, stable)
-- segmenter.py / segmenter_dialog.py / segmenter_dialog_base.ui: QGIS UI + task dispatch; legacy K-Means/CNN inference only.
-- funcs.py: numerical engine (tiling, clustering, latent KNN, blur); dependency/perf helpers live alongside.
+## Runtime (Phase 0–6)
+- segmenter.py / segmenter_dialog.py / segmenter_dialog_base.ui: QGIS UI + task dispatch; legacy K-Means/CNN inference; routes "Next-Gen (Numpy)" option to runtime loader.
+- funcs.py: numerical engine (tiling, clustering, latent KNN, blur); dependency/perf helpers; includes `predict_nextgen_numpy` for numpy runtime.
 - qgis_funcs.py: GDAL render to GeoTIFF + layer registration.
 - dependency_manager.py / perf_tuner.py / raster_utils.py: bootstrap + profiling + array utilities.
+- model/runtime_numpy.py: numpy-only runtime for next-gen variable-K model consuming `model/best` artifacts (no torch import).
+- model/README.md: artifact contract + producer/consumer notes for runtime.
 
 ## Training (Phase 3, scaffolding)
 - training/config.py, config_loader.py: dataclass configs + python-loader overrides.
@@ -33,6 +35,11 @@ Copyright (c) 2026 Quant Civil
 - configs/datasets/naip_3dep_example.yaml: sample manifest-driven config (PyYAML optional, python configs still supported).
 - Docs added: docs/DATASETS.md, docs/TRAINING_PIPELINE.md.
 
+## Training (Phase 6, export to runtime)
+- training/export.py: converts MonolithicSegmenter checkpoints to numpy artifacts (`model.npz`, `meta.json`, `metrics.json`).
+- training/train.py: tracks best loss and auto-exports to `model/best` and `training/best_model` (configurable; can disable with `--no-export`).
+- func_test.py: includes dummy runtime smoke test for numpy loader.
+
 ## Notes
-- TorchScript export and QGIS runtime integration are intentionally out-of-scope for Phase 3.
+- TorchScript export remains optional; legacy CNN path still uses TorchScript weights if present.
 - Real raster IO is stubbed behind optional rasterio/gdal; synthetic paths remain the CI-safe default.

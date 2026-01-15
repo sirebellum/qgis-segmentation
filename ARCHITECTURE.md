@@ -9,11 +9,11 @@ Copyright (c) 2026 Quant Civil
 ## End-to-end flow
 - User opens dialog from plugin action in [segmenter.py](segmenter.py); UI defined by [segmenter_dialog_base.ui](segmenter_dialog_base.ui) and loaded via [segmenter_dialog.py](segmenter_dialog.py).
 - `Segmenter.predict()` validates 3-band GDAL raster selection, parses segments/resolution/heuristics, and dispatches a `QgsTask` via `run_task()`.
-- Task runs `legacy_kmeans_segmentation()` or `legacy_cnn_segmentation()` (both in [funcs.py](funcs.py)) with cancellation token + progress callbacks.
+- Task runs `legacy_kmeans_segmentation()`, `legacy_cnn_segmentation()`, or `predict_nextgen_numpy()` (all in [funcs.py](funcs.py)) with cancellation token + progress callbacks.
 - Segmentation outputs are blurred (optional) then rendered to a temporary GeoTIFF with source extent/CRS through [qgis_funcs.py](qgis_funcs.py) `render_raster()` and added to the QGIS project.
 
 ## Module responsibilities
-- [segmenter.py](segmenter.py): plugin entrypoint; menu/toolbar wiring; dialog lifecycle; progress bar/status logging; model selection; heuristic overrides; `QgsTask` wrapper; TorchScript loader from `models/model_<resolution>.pth`; triggers adaptive profiling.
+- [segmenter.py](segmenter.py): plugin entrypoint; menu/toolbar wiring; dialog lifecycle; progress bar/status logging; model selection; heuristic overrides; `QgsTask` wrapper; TorchScript loader from `models/model_<resolution>.pth`; optional next-gen numpy loader from `model/best`; triggers adaptive profiling.
 - [segmenter_dialog.py](segmenter_dialog.py) / [segmenter_dialog_base.ui](segmenter_dialog_base.ui): Qt dialog shell and widgets (layer/model/resolution selectors, sliders, progress/log, buttons).
 - [funcs.py](funcs.py): numerical engine. Raster/materialization, K-Means path (`predict_kmeans`), CNN tiling/batching/prefetch (`predict_cnn`), latent KNN refinement, blur, and cancellation helpers.
 - [qgis_funcs.py](qgis_funcs.py): writes numpy labels to temp GeoTIFF and registers a `QgsRasterLayer` with opacity preserved.
@@ -21,6 +21,8 @@ Copyright (c) 2026 Quant Civil
 - [perf_tuner.py](perf_tuner.py): profiles device throughput once to select `AdaptiveSettings` (safety factor/prefetch); caches JSON at `perf_profile.json`; integrates with `predict_cnn`.
 - [raster_utils.py](raster_utils.py): `ensure_channel_first` utility for GDAL writes.
 - [models/](models): TorchScript CNN weights (`model_4.pth`, `model_8.pth`, `model_16.pth`) consumed by `Segmenter.load_model()`.
+- [model/runtime_numpy.py](model/runtime_numpy.py): numpy-only runtime for the next-gen variable-K model (no torch import) consuming `model/best` artifacts.
+- [model/README.md](model/README.md): artifact contract and producer/consumer notes for the numpy runtime.
 - [metadata.txt](metadata.txt): QGIS plugin metadata (name, version 2.2.1, author, tracker/homepage).
 
 ## Key extension points / config
@@ -38,7 +40,8 @@ Copyright (c) 2026 Quant Civil
 - Logging/progress: worker emits status strings parsed by `_maybe_update_progress_from_message` to keep UI progress bar moving; history buffered in dialog log.
 
 ## Training scaffolding (isolated)
-- Location: [training/](training) (pure PyTorch, eager mode). Not wired into QGIS runtime.
+- Location: [training/](training) (pure PyTorch, eager mode). Not wired into QGIS runtime; exports numpy artifacts for runtime pickup.
 - Components: config dataclasses, synthetic/optional raster datasets with paired-view augmentations, monolithic model (encoder stride/4, elevation FiLM injection with per-sample masks, soft k-means head, fast/learned refinement lanes), unsupervised losses (consistency, entropy shaping, edge-aware smoothness), proxy metrics, CLI train/eval runners.
+- Export: `training/export.py` writes best checkpoint weights to `model/best` and `training/best_model` as `model.npz` + `meta.json` + `metrics.json` when training loss improves (unless `--no-export`).
 - Contract: forward(rgb, K, elev?) → probabilities [B,K,512,512] (K ≤ 16) + embeddings stride/4; elevation optional and gated.
 - CLI: `python -m training.train --synthetic --steps 3 --grad-accum 2` for smoke training; `python -m training.eval --synthetic` for proxy metrics.

@@ -120,3 +120,11 @@ pytestdebug.log
 zip_build/
 vendor/
 perf_profile.json
+
+# Training artifacts
+training/checkpoints/
+training/runs/
+training/data/
+training/datasets/
+data/naip_3dep/
+scripts/data/output/
