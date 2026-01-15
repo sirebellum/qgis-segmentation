@@ -21,7 +21,11 @@ def apply_warp(tensor: torch.Tensor, grid: torch.Tensor) -> torch.Tensor:
         return tensor
     if tensor.dim() != 4:
         raise ValueError("apply_warp expects 4D tensor")
-    return F.grid_sample(tensor, grid, mode="bilinear", padding_mode="border", align_corners=False)
+    padding_mode = "border"
+    if tensor.device.type == "mps":
+        # MPS backend does not support border padding; fall back to zeros for compatibility.
+        padding_mode = "zeros"
+    return F.grid_sample(tensor, grid, mode="bilinear", padding_mode=padding_mode, align_corners=False)
 
 
 def identity_grid(height: int, width: int, device: torch.device, batch: int) -> torch.Tensor:
