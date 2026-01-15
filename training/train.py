@@ -15,6 +15,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from .config_loader import load_config
 from .data.dataset import UnsupervisedRasterDataset
+from .data.naip_3dep_dataset import build_dataset_from_manifest
 from .data.synthetic import SyntheticDataset
 from .losses import total_loss
 from .models.model import MonolithicSegmenter
@@ -58,12 +59,15 @@ def _collate(batch: list[Dict]) -> Dict:
     }
 
 
-def build_dataloader(cfg, synthetic: bool, with_elev: bool) -> DataLoader:
+def build_dataloader(cfg, synthetic: bool, with_elev: bool, manifest_path: Optional[str] = None) -> DataLoader:
     if synthetic:
         base_ds = SyntheticDataset(num_samples=cfg.train.batch_size * 2, with_elevation=with_elev)
+        wrapped = UnsupervisedRasterDataset(base_ds.samples, cfg.data, cfg.aug)
     else:
-        raise NotImplementedError("Real raster loading not wired in this phase")
-    wrapped = UnsupervisedRasterDataset(base_ds.samples, cfg.data, cfg.aug)
+        if manifest_path:
+            cfg.data.manifest_path = manifest_path
+        base_ds = build_dataset_from_manifest(cfg.data, cfg.aug)
+        wrapped = base_ds
     return DataLoader(wrapped, batch_size=cfg.train.batch_size, shuffle=True, collate_fn=_collate)
 
 
@@ -77,6 +81,8 @@ def main():
     parser.add_argument("--grad-accum", type=int, default=None, help="Gradient accumulation steps")
     parser.add_argument("--checkpoint_dir", type=str, default=None)
     parser.add_argument("--logdir", type=str, default=None, help="TensorBoard log directory (default: checkpoint_dir/tb or runs/train)")
+    parser.add_argument("--manifest", type=str, default=None, help="Path to NAIP/3DEP manifest.jsonl")
+    parser.add_argument("--max-samples", type=int, default=None, help="Optional limit on samples for smoke runs")
     args = parser.parse_args()
 
     cfg = load_config(args.config)
@@ -85,6 +91,10 @@ def main():
     if args.grad_accum:
         cfg.train.grad_accum = max(1, args.grad_accum)
     cfg.train.amp = bool(args.amp)
+    if args.manifest:
+        cfg.data.manifest_path = args.manifest
+    if args.max_samples is not None:
+        cfg.data.max_samples = args.max_samples
     set_seed(args.seed)
 
     device = _device()
@@ -92,9 +102,12 @@ def main():
     opt = torch.optim.Adam(model.parameters(), lr=cfg.train.lr, weight_decay=cfg.train.weight_decay)
     scaler = torch.cuda.amp.GradScaler(enabled=cfg.train.amp and device.type == "cuda")
 
-    # Real raster loading is still stubbed; default to synthetic unless explicitly replaced later.
-    use_synth = True  # Real raster loading is stubbed; synthetic remains the default path.
-    loader = build_dataloader(cfg, synthetic=use_synth, with_elev=cfg.data.allow_mixed_elevation)
+    use_synth = not bool(cfg.data.manifest_path)
+    if cfg.data.manifest_path:
+        print(f"Loading NAIP/3DEP manifest dataset: {cfg.data.manifest_path}")
+    else:
+        print("Using synthetic dataset (manifest not provided)")
+    loader = build_dataloader(cfg, synthetic=use_synth, with_elev=cfg.data.allow_mixed_elevation, manifest_path=cfg.data.manifest_path)
 
     run_root = Path(args.checkpoint_dir) if args.checkpoint_dir else Path("runs") / "train"
     run_root.mkdir(parents=True, exist_ok=True)

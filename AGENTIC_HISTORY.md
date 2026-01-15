@@ -82,3 +82,20 @@ Copyright (c) 2026 Quant Civil
   - Static inspection of tensor shapes, mask broadcasting, grad-accum loop; existing pytest suite expected to cover shapes/losses/smoke.
 - Risks/Notes:
   - Real raster IO still stubbed; dataloader masks assume consistent spatial dims. Synthetic-first stance maintained until real data backend is implemented.
+
+## Phase 5 — NAIP/3DEP Data Scaffolding (2026-01-15)
+- Intent: Add NAIP RGB + 3DEP DEM dataset prep CLI, manifest loader wiring, and docs without touching runtime inference.
+- Summary:
+  - Added GDAL/TNM helpers and `scripts/data/prepare_naip_3dep_dataset.py` to query TNM, download/mosaic/clip, reproject to UTM, align DEM to NAIP with -tap, tile 512x512/stride 128, and emit manifest.jsonl.
+  - Introduced `training/data/naip_3dep_dataset.py` manifest loader with per-tile DEM standardization and hooked manifest loading into `training.train` (YAML config support in config_loader; PyYAML optional but listed in requirements).
+  - Added sample config `configs/datasets/naip_3dep_example.yaml`, docs (`docs/DATASETS.md`, `docs/TRAINING_PIPELINE.md`), and loader unit test scaffold.
+- Files Touched:
+  - Added: scripts/data/_gdal_utils.py, scripts/data/_usgs_tnm_provider.py, scripts/data/prepare_naip_3dep_dataset.py, training/data/naip_3dep_dataset.py, configs/datasets/naip_3dep_example.yaml, docs/DATASETS.md, docs/TRAINING_PIPELINE.md, training/tests/test_naip_3dep_manifest_loader.py.
+  - Modified: training/config.py, training/config_loader.py, training/train.py, training/README.md, requirements.txt, CODE_DESCRIPTION.md.
+- Commands:
+  - python -m compileall . (pass)
+  - python -m pytest training/tests/test_naip_3dep_manifest_loader.py -q (failed: No module named pytest in system Python)
+- Validation:
+  - compileall succeeded; manifest loader test not executed due to missing pytest binary in PATH/system interpreter.
+- Risks/Notes:
+  - Requires GDAL CLI availability and network access to TNM; DEM tier fallback applied when 1 m unavailable. PyYAML needed for YAML configs; pytest missing in system interpreter (install to run tests).

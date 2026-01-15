@@ -30,6 +30,10 @@ Copyright (c) 2026 Quant Civil
 	- Launch with `tensorboard --logdir /tmp/seg_ckpt/tb --port 6006` and open http://localhost:6006.
 	- Images include the input RGB tile and the output float probability map (no argmax/clustering applied).
 
+### Manifest-backed (NAIP + 3DEP) smoke path
+- Prepare data with `python scripts/data/prepare_naip_3dep_dataset.py --output-dir /tmp/naip3dep --dry-run` then run without `--dry-run`.
+- Train on manifest: `python -m training.train --config configs/datasets/naip_3dep_example.yaml --steps 1 --amp 0 --checkpoint_dir /tmp/seg_ckpt`.
+
 ## Knobs & randomness
 - Per-batch randomization: `K ∈ {2,4,8,16}`, downsample factor {1,2}, cluster iters range, smooth iters range, smoothing lane choice.
 - Elevation dropout applies even when elevation is present; per-sample masks are carried into FiLM gating and losses.

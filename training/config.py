@@ -30,6 +30,10 @@ class DataConfig:
     elevation_dropout: float = 0.3
     allow_mixed_elevation: bool = True
     backend: str = "gdal"  # placeholder hint; dataset handles availability
+    manifest_path: Optional[str] = None
+    standardize_elevation: bool = True
+    elevation_eps: float = 1e-3
+    max_samples: Optional[int] = None
 
 
 @dataclass

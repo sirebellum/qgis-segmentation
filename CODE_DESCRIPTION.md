@@ -27,6 +27,12 @@ Copyright (c) 2026 Quant Civil
 - Synthetic-first default retained; real raster IO still stubbed.
 - Docs aligned: ARCHITECTURE.md, MODEL_NOTES.md, training/README.md, training/MODEL_HISTORY.md.
 
+## Training (Phase 5, NAIP/3DEP scaffolding)
+- scripts/data/prepare_naip_3dep_dataset.py + helpers: TNM discovery, GDAL-based mosaic/clip/reproject, DEM-to-RGB alignment, tiling, manifest.jsonl.
+- training/data/naip_3dep_dataset.py: manifest reader + elevation standardization over rasterio; reusable for other manifest-based paired rasters.
+- configs/datasets/naip_3dep_example.yaml: sample manifest-driven config (PyYAML optional, python configs still supported).
+- Docs added: docs/DATASETS.md, docs/TRAINING_PIPELINE.md.
+
 ## Notes
 - TorchScript export and QGIS runtime integration are intentionally out-of-scope for Phase 3.
 - Real raster IO is stubbed behind optional rasterio/gdal; synthetic paths remain the CI-safe default.
