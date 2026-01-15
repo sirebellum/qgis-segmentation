@@ -15,12 +15,11 @@ Copyright (c) 2026 Quant Civil
 ## Module responsibilities
 - [segmenter.py](segmenter.py): plugin entrypoint; menu/toolbar wiring; dialog lifecycle; progress bar/status logging; model selection; heuristic overrides; `QgsTask` wrapper; TorchScript loader from `models/model_<resolution>.pth`; triggers adaptive profiling.
 - [segmenter_dialog.py](segmenter_dialog.py) / [segmenter_dialog_base.ui](segmenter_dialog_base.ui): Qt dialog shell and widgets (layer/model/resolution selectors, sliders, progress/log, buttons).
-- [funcs.py](funcs.py): numerical engine. Raster/materialization, K-Means path (`predict_kmeans`), CNN tiling/batching/prefetch (`predict_cnn`), latent KNN refinement, chunk smoothing, overlap blending, chunk planning helpers, blur, cancellation helpers, and optional texture autoencoder hooks.
+- [funcs.py](funcs.py): numerical engine. Raster/materialization, K-Means path (`predict_kmeans`), CNN tiling/batching/prefetch (`predict_cnn`), latent KNN refinement, blur, and cancellation helpers.
 - [qgis_funcs.py](qgis_funcs.py): writes numpy labels to temp GeoTIFF and registers a `QgsRasterLayer` with opacity preserved.
 - [dependency_manager.py](dependency_manager.py): on-demand vendor install of torch/numpy/scikit-learn into `vendor/`, honoring env toggles (`SEGMENTER_*`), retries CPU wheels on CUDA failure.
 - [perf_tuner.py](perf_tuner.py): profiles device throughput once to select `AdaptiveSettings` (safety factor/prefetch); caches JSON at `perf_profile.json`; integrates with `predict_cnn`.
 - [raster_utils.py](raster_utils.py): `ensure_channel_first` utility for GDAL writes.
-- [autoencoder_utils.py](autoencoder_utils.py): optional texture autoencoder for grayscale remap; not used in legacy path but available to `execute_*` helpers.
 - [models/](models): TorchScript CNN weights (`model_4.pth`, `model_8.pth`, `model_16.pth`) consumed by `Segmenter.load_model()`.
 - [metadata.txt](metadata.txt): QGIS plugin metadata (name, version 2.2.1, author, tracker/homepage).
 
@@ -34,6 +33,6 @@ Copyright (c) 2026 Quant Civil
 
 ## Runtime/perf notes
 - GPU/CPU selection: prefers CUDA, then MPS, else CPU in [segmenter.py](segmenter.py); `funcs._coerce_torch_device` ensures safe device objects.
-- Batch/tiling: `_recommended_batch_size` respects `memory_budget` and prefetch depth; `_prefetch_batches` uses threads or CUDA streams; `_derive_chunk_size` (for chunk plan helpers) scales tile size using free VRAM ratios.
+- Batch/tiling: `_recommended_batch_size` respects `memory_budget` and prefetch depth; `_prefetch_batches` uses threads or CUDA streams.
 - Cancellation: `CancellationToken` checked via `_maybe_raise_cancel` across loops; task cancel cancels token and updates UI.
 - Logging/progress: worker emits status strings parsed by `_maybe_update_progress_from_message` to keep UI progress bar moving; history buffered in dialog log.

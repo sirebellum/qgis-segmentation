@@ -17,7 +17,7 @@
 
 ## Performance Tooling
 - [../perf_tuner.py](../perf_tuner.py) (`load_or_profile_settings()`) profiles GPU throughput once and caches results in `perf_profile.json`. Honor `SEGMENTER_SKIP_PROFILING` before launching the thread, and surface user-facing summaries via `Segmenter.log_status()`.
-- Memory-aware tiling relies on `_derive_chunk_size()` and `_ChunkAggregator` helpers; if you alter tiling math, update `recommended_chunk_plan()` and the associated tests in [../func_test.py](../func_test.py).
+- Memory-aware tiling is handled by `predict_cnn()` via `_recommended_batch_size()` and `_prefetch_batches()`; keep adaptive profiling (`load_or_profile_settings()`) aligned if you change batching heuristics.
 
 ## Developer Workflow
 - Run tests with `pytest func_test.py` (the suite relies on pytest fixtures/marks). For focused runs, use markers like `pytest func_test.py -k predict_cnn`.

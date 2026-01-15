@@ -35,3 +35,18 @@ Copyright (c) 2026 Quant Civil
   - Confirmed training/ path created with BSD headers.
 - Risks/Notes:
   - Unsupervised training details still TBD; MODEL_HISTORY.md is a placeholder to be populated with experiments.
+
+## Phase 2 — Dead-Code Cleanup (2026-01-15)
+- Intent: Remove unused segmentation branches (chunked helpers/texture autoencoder) while preserving legacy K-Means/CNN flows and sync contributor docs.
+- Summary:
+  - Deleted texture autoencoder module and chunked segmentation/blur helpers; kept only legacy kmeans/cnn paths.
+  - Trimmed tests and packaging config to drop deleted modules; refreshed contributor guidance and model notes accordingly.
+- Files Touched:
+  - Modified: funcs.py, func_test.py, pb_tool.cfg, ARCHITECTURE.md, MODEL_NOTES.md, .github/copilot-instructions.md.
+  - Removed: autoencoder_utils.py.
+- Commands:
+  - /Users/josh/gits/qgis-segmentation/.venv/bin/python -m compileall /Users/josh/gits/qgis-segmentation (pass).
+- Validation:
+  - compileall succeeded; no runtime tests run this phase.
+- Risks/Notes:
+  - Latent doc references to autoencoder/chunked paths were scrubbed; future updates should add back only if new entrypoints are wired through Segmenter.

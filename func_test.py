@@ -9,18 +9,10 @@ from funcs import (
     tile_raster,
     predict_cnn,
     predict_kmeans,
-    execute_cnn_segmentation,
-    execute_kmeans_segmentation,
-    ChunkPlan,
     AdaptiveSettings,
     set_adaptive_settings,
     get_adaptive_settings,
-    _compute_chunk_starts,
     _normalize_cluster_labels,
-    recommended_chunk_plan,
-    _derive_chunk_size,
-    _ChunkAggregator,
-    _chunked_gaussian_blur,
 )
 from perf_tuner import load_or_profile_settings, ProfilePayload, _run_profile
 from raster_utils import ensure_channel_first
@@ -38,22 +30,6 @@ class _DummyModel(torch.nn.Module):
         minv, _ = x.min(dim=1, keepdim=True)
         stacked = torch.cat([mean, maxv, minv], dim=1)
         return (None, stacked)
-
-
-class _StubAutoencoder:
-    def __init__(self):
-        self.calls = 0
-
-    def set_device(self, *_):
-        return
-
-    def refresh_and_remap(self, raster, label_map, status_callback=None):
-        self.calls += 1
-        if status_callback:
-            status_callback(f"stub-remap-{self.calls}")
-        return label_map.copy()
-
-
 def _rand_array(seed, shape):
     rng = np.random.default_rng(seed)
     return rng.integers(0, 255, size=shape, dtype=np.uint8)
@@ -161,51 +137,6 @@ def test_predict_cnn_uses_adaptive_batching():
         prefetch_depth=3,
     )
     assert max(model.batch_history) > 1
-
-
-@pytest.mark.parametrize(
-    "shape",
-    [
-        (3, 640, 925),
-        (3, 512, 700),
-    ],
-)
-def test_execute_cnn_segmentation_chunking_preserves_shape(shape):
-    array = _rand_array(2, shape)
-    plan = ChunkPlan(chunk_size=256, overlap=64, budget_bytes=16 * 1024 * 1024, ratio=0.0075, prefetch_depth=2)
-    manager = _StubAutoencoder()
-    manager.set_device(torch.device("cpu"))
-    output = execute_cnn_segmentation(
-        _DummyModel(),
-        array,
-        num_segments=3,
-        chunk_plan=plan,
-        tile_size=256,
-        device=torch.device("cpu"),
-        texture_manager=manager,
-    )
-    assert output.shape == shape[1:]
-    assert output.max() < 3
-    assert manager.calls == 1
-
-
-def test_execute_kmeans_segmentation_chunking_preserves_shape():
-    array = _rand_array(3, (3, 781, 1023))
-    plan = ChunkPlan(chunk_size=200, overlap=50, budget_bytes=8 * 1024 * 1024, ratio=0.0075, prefetch_depth=2)
-    manager = _StubAutoencoder()
-    output = execute_kmeans_segmentation(
-        array,
-        num_segments=4,
-        resolution=16,
-        chunk_plan=plan,
-        status_callback=lambda *_: None,
-        texture_manager=manager,
-    )
-    assert output.shape == array.shape[1:]
-    assert output.max() < 4
-    assert manager.calls == 1
-
-
 def test_perf_tuner_profiles_and_caches(tmp_path):
     device = torch.device("cpu")
     calls = []
@@ -312,17 +243,6 @@ def test_tile_raster_shape_preservation(
     assert height_pad == expected_height_pad
     assert width_pad == expected_width_pad
     assert tiles.shape == expected_tile_shape
-
-
-def test_chunked_gaussian_blur_matches_single_pass():
-    rng = np.random.default_rng(0)
-    array = rng.random((3, 96, 64), dtype=np.float32)
-    sigma = 6.0
-    full = _chunked_gaussian_blur(array, sigma, max_chunk_bytes=1_000_000_000)
-    chunked = _chunked_gaussian_blur(array, sigma, max_chunk_bytes=32 * 1024)
-    np.testing.assert_allclose(chunked, full, atol=1e-4)
-
-
 @pytest.mark.performance
 def test_predict_cnn_gpu_prefetch_throughput(gpu_metric_recorder, tmp_path):
     device = _available_gpu_device()
