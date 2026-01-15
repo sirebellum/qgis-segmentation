@@ -1,34 +1,25 @@
 # QGIS Segmenter – Copilot Instructions
 
-## Architecture Snapshot
-- [../segmenter.py](../segmenter.py) hosts the plugin entry point: the `Segmenter` class wires into QGIS, spins up `SegmenterDialog`, and schedules heavy work through `QgsTask` via `run_task()`.
-- Segmentation happens in [../funcs.py](../funcs.py) through `predict_kmeans()`, `predict_cnn()`, and `tile_raster()`; they expect numpy channel-first rasters and emit status strings through optional callbacks.
-- Rendering is decoupled: [../qgis_funcs.py](../qgis_funcs.py) turns numpy arrays back into temporary GeoTIFFs and adds them as layers with the source extent/CRS.
-- UI chrome lives in [../segmenter_dialog.py](../segmenter_dialog.py) + [../segmenter_dialog_base.ui](../segmenter_dialog_base.ui); tweak the `.ui`, then re-run PyQt codegen if you add widgets.
-- Pretrained TorchScript models ship in [../models](../models); model filenames encode tile resolution (`model_4.pth`, etc.).
+## Core Layout
+- [../segmenter.py](../segmenter.py) instantiates `SegmenterDialog`, wires UI buttons to `predict()`/`stop_current_task()`, and pushes heavy work onto `QgsTask` via `run_task()`. Keep GUI code responsive; anything CPU-bound should live outside the main thread.
+- [../funcs.py](../funcs.py) is the numerical engine: `_materialize_raster()` ensures channel-first arrays, `predict_kmeans()` handles block-sampled clustering, and `predict_cnn()` manages tiling, batching, latent-KNN refinement, and optional blur. Mimic the existing status callbacks + cancellation tokens when extending these paths.
+- Rendering is isolated in [../qgis_funcs.py](../qgis_funcs.py): it converts numpy labels to temporary GeoTIFFs and adds them to the current project with the source extent/CRS. New raster-like outputs should flow through `render_raster()` so metadata stays consistent.
+- UI shell lives in [../segmenter_dialog.py](../segmenter_dialog.py) + [../segmenter_dialog_base.ui](../segmenter_dialog_base.ui). After changing the `.ui`, re-run `pyuic5` if you need generated Python, and remember to keep widget names aligned with what `Segmenter` expects.
 
-## Dependency Model
-- `ensure_dependencies()` in [../dependency_manager.py](../dependency_manager.py) runs at import time (both in `segmenter.py` and `funcs.py`) so any module-level import will try to bootstrap torch/numpy/sklearn into `vendor/`.
-- Respect env knobs advertised in [../README.md](../README.md): `SEGMENTER_SKIP_AUTO_INSTALL`, `SEGMENTER_TORCH_INDEX_URL`, `SEGMENTER_TORCH_SPEC`, and `SEGMENTER_PYTHON`; altering dependency logic without updating docs will surprise operators.
-- When adding new third-party libs, extend `_package_specs()` so offline installers and the bootstrap dialog stay in sync.
+## Dependencies & Models
+- `ensure_dependencies()` in [../dependency_manager.py](../dependency_manager.py) executes at import time; any top-level import of torch/numpy/sklearn will trigger vendor installs. Update `_package_specs()` plus [../README.md](../README.md) when adding libraries, and honor env toggles (`SEGMENTER_SKIP_AUTO_INSTALL`, `SEGMENTER_TORCH_SPEC`, `SEGMENTER_TORCH_INDEX_URL`, `SEGMENTER_PYTHON`).
+- Pretrained TorchScript files ship in [../models](../models); the numeric suffix indicates tile resolution (`model_4.pth`, `model_8.pth`, etc.). `Segmenter.load_model()` expects `.pth` files that return `(mask, features)`; adjust mocks in [../func_test.py](../func_test.py) if you change that contract.
 
 ## Runtime Patterns
-- Long operations must emit progress via `status_callback` to keep the dialog responsive; reuse `_emit_status()` in [../funcs.py](../funcs.py) or `Segmenter.log_status()` as appropriate.
-- `Task.finished()` is responsible for raster rendering; if you change prediction outputs, update the kwargs contract passed in `Segmenter.predict()`.
-- CUDA vs CPU selection happens once in `Segmenter.run()`; new GPU-dependent code should branch on `self.device` the same way and fall back to CPU.
-- Tiling math assumes rasters are RGB with shape `(3, H, W)`; validate or coerce upstream if you start supporting other band counts.
+- All long-running work must emit progress strings. Use `Segmenter.log_status()` for UI-safe logs and `_emit_status()` in [../funcs.py](../funcs.py) for worker updates so `_maybe_update_progress_from_message()` can keep the progress bar moving.
+- Cancellation flows through `CancellationToken`; call `_maybe_raise_cancel()` anywhere that loops over tiles/chunks so `Task.cancel()` works instantly.
+- CNN heuristics are centralized: `Segmenter._collect_heuristics()` maps sliders to speed/accuracy, `_build_heuristic_overrides()` feeds tile sizes + latent KNN settings into `legacy_cnn_segmentation()`, and `_legacy_blur_config()` tunes the optional blur. When adding knobs, thread them through this pipeline rather than hard-coding per-model tweaks.
+
+## Performance Tooling
+- [../perf_tuner.py](../perf_tuner.py) (`load_or_profile_settings()`) profiles GPU throughput once and caches results in `perf_profile.json`. Honor `SEGMENTER_SKIP_PROFILING` before launching the thread, and surface user-facing summaries via `Segmenter.log_status()`.
+- Memory-aware tiling relies on `_derive_chunk_size()` and `_ChunkAggregator` helpers; if you alter tiling math, update `recommended_chunk_plan()` and the associated tests in [../func_test.py](../func_test.py).
 
 ## Developer Workflow
-- Local unit coverage focuses on numerical helpers; run `python -m unittest func_test` from the repo root to exercise tiling/K-Means/CNN plumbing without QGIS.
-- Keep `requirements.txt` aligned with what `dependency_manager` installs so editors and CI get the same transitive set.
-- Use [../pb_tool.cfg](../pb_tool.cfg) when syncing into a QGIS profile (`pb_tool deploy` targets the QGIS plugin dir); remember to rebuild resources.qrc if you add icons (`pyrcc5 resources.qrc -o resources.py`).
-- The release-ready copy under [../zip_build/segmenter](../zip_build/segmenter) mirrors the live plugin; update it after making source changes or automate the copy in your build.
-
-## Feature Tips
-- K-Means uses block sampling (max 10k tiles) before clustering; if you tune performance, preserve the sampling step to avoid memory spikes.
-- CNN inference expects `torch.jit.load()` outputs returning `(mask, features)`; mocks in [../func_test.py](../func_test.py) mirror this contract and should be adjusted if the model interface changes.
-- Status text is buffered before the dialog opens (`_status_buffer`); if you log from background threads before UI init, call `_flush_status_buffer()` once widgets exist.
-
-## Documentation & Support
-- User-facing behavior, dependency guidance, and screenshots live in [../README.md](../README.md); keep that file updated when workflow or UX changes so support links don't drift.
-- Licensing, metadata, and packaging data are sourced from [../metadata.txt](../metadata.txt) and [../LICENSE](../LICENSE); remember to update both if you rebrand or relicense.
+- Run tests with `pytest func_test.py` (the suite relies on pytest fixtures/marks). For focused runs, use markers like `pytest func_test.py -k predict_cnn`.
+- Regenerate Qt resources with `pyrcc5 resources.qrc -o resources.py` when icons change, and use `pb_tool deploy` (see [../pb_tool.cfg](../pb_tool.cfg)) to sync into a QGIS profile.
+- Keep `requirements.txt` aligned with `dependency_manager.py` so editors/CI match the in-app bootstrapper. After changing runtime behavior, update [../README.md](../README.md) plus [../metadata.txt](../metadata.txt) to keep end-user docs in sync.
