@@ -2,36 +2,27 @@
 SPDX-License-Identifier: BSD-3-Clause
 Copyright (c) 2026 Quant Civil
 -->
-# NAIP + 3DEP Dataset (Training Only)
+# NAIP + 3DEP Datasets (Training Only)
 
-- Source layers: NAIP RGB imagery + USGS 3DEP DEM (prefers 1 m, falls back to 1/3 arc-second then 1 arc-second).
-- Script: `scripts/data/prepare_naip_3dep_dataset.py` downloads four AOIs (3 cities + 1 seeded mountain), co-registers RGB/DEM to UTM, tiles 512x512 (stride 128), and writes `manifest.jsonl`.
-- Output layout (under `--output-dir`):
-  - `data/naip_3dep/raw/naip/<aoi>/...`, `data/naip_3dep/raw/dem/<aoi>/...`
-  - `data/naip_3dep/processed/rgb/<aoi>/<tile>.tif`, `processed/dem/<aoi>/<tile>.tif`
-  - `data/naip_3dep/processed/manifest.jsonl`
-  - `data/naip_3dep/logs/`, `data/naip_3dep/cache/`
-- Manifest schema (jsonl, one object per tile):
-  - `aoi_name`, `tile_id`, `rgb_path`, `dem_path` (relative to output root)
-  - `epsg`, `pixel_size`, `width`, `height`, `bounds`, `geotransform`
-  - `source_naip`, `source_dem`, `dem_tier` (optional)
+## NAIP on AWS + 3DEP (COG, Requester Pays)
+- Sources: NAIP AWS COGs (bucket `naip-visualization`, alt `naip-analytic`/`naip-source`, Requester Pays, us-west-2) + USGS 3DEP DEM (TNM Access API https://tnmaccess.usgs.gov/api/v1/products).
+- Index: cached footprint `naip_footprint.gpkg` under `<cache>/index/`; auto-download from `https://naip-visualization.s3.amazonaws.com/index/naip_footprint.gpkg` unless `--naip-index-path` or `--naip-index-source` overrides. `AWS_REQUEST_PAYER=requester` is set for GDAL vsis3/HTTPS.
+- Script: `scripts/data/prepare_naip_aws_3dep_dataset.py` selects 3 city AOIs + 1 seeded mountain patch, builds a VRT over NAIP COGs, warps RGB to a single grid (-tap, target CRS auto UTM or `--target-crs`, pixel size `--target-gsd` but never finer than DEM native), warps DEM to that grid, tiles 512x512 (stride 128), drops tiles over `--max-nodata-frac`, and writes `manifest.jsonl` with DEM tier/native/resampled flags.
+- DEM tier ladder: prefers 1 m (`3DEP 1 meter DEM`, `USGS 1 meter x 1 meter Resolution DEM`), falls back to 1/3 arc-second (~10 m), then 1 arc-second (~30 m). Selection recorded in manifest.
+- Layout (under `--output-dir` → `data/naip_aws_3dep/`): `raw/naip/`, `raw/dem/`, `processed/rgb/`, `processed/dem/`, `processed/manifest.jsonl`, `logs/`, `cache/` (index + downloads).
+- Manifest fields per tile: `aoi_name`, `tile_id`, `rgb_path`, `dem_path`, `epsg`, `pixel_size`, `bounds`, `geotransform`, `nodata_fraction`, `source_naip_urls`, `source_naip_year/state`, `source_dem_id`, `dem_tier`, `dem_native_gsd`, `dem_target_gsd`, `dem_resampled`.
 
-## Quickstart
-1) Dry-run (query only):
+Quickstart:
 ```
-python scripts/data/prepare_naip_3dep_dataset.py --output-dir /tmp/naip3dep --dry-run --seed 123
-```
-2) Download + tile:
-```
-python scripts/data/prepare_naip_3dep_dataset.py --output-dir /tmp/naip3dep --seed 123 --aoi-size-m 4000 --patch-size 512 --stride 128
-```
-3) Validate alignment + manifest:
-```
-python scripts/data/prepare_naip_3dep_dataset.py --output-dir /tmp/naip3dep --validate-only
+python scripts/data/prepare_naip_aws_3dep_dataset.py --output-dir /tmp/naipaws3dep --dry-run --seed 123
+python scripts/data/prepare_naip_aws_3dep_dataset.py --output-dir /tmp/naipaws3dep --seed 123 --aoi-size-m 4000 --patch-size 512 --stride 128
+python scripts/data/prepare_naip_aws_3dep_dataset.py --output-dir /tmp/naipaws3dep --validate --sample-tiles 10
 ```
 
-## Notes
-- Requires GDAL CLI tools (`gdalinfo`, `gdalwarp`, `gdal_translate`, `gdalbuildvrt`); install via `brew install gdal` or `apt-get install gdal-bin`.
-- Endpoint logic isolated in `_usgs_tnm_provider.py`; swap endpoints there if TNM changes.
-- User is responsible for data licensing/compliance for NAIP and 3DEP assets.
-- No QGIS runtime inference changes are introduced by this dataset pipeline.
+## TNM NAIP + 3DEP (legacy)
+- Script: `scripts/data/prepare_naip_3dep_dataset.py` (TNM NAIP download) remains for backward compatibility. Manifest schema is a subset of the AWS version and still works with the loader.
+
+## General Notes
+- Requires GDAL CLI tools (`gdalinfo`, `gdalwarp`, `gdal_translate`, `gdalbuildvrt`, `ogr2ogr`).
+- User is responsible for licensing/compliance (NAIP is public domain; AWS Requester Pays may incur charges; 3DEP products are free).
+- Training-only; QGIS runtime inference remains unchanged.

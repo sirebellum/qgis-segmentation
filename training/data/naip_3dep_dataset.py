@@ -8,7 +8,7 @@ Each row must include rgb_path, dem_path (relative to an anchor), and metadata.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -38,6 +38,13 @@ class ManifestEntry:
     source_naip: Optional[str]
     source_dem: Optional[str]
     dem_tier: Optional[str] = None
+    nodata_fraction: float = 0.0
+    source_naip_urls: List[str] = field(default_factory=list)
+    source_naip_year: Optional[str] = None
+    source_naip_state: Optional[str] = None
+    dem_native_gsd: Optional[float] = None
+    dem_resampled: bool = False
+    dem_target_gsd: Optional[float] = None
 
 
 def load_manifest(manifest_path: Path, anchor: Optional[Path] = None, limit: Optional[int] = None) -> List[ManifestEntry]:
@@ -71,6 +78,13 @@ def load_manifest(manifest_path: Path, anchor: Optional[Path] = None, limit: Opt
                     source_naip=rec.get("source_naip"),
                     source_dem=rec.get("source_dem"),
                     dem_tier=rec.get("dem_tier"),
+                    nodata_fraction=float(rec.get("nodata_fraction", 0.0)),
+                    source_naip_urls=list(rec.get("source_naip_urls", rec.get("source_naip_url", []) or [])),
+                    source_naip_year=rec.get("source_naip_year"),
+                    source_naip_state=rec.get("source_naip_state"),
+                    dem_native_gsd=rec.get("dem_native_gsd"),
+                    dem_resampled=bool(rec.get("dem_resampled", False)),
+                    dem_target_gsd=rec.get("dem_target_gsd"),
                 )
             )
     return entries

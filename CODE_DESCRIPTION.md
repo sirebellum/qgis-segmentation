@@ -35,6 +35,13 @@ Copyright (c) 2026 Quant Civil
 - configs/datasets/naip_3dep_example.yaml: sample manifest-driven config (PyYAML optional, python configs still supported).
 - Docs added: docs/DATASETS.md, docs/TRAINING_PIPELINE.md.
 
+## Training (Phase 7, NAIP-on-AWS refactor)
+- scripts/data/prepare_naip_aws_3dep_dataset.py: NAIP AWS Requester Pays COG ingestion via cached footprint index + 3DEP TNM Access DEM ladder; derives a single grid (-tap) and warps DEM to RGB grid; tiles 512x512/stride 128 with nodata filtering; emits enriched manifest (tier/native/resampled metadata).
+- scripts/data/_naip_aws_provider.py: NAIP AWS bucket/index wrapper (footprint download, vsis3/HTTPS VRT build).
+- scripts/data/_usgs_3dep_provider.py: TNM Access DEM discovery with tier ladder (1m → 1/3" → 1").
+- training/data/naip_aws_3dep_dataset.py: thin alias to shared manifest loader; loader accepts extended manifest fields (nodata_fraction, dem_native_gsd, resampled flag, source_naip_urls).
+- configs/datasets/naip_aws_3dep_example.yaml: sample config pointing at `data/naip_aws_3dep/processed/manifest.jsonl`.
+
 ## Training (Phase 6, export to runtime)
 - training/export.py: converts MonolithicSegmenter checkpoints to numpy artifacts (`model.npz`, `meta.json`, `metrics.json`).
 - training/train.py: tracks best loss and auto-exports to `model/best` and `training/best_model` (configurable; can disable with `--no-export`).

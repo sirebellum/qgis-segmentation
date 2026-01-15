@@ -115,3 +115,20 @@ Copyright (c) 2026 Quant Civil
   - Static reasoning only; added unit smoke for numpy runtime (not executed here). Legacy tests not re-run.
 - Risks/Notes:
   - Numpy runtime may be slow on large rasters; learned refine/elevation unsupported in this phase. Legacy TorchScript weights still required for CNN mode; next-gen artifacts must be exported via training CLI before use.
+
+## Phase 7 — NAIP on AWS + 3DEP Alignment (2026-01-15)
+- Intent: Refactor Option 3 dataset prep to source NAIP RGB from AWS COGs (requester-pays) with USGS 3DEP DEM, keep warp-to-grid alignment, 512x512 tiling, and manifest outputs for training-only use.
+- Summary:
+  - Added AWS provider + index VRT builder (`scripts/data/_naip_aws_provider.py`) and USGS 3DEP product selector/downloader (`scripts/data/_usgs_3dep_provider.py`); extended GDAL helpers with grid spec/warp/VRT and env propagation for requester-pays.
+  - New CLI `scripts/data/prepare_naip_aws_3dep_dataset.py` builds NAIP VRT from AWS index, warps NAIP/DEM to shared grid (-tap), tiles 512/stride 128, skips high-nodata chips, and records DEM tier/gsd + NAIP metadata in manifest.
+  - Loader now accepts extended manifest fields (nodata_fraction, NAIP URLs/year/state, DEM native/resampled/target gsd) and exposes an AWS alias module; added sample config `configs/datasets/naip_aws_3dep_example.yaml`.
+  - Docs updated: DATASETS (NAIP-on-AWS flow), TRAINING_PIPELINE (new script/alias/config), CODE_DESCRIPTION (Phase 7 entry).
+- Files Touched:
+  - Added: scripts/data/_naip_aws_provider.py, scripts/data/_usgs_3dep_provider.py, scripts/data/prepare_naip_aws_3dep_dataset.py, training/data/naip_aws_3dep_dataset.py, configs/datasets/naip_aws_3dep_example.yaml.
+  - Modified: scripts/data/_gdal_utils.py, training/data/naip_3dep_dataset.py, docs/DATASETS.md, docs/TRAINING_PIPELINE.md, CODE_DESCRIPTION.md.
+- Commands:
+  - python -m compileall . (pass; ran in venv with GDAL available on PATH assumed).
+- Validation:
+  - compileall succeeded; no dataset prep or pytest runs executed this phase.
+- Risks/Notes:
+  - Requires GDAL CLI and network access; AWS buckets are requester-pays (set AWS_REQUEST_PAYER). 3DEP tier ladder falls back to coarser DEM when 1 m unavailable; manifest preserves gsd/tier for downstream QC. Tile vetting uses nodata fraction threshold only; imagery quality/capture dates not filtered.

@@ -24,25 +24,55 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
-from ._gdal_utils import (
-    bounds_from_info,
-    derive_utm_epsg,
-    gdalinfo_json,
-    geotransform_from_info,
-    geotransforms_equal,
-    pixel_size_from_info,
-    require_gdal_tools,
-    run_cmd,
-)
-from ._usgs_tnm_provider import (
-    DEM_DATASETS,
-    NAIP_DATASET,
-    Product,
-    download_product,
-    query_products,
-    select_best_dem,
-    select_best_naip,
-)
+# Allow execution as a stand-alone script or a package module.
+if __package__ in {None, ""}:
+    import sys
+
+    _here = Path(__file__).resolve()
+    _root = _here.parent.parent.parent  # project root
+    if str(_root) not in sys.path:
+        sys.path.insert(0, str(_root))
+
+try:
+    from ._gdal_utils import (
+        bounds_from_info,
+        derive_utm_epsg,
+        gdalinfo_json,
+        geotransform_from_info,
+        geotransforms_equal,
+        pixel_size_from_info,
+        require_gdal_tools,
+        run_cmd,
+    )
+    from ._usgs_tnm_provider import (
+        DEM_DATASETS,
+        NAIP_DATASET,
+        Product,
+        download_product,
+        query_products,
+        select_best_dem,
+        select_best_naip,
+    )
+except ImportError:  # pragma: no cover - fallback when executed directly
+    from scripts.data._gdal_utils import (
+        bounds_from_info,
+        derive_utm_epsg,
+        gdalinfo_json,
+        geotransform_from_info,
+        geotransforms_equal,
+        pixel_size_from_info,
+        require_gdal_tools,
+        run_cmd,
+    )
+    from scripts.data._usgs_tnm_provider import (
+        DEM_DATASETS,
+        NAIP_DATASET,
+        Product,
+        download_product,
+        query_products,
+        select_best_dem,
+        select_best_naip,
+    )
 
 # AOIs: fixed city footprints (lon/lat in EPSG:4326)
 CITY_AOIS: Dict[str, Tuple[float, float, float, float]] = {
