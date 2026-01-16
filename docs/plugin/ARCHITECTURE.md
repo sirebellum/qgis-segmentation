@@ -4,6 +4,8 @@ Copyright (c) 2026 Quant Civil
 -->
 # Architecture
 
+For a current-state runtime snapshot, see [RUNTIME_STATUS.md](RUNTIME_STATUS.md).
+
 - Scope: QGIS 3 plugin "Map Segmenter"; code is source of truth.
 
 ## End-to-end flow

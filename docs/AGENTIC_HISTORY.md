@@ -21,3 +21,11 @@ New series beginning at the current repository state. Phase numbering restarts h
 - **Commands**:
 - **Validation**:
 - **Risks/Notes**:
+
+## Phase 1 — Generated runtime status overview
+- **Intent**: Capture the current QGIS runtime state in a concise doc for prompt scaffolding.
+- **Summary**: Added [docs/plugin/RUNTIME_STATUS.md](plugin/RUNTIME_STATUS.md) describing UI→task→numpy path, model contract, config points, logging/cancel flows, and gaps; linked [docs/plugin/ARCHITECTURE.md](plugin/ARCHITECTURE.md) to it; recorded phase in [docs/CODE_DESCRIPTION.md](CODE_DESCRIPTION.md).
+- **Files Touched**: [docs/plugin/RUNTIME_STATUS.md](plugin/RUNTIME_STATUS.md), [docs/plugin/ARCHITECTURE.md](plugin/ARCHITECTURE.md), [docs/CODE_DESCRIPTION.md](CODE_DESCRIPTION.md), [docs/AGENTIC_HISTORY.md](AGENTIC_HISTORY.md).
+- **Commands**: none (doc-only).
+- **Validation**: Manual link sanity checks (internal doc links); no tests executed.
+- **Risks/Notes**: Snapshot reflects current workspace only; unused torch-prefetch helpers remain in funcs.py but are not on the plugin path.

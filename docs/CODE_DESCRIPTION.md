@@ -84,3 +84,7 @@ Copyright (c) 2026 Quant Civil
 - Appended pointer entry to [docs/AGENTIC_HISTORY.md](AGENTIC_HISTORY.md) while keeping prior phases intact.
 - Seeded dataset ingestion scaffold under [scripts/datasets_ingest](../scripts/datasets_ingest) (config, interfaces, manifest validation, provider stubs, CLI); scaffold is offline-only and performs no network/GDAL work.
 - Documented dataset rewrite status in [docs/dataset/DATASETS.md](dataset/DATASETS.md); added stub tests [tests/test_datasets_ingest_stub.py](../tests/test_datasets_ingest_stub.py) to keep coverage deterministic and QGIS-free.
+
+## Ops (Phase 15 — runtime snapshot doc)
+- Added [docs/plugin/RUNTIME_STATUS.md](plugin/RUNTIME_STATUS.md) as a token-efficient snapshot of the QGIS runtime (UI → task → numpy engine → render) with contracts, config points, and known gaps.
+- Linked [docs/plugin/ARCHITECTURE.md](plugin/ARCHITECTURE.md) to the new snapshot and recorded the iteration in [docs/AGENTIC_HISTORY.md](AGENTIC_HISTORY.md).
