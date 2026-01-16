@@ -15,8 +15,8 @@ def test_losses_finite_backward():
     cfg = default_config()
     model = MonolithicSegmenter(cfg.model)
     rgb = torch.rand(1, 3, 512, 512)
-    out1 = model(rgb, k=4, elev_present=False)
-    out2 = model(rgb, k=4, elev_present=False)
+    out1 = model(rgb, k=4)
+    out2 = model(rgb, k=4)
     grid = torch.zeros(1, 512, 512, 2)
     losses = total_loss(cfg.loss, out1["probs"], out2["probs"], rgb, rgb, grid)
     loss = losses["loss"]

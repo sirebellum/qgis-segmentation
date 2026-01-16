@@ -7,7 +7,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from typing import Dict, Tuple, Optional
+from typing import Dict
 
 import torch
 from torch.utils.data import DataLoader
@@ -15,7 +15,6 @@ from torch.utils.tensorboard import SummaryWriter
 
 from .config_loader import load_config
 from .data.dataset import UnsupervisedRasterDataset
-from .data.naip_3dep_dataset import build_dataset_from_manifest
 from .data.synthetic import SyntheticDataset
 from .losses import total_loss
 from .models.model import MonolithicSegmenter
@@ -31,44 +30,21 @@ def _device() -> torch.device:
     return torch.device("cpu")
 
 
-def _stack_optional(tensors: list[Optional[torch.Tensor]]) -> Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]:
-    present = [t is not None for t in tensors]
-    if not any(present):
-        return None, None
-    template = next(t for t in tensors if t is not None)
-    filled = [t if p else torch.zeros_like(template) for t, p in zip(tensors, present)]
-    stacked = torch.cat(filled, dim=0)
-    mask = torch.tensor(present, dtype=torch.bool).view(-1, 1, 1, 1)
-    return stacked, mask
-
-
 def _collate(batch: list[Dict]) -> Dict:
     # Stack tensors across batch dimension.
     view1_rgb = torch.cat([item["view1"]["rgb"] for item in batch], dim=0)
     view2_rgb = torch.cat([item["view2"]["rgb"] for item in batch], dim=0)
-    view1_elev, view1_mask = _stack_optional([item["view1"].get("elev") for item in batch])
-    view2_elev, view2_mask = _stack_optional([item["view2"].get("elev") for item in batch])
     grid = torch.cat([item["warp_grid"] for item in batch], dim=0)
     return {
         "view1_rgb": view1_rgb,
         "view2_rgb": view2_rgb,
-        "view1_elev": view1_elev,
-        "view2_elev": view2_elev,
-        "view1_mask": view1_mask,
-        "view2_mask": view2_mask,
         "grid": grid,
     }
 
 
-def build_dataloader(cfg, synthetic: bool, with_elev: bool, manifest_path: Optional[str] = None) -> DataLoader:
-    if synthetic:
-        base_ds = SyntheticDataset(num_samples=cfg.train.batch_size * 2, with_elevation=with_elev)
-        wrapped = UnsupervisedRasterDataset(base_ds.samples, cfg.data, cfg.aug)
-    else:
-        if manifest_path:
-            cfg.data.manifest_path = manifest_path
-        base_ds = build_dataset_from_manifest(cfg.data, cfg.aug)
-        wrapped = base_ds
+def build_dataloader(cfg) -> DataLoader:
+    base_ds = SyntheticDataset(num_samples=cfg.train.batch_size * 2, cfg=cfg.data)
+    wrapped = UnsupervisedRasterDataset(base_ds.samples, cfg.data, cfg.aug)
     return DataLoader(wrapped, batch_size=cfg.train.batch_size, shuffle=True, collate_fn=_collate)
 
 
@@ -82,7 +58,6 @@ def main():
     parser.add_argument("--grad-accum", type=int, default=None, help="Gradient accumulation steps")
     parser.add_argument("--checkpoint_dir", type=str, default=None)
     parser.add_argument("--logdir", type=str, default=None, help="TensorBoard log directory (default: checkpoint_dir/tb or runs/train)")
-    parser.add_argument("--manifest", type=str, default=None, help="Path to NAIP/3DEP manifest.jsonl")
     parser.add_argument("--max-samples", type=int, default=None, help="Optional limit on samples for smoke runs")
     parser.add_argument("--export-best-to", type=str, default="model/best", help="Directory to write best-model numpy artifacts")
     parser.add_argument("--export-training-mirror", type=str, default="training/best_model", help="Mirror directory for training-ledger copy")
@@ -95,8 +70,6 @@ def main():
     if args.grad_accum:
         cfg.train.grad_accum = max(1, args.grad_accum)
     cfg.train.amp = bool(args.amp)
-    if args.manifest:
-        cfg.data.manifest_path = args.manifest
     if args.max_samples is not None:
         cfg.data.max_samples = args.max_samples
     set_seed(args.seed)
@@ -106,12 +79,8 @@ def main():
     opt = torch.optim.Adam(model.parameters(), lr=cfg.train.lr, weight_decay=cfg.train.weight_decay)
     scaler = torch.cuda.amp.GradScaler(enabled=cfg.train.amp and device.type == "cuda")
 
-    use_synth = not bool(cfg.data.manifest_path)
-    if cfg.data.manifest_path:
-        print(f"Loading NAIP/3DEP manifest dataset: {cfg.data.manifest_path}")
-    else:
-        print("Using synthetic dataset (manifest not provided)")
-    loader = build_dataloader(cfg, synthetic=use_synth, with_elev=cfg.data.allow_mixed_elevation, manifest_path=cfg.data.manifest_path)
+    print("Using synthetic dataset (manifest ingestion temporarily disabled)")
+    loader = build_dataloader(cfg)
 
     run_root = Path(args.checkpoint_dir) if args.checkpoint_dir else Path("runs") / "train"
     run_root.mkdir(parents=True, exist_ok=True)
@@ -145,17 +114,11 @@ def main():
         v1_rgb = batch["view1_rgb"].to(device)
         v2_rgb = batch["view2_rgb"].to(device)
         grid = batch["grid"].to(device)
-        v1_elev = batch["view1_elev"].to(device) if batch["view1_elev"] is not None else None
-        v2_elev = batch["view2_elev"].to(device) if batch["view2_elev"] is not None else None
-        v1_mask = batch["view1_mask"].to(device) if batch["view1_mask"] is not None else None
-        v2_mask = batch["view2_mask"].to(device) if batch["view2_mask"] is not None else None
 
         with torch.cuda.amp.autocast(enabled=scaler.is_enabled()):
             out1 = model(
                 v1_rgb,
                 k=k,
-                elev=v1_elev,
-                elev_present=v1_mask if v1_mask is not None else v1_elev is not None,
                 downsample=downsample,
                 cluster_iters=cluster_iters,
                 smooth_iters=smooth_iters,
@@ -164,8 +127,6 @@ def main():
             out2 = model(
                 v2_rgb,
                 k=k,
-                elev=v2_elev,
-                elev_present=v2_mask if v2_mask is not None else v2_elev is not None,
                 downsample=downsample,
                 cluster_iters=cluster_iters,
                 smooth_iters=smooth_iters,
@@ -178,8 +139,6 @@ def main():
                 v1_rgb,
                 v2_rgb,
                 grid,
-                v1_elev,
-                v2_elev,
             )
             loss = losses["loss"] / float(accum)
         scaler.scale(loss).backward()

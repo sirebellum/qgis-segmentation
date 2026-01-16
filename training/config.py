@@ -18,8 +18,6 @@ class ModelConfig:
     smoothing_iters: Tuple[int, int] = (1, 3)
     smoothing_lanes: Sequence[str] = ("fast", "learned", "none")
     downsample_choices: Sequence[int] = (1, 2)
-    elev_film_channels: int = 32
-    elev_dropout: float = 0.5
     stop_grad_prototypes: bool = False
 
 
@@ -27,12 +25,8 @@ class ModelConfig:
 class DataConfig:
     patch_size: int = 512
     stride: int = 512
-    elevation_dropout: float = 0.3
-    allow_mixed_elevation: bool = True
     backend: str = "gdal"  # placeholder hint; dataset handles availability
     manifest_path: Optional[str] = None
-    standardize_elevation: bool = True
-    elevation_eps: float = 1e-3
     max_samples: Optional[int] = None
 
 

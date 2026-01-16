@@ -39,24 +39,16 @@ def main():
     model = MonolithicSegmenter(cfg.model).to(device)
     model.eval()
 
-    use_synth = True  # Real data eval remains stubbed; synthetic path is default.
-    if use_synth:
-        base_ds = SyntheticDataset(num_samples=2, with_elevation=cfg.data.allow_mixed_elevation)
-    else:
-        raise NotImplementedError("Real data eval not implemented")
+    base_ds = SyntheticDataset(num_samples=2, cfg=cfg.data)
     ds = UnsupervisedRasterDataset(base_ds.samples, cfg.data, cfg.aug)
 
     metrics = []
     for sample in ds:
         v = sample["view1"]
         rgb = v["rgb"].to(device)
-        elev = v.get("elev")
-        elev = elev.to(device) if elev is not None else None
         out = model(
             rgb,
             k=min(cfg.model.max_k, 4),
-            elev=elev,
-            elev_present=elev is not None,
             smoothing_lane="fast",
         )
         probs = out["probs"]

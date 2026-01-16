@@ -114,7 +114,6 @@ def export_numpy_artifacts(
         "input_std": [1.0, 1.0, 1.0],
         "input_scale": 1.0 / 255.0,
         "stride": 4,
-        "supports_elevation": False,
         "supports_learned_refine": False,
     }
 

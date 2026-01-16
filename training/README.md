@@ -4,22 +4,22 @@ Copyright (c) 2026 Quant Civil
 -->
 # Training Overview (Unsupervised, scaffolding)
 
-- Purpose: next-gen monolithic unsupervised model (variable K) with optional elevation; eager PyTorch only.
+- Purpose: next-gen monolithic unsupervised model (variable K) using RGB-only inputs; eager PyTorch only.
 
 ## Data layout
 - Input tiles: RGB uint8 in `training/data/images/` (or synthetic via `--synthetic`).
-- Optional elevation rasters matching RGB extent; resampled internally to RGB grid. Mixed batches with/without elevation are allowed.
+- Elevation rasters are no longer consumed; dataset ingestion is being rewritten.
 - No labels required; eval labels remain optional for offline checks.
 
 ## Model contract (training-time)
-- Forward signature: `(rgb[B,3,512,512], K, elev[B,1,512,512]|None, elev_present)` where `elev_present` may be a bool or per-sample mask.
+- Forward signature: `(rgb[B,3,512,512], K)`.
 - Outputs: per-pixel probabilities `P[B,K,512,512]` (argmax are labels), latent embeddings stride/4 `E[B,D,128,128]`, prototypes, logits.
-- Constraints: `2 <= K <= 16`; elevation injected post-encoder via gated FiLM; differentiable soft k-means/EM head with configurable iterations; two refinement lanes (fast smoothing + learned conv stub).
+- Constraints: `2 <= K <= 16`; differentiable soft k-means/EM head with configurable iterations; two refinement lanes (fast smoothing + learned conv stub).
 
 ## Losses (implemented)
 - Two-view consistency (symmetric KL on warped probabilities).
 - Entropy shaping (minimize pixel entropy, maximize marginal/cluster utilization).
-- Edge-aware smoothness (RGB gradients + optional elevation gradients weight the penalty).
+- Edge-aware smoothness (RGB gradients weight the penalty).
 
 ## Running
 - Synthetic smoke train (CPU ok): `python -m training.train --synthetic --steps 3 --amp 0 --seed 123 --checkpoint_dir /tmp/seg_ckpt --grad-accum 2`.
@@ -30,13 +30,12 @@ Copyright (c) 2026 Quant Civil
 	- Launch with `tensorboard --logdir /tmp/seg_ckpt/tb --port 6006` and open http://localhost:6006.
 	- Images include the input RGB tile and the output float probability map (no argmax/clustering applied).
 
-### Manifest-backed (NAIP + 3DEP) smoke path
-- Prepare data with `python scripts/data/prepare_naip_3dep_dataset.py --output-dir /tmp/naip3dep --dry-run` then run without `--dry-run`.
-- Train on manifest: `python -m training.train --config configs/datasets/naip_3dep_example.yaml --steps 1 --amp 0 --checkpoint_dir /tmp/seg_ckpt`.
+### Manifest-backed ingestion
+- Temporarily disabled while dataset tooling is rewritten; synthetic is the supported path.
 
 ## Knobs & randomness
 - Per-batch randomization: `K ∈ {2,4,8,16}`, downsample factor {1,2}, cluster iters range, smooth iters range, smoothing lane choice.
-- Elevation dropout applies even when elevation is present; per-sample masks are carried into FiLM gating and losses.
+- Elevation handling removed; RGB-only paths keep per-batch K/downsample randomization.
 - Optional gradient accumulation: `--grad-accum N` (defaults to config `train.grad_accum`).
 
 ## Notes

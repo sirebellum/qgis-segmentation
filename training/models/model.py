@@ -12,9 +12,8 @@ from torch import nn
 from torch.nn import functional as F
 
 from ..config import ModelConfig
-from ..utils.resample import downsample_factor, resample_to_match
+from ..utils.resample import downsample_factor
 from .backbone import Encoder
-from .elevation_inject import ElevationFiLM
 from .refine import RefineHead, fast_smooth
 from .soft_cluster import SoftKMeansHead
 
@@ -24,7 +23,6 @@ class MonolithicSegmenter(nn.Module):
         super().__init__()
         self.cfg = cfg
         self.encoder = Encoder(embed_dim=cfg.embed_dim)
-        self.elev_gate = ElevationFiLM(embed_dim=cfg.embed_dim, hidden=cfg.elev_film_channels)
         self.cluster_head = SoftKMeansHead(embed_dim=cfg.embed_dim, max_k=cfg.max_k)
         self.refiner = RefineHead(num_classes=cfg.max_k)
 
@@ -32,8 +30,6 @@ class MonolithicSegmenter(nn.Module):
         self,
         rgb: torch.Tensor,
         k: int,
-        elev: Optional[torch.Tensor] = None,
-        elev_present: Optional[torch.Tensor | bool] = None,
         downsample: int = 1,
         cluster_iters: Optional[int] = None,
         smooth_iters: Optional[int] = None,
@@ -46,13 +42,6 @@ class MonolithicSegmenter(nn.Module):
         ds = max(1, int(downsample))
         rgb_ds = downsample_factor(rgb, ds)
         emb = self.encoder(rgb_ds)
-
-        elev_mask = elev_present
-        if isinstance(elev_present, bool) or elev_present is None:
-            elev_mask = bool(elev_present) if elev_present is not None else elev is not None
-        if elev is not None and (not isinstance(elev_mask, bool) or elev_mask):
-            elev = resample_to_match(elev, rgb_ds.shape)
-            emb = self.elev_gate(emb, elev, elev_mask)
 
         cluster_iters = int(cluster_iters) if cluster_iters is not None else int(
             sum(self.cfg.cluster_iters) / 2

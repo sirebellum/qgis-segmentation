@@ -16,15 +16,15 @@ Copyright (c) 2026 Quant Civil
 
 ## Training (Phase 3, scaffolding)
 - training/config.py, config_loader.py: dataclass configs + python-loader overrides.
-- training/data/: synthetic dataset, raster placeholder loader, paired-view augmentations.
-- training/models/: encoder stride/4, elevation FiLM injection, soft k-means head, refinement lanes, monolithic wrapper.
+- training/data/: synthetic dataset placeholder with paired-view augmentations.
+- training/models/: encoder stride/4, soft k-means head, refinement lanes, monolithic wrapper (later iterations removed elevation FiLM).
 - training/losses.py, metrics.py: unsupervised objectives + proxy metrics.
 - training/utils/: warp/gradients/resample/seed helpers.
 - training/train.py, eval.py: CLI runners (synthetic-ready, eager PyTorch).
 - training/tests/: pytest coverage (shapes, losses, synthetic smoke).
 
 ## Training (Phase 4, hardening)
-- Elevation masks threaded through collate → FiLM gate; dropout preserved.
+- Elevation mask plumbing (since removed in Phase 13) and grad-accumulation tweaks.
 - Fast smoothing fixed to depthwise kernel for arbitrary K; optional grad accumulation exposed in CLI/train loop.
 - Synthetic-first default retained; real raster IO still stubbed.
 - Docs aligned: ARCHITECTURE.md, MODEL_NOTES.md, training/README.md, training/MODEL_HISTORY.md.
@@ -51,7 +51,6 @@ Copyright (c) 2026 Quant Civil
 - All supporting docs live under [docs/plugin](../plugin), [docs/training](../training), and [docs/dataset](.). History is tracked at [docs/AGENTIC_HISTORY.md](../AGENTIC_HISTORY.md); required prompt inputs listed in [docs/AGENTIC_REQUIRED.md](../AGENTIC_REQUIRED.md).
 
 ## Tests (Phase 8)
-- [tests/test_manifest_schema.py](../../tests/test_manifest_schema.py): manifest field defaults/paths for NAIP/3DEP loaders.
 - [tests/test_alignment_invariants.py](../../tests/test_alignment_invariants.py): geotransform/bounds helpers (`derive_utm_epsg`, pixel sizes, tolerance).
 - [tests/test_export_to_numpy_runtime.py](../../tests/test_export_to_numpy_runtime.py): export-to-runtime pipeline and probability normalization.
 - [tests/test_numpy_runtime_tiling.py](../../tests/test_numpy_runtime_tiling.py): numpy runtime tiling/blending smoke via stub runtime.
@@ -74,3 +73,8 @@ Copyright (c) 2026 Quant Civil
 - Added `--sample-data` smoke mode to `prepare_naip_aws_3dep_dataset.py` that downloads tiny public GitHub rasters (rgbsmall.tif + byte.tif) and executes the full warp/tile/manifest path without AWS/TNM credentials.
 - Introduced explicit DEM override flags (`--dem-url`, `--dem-id`, `--dem-native-gsd`) and requester-pays headers for NAIP index downloads to avoid silent 403s.
 - New offline tests cover DEM override short-circuit and NAIP requester-pays header propagation.
+
+## Training (Phase 13 — RGB-only reset)
+- Intent: remove elevation/DEM inputs while dataset ingestion is rewritten; keep runtime numpy path intact.
+- Summary: reintroduced `training/data/` with RGB-only `SyntheticDataset` + `UnsupervisedRasterDataset`; dropped NAIP/3DEP manifest tests; model/loss/export/runtime paths no longer mention elevation metadata.
+- Validation: pending full rerun of compileall/pytest after dataset tooling refresh; synthetic smoke remains default.

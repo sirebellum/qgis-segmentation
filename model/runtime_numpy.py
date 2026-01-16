@@ -35,7 +35,6 @@ class RuntimeMeta:
     input_std: Tuple[float, float, float]
     input_scale: float
     stride: int
-    supports_elevation: bool
     supports_learned_refine: bool
 
 
@@ -225,7 +224,6 @@ def load_runtime_model(model_dir: str, status_callback: Optional[Callable[[str],
         input_std=tuple(meta_raw.get("input_std", [1.0, 1.0, 1.0])),
         input_scale=float(meta_raw.get("input_scale", 1.0 / 255.0)),
         stride=int(meta_raw.get("stride", 4)),
-        supports_elevation=bool(meta_raw.get("supports_elevation", False)),
         supports_learned_refine=bool(meta_raw.get("supports_learned_refine", False)),
     )
     if status_callback:

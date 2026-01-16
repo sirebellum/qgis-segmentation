@@ -16,7 +16,7 @@ Copyright (c) 2026 Quant Civil
 
 ## Training (unsupervised — implemented, isolated)
 - Status: eager-PyTorch pipeline in [training/](training); not wired into QGIS runtime.
-- Model contract: monolithic model taking RGB (B,3,512,512) and optional elevation (B,1,512,512) with per-sample masks, producing probabilities P ∈ [B,K,512,512] for K ∈ [2,16] and embeddings stride/4 (B,D,128,128); FiLM-like elevation injection; differentiable soft k-means/EM head; fast vs learned refinement lanes.
-- Losses: two-view consistency (symmetric KL on warped probabilities), entropy shaping (pixel entropy minimization + marginal entropy maximization), edge-aware smoothness weighted by RGB and optional elevation gradients.
-- Knobs: per-batch random K, downsample factor, cluster_iters, smooth_iters, smoothing lane; elevation dropout even when elevation is present; optional gradient accumulation.
+- Model contract: monolithic model taking RGB only (B,3,512,512) and producing probabilities P ∈ [B,K,512,512] for K ∈ [2,16] plus stride/4 embeddings; differentiable soft k-means/EM head; fast vs learned refinement lanes.
+- Losses: two-view consistency (symmetric KL on warped probabilities), entropy shaping (pixel entropy minimization + marginal entropy maximization), edge-aware smoothness using RGB gradients.
+- Knobs: per-batch random K, downsample factor, cluster_iters, smooth_iters, smoothing lane; optional gradient accumulation.
 - Export: training/train.py auto-exports best checkpoint (by loss) to numpy artifacts (`model/best` + `training/best_model`) via `training/export.py` (`model.npz`, `meta.json`, `metrics.json`). TorchScript export remains out-of-scope; plugin no longer consumes TorchScript models.

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2026 Quant Civil
 
-"""Resampling helpers for elevation/feature alignment."""
+"""Resampling helpers for feature alignment."""
 from __future__ import annotations
 
 import torch

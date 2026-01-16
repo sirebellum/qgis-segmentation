@@ -5,5 +5,6 @@ torch
 pytest
 flake8
 rasterio
+gdal
 tensorboard
 pyyaml

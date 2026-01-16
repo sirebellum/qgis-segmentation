@@ -18,7 +18,7 @@ def test_smoke_train_step():
     cfg.train.steps = 2
     cfg.train.batch_size = 1
     cfg.train.amp = False
-    base = SyntheticDataset(num_samples=2, with_elevation=True, seed=21)
+    base = SyntheticDataset(num_samples=2, cfg=cfg.data)
     ds = UnsupervisedRasterDataset(base.samples, cfg.data, cfg.aug)
     model = MonolithicSegmenter(cfg.model)
     opt = torch.optim.Adam(model.parameters(), lr=cfg.train.lr)
@@ -30,11 +30,9 @@ def test_smoke_train_step():
         grid = item["warp_grid"]
         rgb1 = v1["rgb"]
         rgb2 = v2["rgb"]
-        elev1 = v1.get("elev")
-        elev2 = v2.get("elev")
-        out1 = model(rgb1, k=4, elev=elev1, elev_present=elev1 is not None, cluster_iters=2)
-        out2 = model(rgb2, k=4, elev=elev2, elev_present=elev2 is not None, cluster_iters=2)
-        losses = total_loss(cfg.loss, out1["probs"], out2["probs"], rgb1, rgb2, grid, elev1, elev2)
+        out1 = model(rgb1, k=4, cluster_iters=2)
+        out2 = model(rgb2, k=4, cluster_iters=2)
+        losses = total_loss(cfg.loss, out1["probs"], out2["probs"], rgb1, rgb2, grid)
         opt.zero_grad(set_to_none=True)
         losses["loss"].backward()
         opt.step()

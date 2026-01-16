@@ -36,7 +36,7 @@ Copyright (c) 2026 Quant Civil
 
 ## Training scaffolding (isolated)
 - Location: [training/](training) (pure PyTorch, eager mode). Not wired into QGIS runtime; exports numpy artifacts for runtime pickup.
-- Components: config dataclasses, synthetic/optional raster datasets with paired-view augmentations, monolithic model (encoder stride/4, elevation FiLM injection with per-sample masks, soft k-means head, fast/learned refinement lanes), unsupervised losses (consistency, entropy shaping, edge-aware smoothness), proxy metrics, CLI train/eval runners.
+- Components: config dataclasses, synthetic RGB dataset with paired-view augmentations, monolithic model (encoder stride/4, soft k-means head, fast/learned refinement lanes), unsupervised losses (consistency, entropy shaping, edge-aware smoothness), proxy metrics, CLI train/eval runners.
 - Export: `training/export.py` writes best checkpoint weights to `model/best` and `training/best_model` as `model.npz` + `meta.json` + `metrics.json` when training loss improves (unless `--no-export`).
-- Contract: forward(rgb, K, elev?) → probabilities [B,K,512,512] (K ≤ 16) + embeddings stride/4; elevation optional and gated.
-- CLI: `python -m training.train --synthetic --steps 3 --grad-accum 2` for smoke training; `python -m training.eval --synthetic` for proxy metrics.
+- Contract: forward(rgb, K) → probabilities [B,K,512,512] (K ≤ 16) + embeddings stride/4; RGB-only inputs.
+- CLI: `python -m training.train --steps 3 --grad-accum 2 --amp 0` for smoke training; `python -m training.eval --synthetic` for proxy metrics.

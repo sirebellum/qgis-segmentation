@@ -220,3 +220,14 @@ Copyright (c) 2026 Quant Civil
   - Sample real download exits 0; manifest and tiles written under /tmp/naipaws3dep-sample/data/naip_aws_3dep/.
 - Risks/Notes:
   - True AWS/TNM runs still require credentials/network; Requester Pays now surfaces actionable errors. Sample mode is for smoke validation, not production data quality.
+
+## Phase 13 — Elevation Removal & RGB-Only Training (2026-01-16)
+- Intent: strip elevation/DEM dependencies from training and runtime contracts while dataset ingestion is being rewritten.
+- Summary:
+  - Added RGB-only data stack (`training/data/{dataset.py,synthetic.py}`) and retired NAIP/DEM manifest tests.
+  - Simplified `MonolithicSegmenter`, losses, and train/eval to drop elevation inputs; removed elevation FiLM module; export/runtime metadata no longer advertises elevation support.
+  - Updated docs (ARCHITECTURE, MODEL_NOTES, TRAINING_PIPELINE, CODE_DESCRIPTION) to reflect RGB-only path.
+- Files Touched: training/config.py, training/train.py, training/eval.py, training/losses.py, training/models/model.py, training/models/elevation_inject.py (removed), training/data/* (new), tests/train*, tests/test_manifest_schema.py (removed), model/runtime_numpy.py, training/export.py, docs/{plugin/ARCHITECTURE.md,plugin/MODEL_NOTES.md,training/TRAINING_PIPELINE.md,CODE_DESCRIPTION.md,AGENTIC_HISTORY.md}.
+- Commands: not yet rerun in this phase (compileall/pytest recommended post-dataset rewrite).
+- Validation: pending; synthetic-only defaults expected to keep offline pytest green once rerun.
+- Risks/Notes: Manifest/DEM ingestion temporarily disabled; downstream datasets will need reintroduction once new ingestion lands.

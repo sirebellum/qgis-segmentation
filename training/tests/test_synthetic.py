@@ -11,7 +11,7 @@ from training.data.synthetic import SyntheticDataset
 
 def test_synthetic_dataset_shapes():
     cfg = default_config()
-    base = SyntheticDataset(num_samples=2, with_elevation=True, seed=7)
+    base = SyntheticDataset(num_samples=2, cfg=cfg.data)
     ds = UnsupervisedRasterDataset(base.samples, cfg.data, cfg.aug)
     item = ds[0]
     assert "view1" in item and "view2" in item
