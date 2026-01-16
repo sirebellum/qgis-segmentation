@@ -128,3 +128,6 @@ training/data/
 training/datasets/
 data/naip_3dep/
 scripts/data/output/
+
+# --- IGNORE ---
+agent.zip
