@@ -41,4 +41,4 @@ Copyright (c) 2026 Quant Civil
 
 ## Notes
 - Training code is isolated from the QGIS runtime; no TorchScript export required in this phase.
-- See `training/MODEL_HISTORY.md` for experiment logging and `MODEL_NOTES.md` for the high-level contract.
+- See [../docs/training/MODEL_HISTORY.md](../docs/training/MODEL_HISTORY.md) for experiment logging and [../docs/plugin/MODEL_NOTES.md](../docs/plugin/MODEL_NOTES.md) for the high-level contract.

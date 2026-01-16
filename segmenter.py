@@ -14,182 +14,114 @@
  ***************************************************************************/
 """
 from collections import deque
-import math
+from datetime import datetime
 import os
 import re
-import threading
 import weakref
 from typing import Optional
-from qgis.PyQt.QtCore import (
-    QSettings,
-    QTranslator,
-    QCoreApplication,
-    QThread,
-    QObject,
-    pyqtSignal,
-    QUrl,
-    Qt,
-    QEvent,
-)
-from qgis.PyQt.QtGui import QIcon, QPixmap, QDesktopServices, QColor, QCursor
-from qgis.PyQt.QtWidgets import (
-    QAction,
-    QMessageBox,
-    QGraphicsDropShadowEffect,
-)
-from qgis.core import (
-    QgsTask,
-    QgsApplication,
-    QgsMessageLog,
-    QgsProject,
-    QgsRasterLayer,
-    Qgis,
-)
 
-# Initialize Qt resources from file resources.py
-from .resources import *
-
-# Import the code for the dialog
-from .segmenter_dialog import SegmenterDialog
-
-from io import BytesIO
-from datetime import datetime
-from .dependency_manager import ensure_dependencies
-from .perf_tuner import load_or_profile_settings
-
-ensure_dependencies()
-
-import torch
 import numpy as np
-from .funcs import (
-    legacy_kmeans_segmentation,
-    legacy_cnn_segmentation,
-    predict_nextgen_numpy,
-    SegmentationCanceled,
+from qgis.PyQt.QtCore import (
+    QCoreApplication,
+    QEvent,
+    QObject,
+    QSettings,
+    Qt,
+    QThread,
+    QTranslator,
+    QUrl,
+    pyqtSignal,
 )
-from .model import load_runtime_model
-from .qgis_funcs import render_raster
+from qgis.PyQt.QtGui import QDesktopServices, QIcon, QPixmap
+from qgis.PyQt.QtWidgets import QAction, QMessageBox
+from qgis.core import Qgis, QgsApplication, QgsMessageLog, QgsProject, QgsRasterLayer, QgsTask
+from qgis.gui import QgsInterface
 
-TILE_SIZE = 512
+from funcs import SegmentationCanceled, predict_nextgen_numpy
+from model import load_runtime_model
+from qgis_funcs import render_raster
+from segmenter_dialog import SegmenterDialog
+
 SUPPORTED_RASTER_EXTENSIONS = {".tif", ".tiff"}
-GITHUB_ISSUES_URL = "https://github.com/sirebellum/qgis-segmentation/issues/new/choose"
-PROFILE_MODEL_SIZES = {"high": 4, "medium": 8, "low": 16}
-BUY_ME_A_COFFEE_URL = "https://buymeacoffee.com/sirebellum"
-RESOLUTION_CHOICES = (
-    ("low", 16),
-    ("medium", 8),
-    ("high", 4),
-)
-DEFAULT_RESOLUTION_LABEL = "low"
-RESOLUTION_VALUE_MAP = {label: value for label, value in RESOLUTION_CHOICES}
-PROGRESS_PERCENT_PATTERN = re.compile(r"(?P<percent>\d{1,3})\s*%")
-PROGRESS_STEP_PATTERN = re.compile(r"step\s+(?P<current>\d+)\s*/\s*(?P<total>\d+)", re.IGNORECASE)
-PROGRESS_TEXT_LIMIT = 80
+TILE_SIZE = 256
+PROGRESS_TEXT_LIMIT = 120
+PROGRESS_PERCENT_PATTERN = re.compile(r"(?P<percent>\d{1,3})%")
+PROGRESS_STEP_PATTERN = re.compile(r"(?P<current>\d+)\s*/\s*(?P<total>\d+)")
 PROGRESS_STAGE_MAP = {
-    "prepare": (0.0, 20.0, "Preparing input..."),
-    "chunk_plan": (20.0, 35.0, "Estimating chunk plan..."),
-    "queue": (35.0, 50.0, "Starting segmentation task..."),
-    "inference": (50.0, 80.0, "Running segmentation..."),
-    "latent": (80.0, 90.0, "Refining latent features..."),
-    "smooth": (90.0, 97.0, "Smoothing segmentation map..."),
-    "render": (97.0, 100.0, "Rendering output..."),
+    "prepare": (0, 25, "Preparing segmentation..."),
+    "queue": (25, 35, "Queuing task..."),
+    "chunk_plan": (35, 40, "Planning chunks..."),
+    "inference": (40, 90, "Running segmentation..."),
+    "latent": (60, 92, "Refining labels..."),
+    "smooth": (92, 96, "Smoothing map..."),
+    "render": (96, 100, "Rendering output..."),
 }
-
-
-class StatusEmitter(QObject):
-    message = pyqtSignal(object)
+GITHUB_ISSUES_URL = "https://github.com/sirebellum/qgis-segmentation/issues"
+BUY_ME_A_COFFEE_URL = "https://www.buymeacoffee.com/quantcivil"
 
 
 class CancellationToken:
     def __init__(self):
-        self._event = threading.Event()
-        self._task_ref: Optional[weakref.ReferenceType] = None
+        self._cancelled = False
+        self._task_ref = None
 
-    def bind_task(self, task: QgsTask) -> None:
-        try:
-            self._task_ref = weakref.ref(task)
-        except TypeError:
-            self._task_ref = None
+    def cancel(self):
+        self._cancelled = True
+        task = self._task_ref() if self._task_ref else None
+        if task and hasattr(task, "cancel"):
+            try:
+                task.cancel()
+            except Exception:
+                pass
 
-    def cancel(self) -> None:
-        self._event.set()
+    def is_cancelled(self):
+        return bool(self._cancelled)
 
-    def is_cancelled(self) -> bool:
-        if self._event.is_set():
-            return True
-        if self._task_ref is None:
-            return False
-        task = self._task_ref()
-        if task is not None and task.isCanceled():
-            self._event.set()
-            return True
-        return self._event.is_set()
-
-    def raise_if_cancelled(self) -> None:
-        if self.is_cancelled():
+    def raise_if_cancelled(self):
+        if self._cancelled:
             raise SegmentationCanceled()
 
+    def bind_task(self, task):
+        try:
+            self._task_ref = weakref.ref(task)
+        except Exception:
+            self._task_ref = None
 
-class _LogoHoverController(QObject):
-    def __init__(self, label, click_callback):
-        super().__init__(label)
-        self._label = label
-        self._click_callback = click_callback
-        self._hover_radius = max(60.0, min(label.width(), label.height()) * 0.6)
-        self._glow = QGraphicsDropShadowEffect(label)
-        self._glow.setOffset(0, 0)
-        self._glow.setBlurRadius(0)
-        self._glow.setColor(QColor(255, 215, 0, 0))
-        label.setGraphicsEffect(self._glow)
-        label.setCursor(Qt.ArrowCursor)
 
-    def eventFilter(self, obj, event):
-        if obj is not self._label:
-            return False
-        if event.type() == QEvent.MouseMove:
-            self._update_glow(event.pos())
-        elif event.type() == QEvent.Enter:
-            self._update_glow(self._label.mapFromGlobal(QCursor.pos()))
-        elif event.type() == QEvent.Leave:
-            self._reset_glow()
-        elif event.type() == QEvent.MouseButtonRelease and getattr(event, "button", lambda: None)() == Qt.LeftButton:
-            if callable(self._click_callback):
-                self._click_callback()
-            return True
-        return False
-
-    def _update_glow(self, pos):
-        center = self._label.rect().center()
-        dx = pos.x() - center.x()
-        dy = pos.y() - center.y()
-        distance = math.hypot(dx, dy)
-        radius = max(self._hover_radius, 1.0)
-        intensity = max(0.0, 1.0 - (distance / radius))
-        blur = 8 + (28 * intensity)
-        alpha = int(80 + 120 * intensity)
-        color = QColor(255, 215, 0, min(255, max(0, alpha)))
-        self._glow.setBlurRadius(blur if intensity > 0 else 0)
-        self._glow.setColor(color)
-        self._label.setCursor(Qt.PointingHandCursor if intensity > 0.1 else Qt.ArrowCursor)
-
-    def _reset_glow(self):
-        self._glow.setBlurRadius(0)
-        self._glow.setColor(QColor(255, 215, 0, 0))
-        self._label.setCursor(Qt.ArrowCursor)
+class StatusEmitter(QObject):
+    message = pyqtSignal(tuple)
 
 
 class _ComboRefreshController(QObject):
-    def __init__(self, combo_box, refresh_callback):
-        super().__init__(combo_box)
-        self._combo = combo_box
-        self._refresh_callback = refresh_callback
+    def __init__(self, combo, callback):
+        super().__init__(combo)
+        self._combo = combo
+        self._callback = callback
 
-    def eventFilter(self, obj, event):
-        if obj is not self._combo:
-            return False
-        if event.type() == QEvent.MouseButtonPress:
-            if callable(self._refresh_callback):
-                self._refresh_callback()
+    def eventFilter(self, obj, event):  # pragma: no cover - UI glue
+        if obj is self._combo and event.type() in {QEvent.MouseButtonPress, QEvent.FocusIn}:
+            if callable(self._callback):
+                try:
+                    self._callback()
+                except Exception:
+                    pass
+        return False
+
+
+class _LogoHoverController(QObject):
+    def __init__(self, widget, callback):
+        super().__init__(widget)
+        self._widget = widget
+        self._callback = callback
+
+    def eventFilter(self, obj, event):  # pragma: no cover - UI glue
+        if obj is self._widget and event.type() == QEvent.MouseButtonPress:
+            if callable(self._callback):
+                try:
+                    self._callback()
+                except Exception:
+                    pass
+            return True
         return False
 
 
@@ -244,7 +176,7 @@ class Task(QgsTask):
             render_raster(
                 self.result,
                 self.kwargs["layer"].extent(),
-                f"{self.kwargs['layer'].name()}_{self.kwargs['model']}_{self.kwargs['num_segments']}_{self.kwargs['resolution']}",
+                f"{self.kwargs['layer'].name()}_{self.kwargs['model']}_{self.kwargs['num_segments']}",
                 self.kwargs["canvas"].layer(0).crs().postgisSrid(),
             )
             self._status("Segmentation layer rendered")
@@ -321,15 +253,12 @@ class Segmenter:
         self._log_history = deque(maxlen=50)
         self.status_emitter = StatusEmitter()
         self.status_emitter.message.connect(self._handle_status_message)
-        self.model = "cnn"
         self._logged_missing_layers = False
         self._logo_hover = None
         self._layer_refresh_controller = None
         self._progress_last_value = 0.0
         self._progress_active = False
         self._progress_stage = "idle"
-        self._profiling_thread = None
-        self._profiling_ready = False
         self.nextgen_model_dir = os.path.join(self.plugin_dir, "model", "best")
 
     # noinspection PyMethodMayBeStatic
@@ -540,87 +469,7 @@ class Segmenter:
         if button is not None:
             button.setEnabled(bool(enabled))
 
-    def _collect_heuristics(self, resolution_label: Optional[str] = None):
-        dlg = getattr(self, "dlg", None)
-        multiplier = self._heuristic_scale(resolution_label)
-        if dlg is None:
-            base = {"smoothness": 0.25, "speed": 0.5, "accuracy": 0.65}
-            return {k: float(np.clip(v * multiplier, 0.0, 1.0)) for k, v in base.items()}
-
-        def _value(name, default=0.5):
-            slider = getattr(dlg, name, None)
-            if not slider:
-                return float(np.clip(default * multiplier, 0.0, 1.0))
-            maximum = max(1, slider.maximum())
-            raw = slider.value() / maximum
-            return float(np.clip(raw * multiplier, 0.0, 1.0))
-
-        return {
-            "smoothness": _value("sliderSmoothness", 0.25),
-            "speed": _value("sliderSpeed", 0.5),
-            "accuracy": _value("sliderAccuracy", 0.65),
-        }
-
-    def _build_heuristic_overrides(self, resolution_label: Optional[str] = None):
-        heuristics = self._collect_heuristics(resolution_label)
-        smooth = heuristics["smoothness"]
-        speed = heuristics["speed"]
-        accuracy = heuristics["accuracy"]
-        resolution_value = RESOLUTION_VALUE_MAP.get(
-            resolution_label or DEFAULT_RESOLUTION_LABEL,
-            RESOLUTION_VALUE_MAP[DEFAULT_RESOLUTION_LABEL],
-        )
-        finest_resolution = min(RESOLUTION_VALUE_MAP.values()) or 1
-        coarseness = max(1.0, float(resolution_value) / float(finest_resolution))
-
-        smoothing_scale = float(np.interp(smooth, [0.0, 1.0], [0.7, 1.9]))
-        smoothing_scale = float(np.clip(smoothing_scale * 0.1 * coarseness, 0.02, 0.45))
-        tile_factor = float(np.interp(speed, [0.0, 1.0], [0.8, 1.35]))
-        tile_size = int(np.clip(TILE_SIZE * tile_factor, 192, 768))
-
-        latent_cfg = {
-            "mix": float(np.interp(smooth, [0.0, 1.0], [0.35, 0.85])) * 0.01,
-            "temperature": float(np.interp(accuracy, [0.0, 1.0], [3.5, 0.9])),
-            "neighbors": int(np.round(np.interp(accuracy, [0.0, 1.0], [6, 28]))),
-            "iterations": int(max(1, round(np.interp(smooth, [0.0, 1.0], [1, 4])))),
-            "spatial_weight": float(np.interp(accuracy, [0.0, 1.0], [0.04, 0.16])) * 0.01,
-            "chunk_size": int(np.round(np.interp(speed, [0.0, 1.0], [20000, 65536]))),
-            "index_points": int(np.round(np.interp(speed, [0.0, 1.0], [50000, 180000]))),
-            "query_batch": int(np.round(np.interp(speed, [0.0, 1.0], [12000, 60000]))),
-            "hierarchy_factor": 1 if accuracy < 0.4 else 2,
-            "hierarchy_passes": 1 if accuracy < 0.7 else 2,
-        }
-
-        latent_cfg["mix"] = np.clip(latent_cfg["mix"] * coarseness, 0.01, 0.25)
-        latent_cfg["spatial_weight"] = float(np.clip(latent_cfg["spatial_weight"] * coarseness, 0.001, 0.03))
-
-        return {
-            "tile_size": tile_size,
-            "smoothing_scale": smoothing_scale,
-            "latent_knn": latent_cfg,
-        }
-
-    def _legacy_blur_config(self, resolution_label: Optional[str] = None) -> dict:
-        heuristics = self._collect_heuristics(resolution_label)
-        smooth = heuristics["smoothness"]
-        kernel = int(np.round(np.interp(smooth, [0.0, 1.0], [1, 7])))
-        kernel = kernel | 1  # ensure odd kernel size
-        kernel = max(1, min(kernel, 9))
-        iterations = 1 if smooth < 0.7 else 2
-        return {"kernel_size": kernel, "iterations": iterations}
-
-    def _heuristic_scale(self, resolution_label: Optional[str]) -> float:
-        if not resolution_label:
-            return 1.0
-        key = resolution_label.strip().lower()
-        size = PROFILE_MODEL_SIZES.get(key)
-        if not size:
-            return 1.0
-        numerator = float(size)
-        denominator = float(max(PROFILE_MODEL_SIZES.values()))
-        if denominator <= 0:
-            return 1.0
-        return np.clip(numerator / denominator, 0.1, 1.0)
+    # Legacy heuristic hooks removed; next-gen runtime does not expose tuning sliders.
 
     def open_feedback_link(self):
         if not getattr(self, "dlg", None):
@@ -808,107 +657,38 @@ class Segmenter:
             self.dlg.inputSegments.setFocus()
             self._reset_progress_bar()
             return
-        self._update_overall_progress("prepare", 80, "Segmentation parameters verified.")
 
-        resolution_label = self.dlg.inputRes.currentData()
-        if not resolution_label:
-            resolution_label = self.dlg.inputRes.currentText() or DEFAULT_RESOLUTION_LABEL
-        resolution_label = str(resolution_label).strip().lower()
-        resolution = RESOLUTION_VALUE_MAP.get(resolution_label, RESOLUTION_VALUE_MAP[DEFAULT_RESOLUTION_LABEL])
-
-        blur_config = self._legacy_blur_config(resolution_label)
-        heuristics = self._collect_heuristics(resolution_label)
-        heuristic_overrides = self._build_heuristic_overrides(resolution_label)
-        self.log_status(
-            "Heuristic tuning — smoothness {:.2f}, speed {:.2f}, accuracy {:.2f}.".format(
-                heuristics["smoothness"], heuristics["speed"], heuristics["accuracy"]
-            )
-        )
-        self.log_status(
-            f"Legacy blur configured: {blur_config['kernel_size']}px kernel, {blur_config['iterations']} pass(es)."
-        )
-        tile_override = heuristic_overrides.get("tile_size") if heuristic_overrides else None
-        if isinstance(tile_override, (int, float)):
-            self.log_status(f"CNN tile size override set to {int(tile_override)}px.")
-
-        effective_resolution = resolution
-        resolution_scale = float(np.interp(heuristics["speed"], [0.0, 1.0], [0.85, 1.35]))
-        scaled_resolution = int(max(1, round(resolution * resolution_scale)))
-        if scaled_resolution != resolution:
+        model_dir = self.nextgen_model_dir
+        if not os.path.isdir(model_dir):
             self.log_status(
-                f"Speed slider adjusted block resolution from {resolution} to {scaled_resolution}."
+                f"Next-gen model artifacts not found at {model_dir}. Run training export to generate meta.json and model.npz."
             )
-            effective_resolution = scaled_resolution
-
-        sample_scale = float(np.interp(heuristics["accuracy"], [0.0, 1.0], [0.65, 1.35]))
-        self.log_status(
-            f"Accuracy slider sampling scale set to {sample_scale:.2f}x base population."
-        )
-
-        if not hasattr(self, "device"):
-            raise AttributeError("Segmenter instance must have a 'device' attribute set before calling predict().")
+            self._reset_progress_bar()
+            return
 
         kwargs = {
             "layer": layer,
             "canvas": self.canvas,
             "dlg": self.dlg,
-            "model": self.model,
+            "model": "nextgen",
             "num_segments": num_segments,
-            "resolution": resolution,
             "status_callback": self.log_status,
             "segmenter": self,
         }
 
-        func = None
-        args = ()
-        if self.model == "kmeans":
-            func = legacy_kmeans_segmentation
-            args = (
-                raster_source,
-                num_segments,
-                effective_resolution,
-                self.worker_status,
-                blur_config,
-                sample_scale,
-                self.device,
-            )
-        elif self.model == "cnn":
-            func = legacy_cnn_segmentation
-            model_provider = lambda: self.load_model(resolution)
-            args = (
-                model_provider,
-                raster_source,
-                num_segments,
-                TILE_SIZE,
-                self.device,
-                self.worker_status,
-                blur_config,
-                heuristic_overrides,
-                resolution_label,
-            )
-        elif self.model == "nextgen":
-            model_dir = self.nextgen_model_dir
-            if not os.path.isdir(model_dir):
-                self.log_status(f"Next-gen model artifacts not found at {model_dir}. Run training with export enabled.")
-                self._reset_progress_bar()
-                return
-            func = predict_nextgen_numpy
-            model_provider = lambda: self.load_nextgen_runtime(model_dir)
-            args = (
-                model_provider,
-                raster_source,
-                num_segments,
-                TILE_SIZE,
-                self.worker_status,
-            )
-        else:
-            self.log_status(f"Unsupported model selection: {self.model}")
-            self._reset_progress_bar()
-            return
+        func = predict_nextgen_numpy
+        model_provider = lambda: self.load_nextgen_runtime(model_dir)
+        args = (
+            model_provider,
+            raster_source,
+            num_segments,
+            TILE_SIZE,
+            self.worker_status,
+        )
 
-        self._update_overall_progress("queue", 90, "Dispatching legacy segmentation task...")
+        self._update_overall_progress("queue", 90, "Dispatching segmentation task...")
         self.log_status(
-            f"Queued {self.model.upper()} segmentation with {num_segments} segments at {self.dlg.inputRes.currentText()} resolution."
+            f"Queued NEXTGEN segmentation with {num_segments} segments."
         )
         self._update_overall_progress("queue", 100, "Task queued; starting worker...")
         self._update_overall_progress("inference", 0, "Running segmentation...")
@@ -917,19 +697,6 @@ class Segmenter:
 
         if self.task.waitForFinished(1):
             self.log_status("An error occurred. Please try again.")
-
-    # Load model from disk
-    def load_model(self, model_name):
-        # Load model into bytes object
-        model_path = os.path.join(self.plugin_dir, f"models/model_{model_name}.pth")
-        with open(model_path, "rb") as f:
-            model_bytes = BytesIO(f.read())
-
-        # Load torchscript model
-        model = torch.jit.load(model_bytes)
-        model.eval().to(self.device)
-
-        return model
 
     def load_nextgen_runtime(self, model_dir: Optional[str] = None):
         target = model_dir or self.nextgen_model_dir
@@ -942,18 +709,6 @@ class Segmenter:
     # Process user input box
     def submit(self):
         return
-
-    #  Display models in dropdown
-    def render_models(self):
-        model_list = ["K-Means", "CNN", "Next-Gen (Numpy)"]
-        self.dlg.inputLoadModel.clear()
-        for model in model_list:
-            self.dlg.inputLoadModel.addItem(model)
-        default_model = "CNN"
-        index = self.dlg.inputLoadModel.findText(default_model)
-        if index >= 0:
-            self.dlg.inputLoadModel.setCurrentIndex(index)
-        self.set_model()
 
     # Display layers in dropdown
     def render_layers(self):
@@ -981,28 +736,6 @@ class Segmenter:
             index = self.dlg.inputLayer.findText(current)
             if index >= 0:
                 self.dlg.inputLayer.setCurrentIndex(index)
-
-    # Display resolutions in dropdown
-    def render_resolutions(self):
-        self.dlg.inputRes.clear()
-        for label, value in RESOLUTION_CHOICES:
-            display = f"{label.title()} ({value})"
-            self.dlg.inputRes.addItem(display, label)
-        index = self.dlg.inputRes.findData(DEFAULT_RESOLUTION_LABEL)
-        if index < 0:
-            index = self.dlg.inputRes.findText(DEFAULT_RESOLUTION_LABEL, Qt.MatchFixedString)
-        if index >= 0:
-            self.dlg.inputRes.setCurrentIndex(index)
-
-    # Set model based on selected dropdown
-    def set_model(self):
-        model = self.dlg.inputLoadModel.currentText()
-        if model == "K-Means":
-            self.model = "kmeans"
-        elif model == "CNN":
-            self.model = "cnn"
-        elif model == "Next-Gen (Numpy)":
-            self.model = "nextgen"
 
     def _is_supported_raster_layer(self, layer):
         if not isinstance(layer, QgsRasterLayer):
@@ -1035,41 +768,21 @@ class Segmenter:
             self.canvas = self.iface.mapCanvas()
             self._reset_progress_bar()
 
-            # Set device (CUDA, CPU)
-            if torch.cuda.is_available(): # Cuda
-                self.device = torch.device("cuda")
-            elif torch.backends.mps.is_available(): # Multi-Process Service
-                self.device = torch.device("mps")
-            else: # CPU
-                self.device = torch.device("cpu")
-
-            self._ensure_adaptive_profile()
-
             # Populate drop down menus
-            self.render_models()
             self.render_layers()
-            self.render_resolutions()
             if not (self.dlg.inputSegments.text() or "").strip():
                 self.dlg.inputSegments.setText("8")
-
-            # Set gpu message
-            gpu_msg = "GPU available."
-            if self.device == torch.device("cpu"):
-                gpu_msg = "GPU not available. Using CPU instead."
 
             self._log_history.clear()
             self.dlg.inputBox.clear()
             self._flush_status_buffer()
-            self.log_status(gpu_msg)
-            self.log_status("Legacy segmentation mode active with blur post-processing.")
+            self.log_status("Next-gen numpy runtime active (single-model path).")
 
             # Attach inputs
             self.dlg.inputBox.textChanged.connect(self.submit)
             self.dlg.buttonPredict.clicked.connect(self.predict)
             self.dlg.buttonFeedback.clicked.connect(self.open_feedback_link)
             self.dlg.buttonStop.clicked.connect(self.stop_current_task)
-            self.dlg.inputLoadModel.currentIndexChanged.connect(self.set_model)
-            self.dlg.inputLoadModel.highlighted.connect(self.render_layers)
             self._set_stop_enabled(False)
 
             # Render logo
@@ -1096,61 +809,4 @@ class Segmenter:
             self._layer_refresh_controller = _ComboRefreshController(combo, self.render_layers)
             combo.installEventFilter(self._layer_refresh_controller)
 
-    def _profiling_speedup_summary(self, speedup_hint: Optional[float]) -> str:
-        ratio = float(speedup_hint) if speedup_hint and speedup_hint > 0 else 1.0
-        ratio = float(np.clip(ratio, 0.25, 8.0))
-        baseline_minutes = 60.0
-        improved_minutes = baseline_minutes / ratio if ratio > 0 else baseline_minutes
-        start_label = self._format_duration_hint(baseline_minutes)
-        end_label = self._format_duration_hint(improved_minutes)
-        return f"Adaptive profiling ready — estimated x{ratio:.2f} speedup (~{start_label} -> {end_label})."
-
-    def _format_duration_hint(self, minutes: float) -> str:
-        total_minutes = max(minutes, 1.0 / 60.0)
-        hours = int(total_minutes // 60)
-        mins = int(round(total_minutes % 60))
-        parts = []
-        if hours:
-            parts.append(f"{hours}h")
-        if mins:
-            parts.append(f"{mins}m")
-        if not parts:
-            seconds = max(1, int(round(total_minutes * 60)))
-            parts.append(f"{seconds}s")
-        return " ".join(parts)
-
-    def _ensure_adaptive_profile(self):
-        if self._profiling_ready:
-            return
-        thread = getattr(self, "_profiling_thread", None)
-        if thread is not None and thread.is_alive():
-            return
-
-        device = getattr(self, "device", None)
-        if device is None:
-            return
-
-        def _run_profile():
-            try:
-                settings, created, speedup = load_or_profile_settings(
-                    self.plugin_dir,
-                    device,
-                    status_callback=self.log_status,
-                )
-                if created:
-                    self.log_status("Adaptive profiling complete; cached settings saved.")
-                else:
-                    self.log_status("Adaptive profiling cache loaded.")
-                summary = self._profiling_speedup_summary(speedup)
-                if summary:
-                    self.log_status(summary)
-                self._profiling_ready = True
-            except Exception as exc:  # pragma: no cover - best effort logging
-                self.log_status(f"Adaptive profiling failed: {exc}")
-            finally:
-                self._profiling_thread = None
-
-        self.log_status("Profiling GPU performance (this only happens once).")
-        self.log_status("Calibrating adaptive batching (runs once per device)...")
-        self._profiling_thread = threading.Thread(target=_run_profile, name="SegmenterProfiler", daemon=True)
-        self._profiling_thread.start()
+    # Profiling hooks removed; next-gen runtime is numpy-only.

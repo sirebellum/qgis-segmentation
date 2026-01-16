@@ -7,10 +7,10 @@ Copyright (c) 2026 Quant Civil
 - Purpose: concise registry of modules and their current phase of stewardship (replaces CODE_SCRIPTURE.md).
 
 ## Runtime (Phase 0–6)
-- segmenter.py / segmenter_dialog.py / segmenter_dialog_base.ui: QGIS UI + task dispatch; legacy K-Means/CNN inference; routes "Next-Gen (Numpy)" option to runtime loader.
-- funcs.py: numerical engine (tiling, clustering, latent KNN, blur); dependency/perf helpers; includes `predict_nextgen_numpy` for numpy runtime.
+- segmenter.py / segmenter_dialog.py / segmenter_dialog_base.ui: QGIS UI + task dispatch for the single numpy runtime path; validates layer/segment count and queues `predict_nextgen_numpy`.
+- funcs.py: numerical engine (materialize/tiling/stitching, cancellation/status helpers); includes `predict_nextgen_numpy` for the numpy runtime.
 - qgis_funcs.py: GDAL render to GeoTIFF + layer registration.
-- dependency_manager.py / perf_tuner.py / raster_utils.py: bootstrap + profiling + array utilities.
+- dependency_manager.py / perf_tuner.py / raster_utils.py: NumPy bootstrap, profiling shim, array utilities.
 - model/runtime_numpy.py: numpy-only runtime for next-gen variable-K model consuming `model/best` artifacts (no torch import).
 - model/README.md: artifact contract + producer/consumer notes for runtime.
 
@@ -47,6 +47,16 @@ Copyright (c) 2026 Quant Civil
 - training/train.py: tracks best loss and auto-exports to `model/best` and `training/best_model` (configurable; can disable with `--no-export`).
 - func_test.py: includes dummy runtime smoke test for numpy loader.
 
+## Docs (Phase 8)
+- All supporting docs live under [docs/plugin](../plugin), [docs/training](../training), and [docs/dataset](.). History is tracked at [docs/AGENTIC_HISTORY.md](../AGENTIC_HISTORY.md); required prompt inputs listed in [docs/AGENTIC_REQUIRED.md](../AGENTIC_REQUIRED.md).
+
+## Tests (Phase 8)
+- [tests/test_manifest_schema.py](../../tests/test_manifest_schema.py): manifest field defaults/paths for NAIP/3DEP loaders.
+- [tests/test_alignment_invariants.py](../../tests/test_alignment_invariants.py): geotransform/bounds helpers (`derive_utm_epsg`, pixel sizes, tolerance).
+- [tests/test_export_to_numpy_runtime.py](../../tests/test_export_to_numpy_runtime.py): export-to-runtime pipeline and probability normalization.
+- [tests/test_numpy_runtime_tiling.py](../../tests/test_numpy_runtime_tiling.py): numpy runtime tiling/blending smoke via stub runtime.
+- [tests/test_qgis_runtime_smoke.py](../../tests/test_qgis_runtime_smoke.py): optional QGIS import smoke (skips unless `QGIS_TESTS=1`).
+
 ## Notes
-- TorchScript export remains optional; legacy CNN path still uses TorchScript weights if present.
+- TorchScript runtime paths were removed; plugin is numpy-only.
 - Real raster IO is stubbed behind optional rasterio/gdal; synthetic paths remain the CI-safe default.

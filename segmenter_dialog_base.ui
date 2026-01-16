@@ -117,62 +117,17 @@
    <set>Qt::AlignCenter</set>
   </property>
   </widget>
-  <widget class="QComboBox" name="inputLoadModel">
-   <property name="geometry">
-    <rect>
-      <x>20</x>
-      <y>30</y>
-      <width>101</width>
-      <height>32</height>
-    </rect>
-   </property>
-   <property name="toolTip">
-    <string/>
-   </property>
-   <property name="currentText">
-    <string/>
-   </property>
-   <property name="placeholderText">
-    <string>K-Means</string>
-   </property>
-  </widget>
-  <widget class="QLabel" name="labelLoadModel">
-   <property name="geometry">
-    <rect>
-      <x>50</x>
-      <y>10</y>
-      <width>81</width>
-      <height>18</height>
-    </rect>
-   </property>
-   <property name="text">
-    <string comment="Number of segments to divide input into">Model</string>
-   </property>
-  </widget>
-  <widget class="QLabel" name="labelSegments">
-   <property name="geometry">
-    <rect>
-      <x>50</x>
-      <y>85</y>
-      <width>161</width>
-      <height>18</height>
-    </rect>
-   </property>
-   <property name="text">
-    <string comment="Number of segments to divide input into">Number of Segments</string>
-   </property>
-  </widget>
   <widget class="QComboBox" name="inputLayer">
    <property name="geometry">
     <rect>
-      <x>140</x>
+      <x>30</x>
       <y>30</y>
-      <width>101</width>
+      <width>210</width>
       <height>32</height>
     </rect>
    </property>
    <property name="toolTip">
-    <string/>
+    <string>Select a 3-band raster layer.</string>
    </property>
    <property name="currentText">
     <string/>
@@ -184,9 +139,9 @@
   <widget class="QLabel" name="labelLoadModel_2">
    <property name="geometry">
     <rect>
-      <x>160</x>
+      <x>40</x>
       <y>10</y>
-      <width>81</width>
+      <width>161</width>
       <height>18</height>
     </rect>
    </property>
@@ -194,39 +149,17 @@
     <string comment="Number of segments to divide input into">Input Layer</string>
    </property>
   </widget>
-  <widget class="QLabel" name="labelLoadModel_3">
+  <widget class="QLabel" name="labelSegments">
    <property name="geometry">
     <rect>
-      <x>300</x>
-      <y>10</y>
-      <width>81</width>
+      <x>40</x>
+      <y>85</y>
+      <width>161</width>
       <height>18</height>
     </rect>
    </property>
-   <property name="accessibleDescription">
-    <string/>
-   </property>
    <property name="text">
-    <string comment="Number of segments to divide input into">Resolution</string>
-   </property>
-  </widget>
-  <widget class="QComboBox" name="inputRes">
-   <property name="geometry">
-    <rect>
-      <x>270</x>
-      <y>30</y>
-      <width>120</width>
-      <height>32</height>
-    </rect>
-   </property>
-   <property name="toolTip">
-    <string>Higher resolution means more detailed segment map.</string>
-   </property>
-   <property name="currentText">
-    <string/>
-   </property>
-   <property name="placeholderText">
-    <string/>
+    <string comment="Number of segments to divide input into">Number of Segments</string>
    </property>
   </widget>
   <widget class="QLineEdit" name="inputSegments">
@@ -243,111 +176,6 @@
    </property>
    <property name="placeholderText">
     <string/>
-   </property>
-  </widget>
-  <widget class="QLabel" name="labelSmoothness">
-   <property name="geometry">
-    <rect>
-     <x>40</x>
-     <y>185</y>
-     <width>151</width>
-     <height>21</height>
-    </rect>
-   </property>
-   <property name="text">
-    <string>Smoothness</string>
-   </property>
-  </widget>
-  <widget class="QSlider" name="sliderSmoothness">
-   <property name="geometry">
-    <rect>
-    <x>40</x>
-    <y>210</y>
-    <width>210</width>
-    <height>22</height>
-    </rect>
-   </property>
-   <property name="minimum">
-    <number>0</number>
-   </property>
-   <property name="maximum">
-    <number>100</number>
-   </property>
-   <property name="value">
-    <number>20</number>
-   </property>
-   <property name="orientation">
-    <enum>Qt::Horizontal</enum>
-   </property>
-  </widget>
-  <widget class="QLabel" name="labelSpeed">
-   <property name="geometry">
-    <rect>
-    <x>40</x>
-    <y>235</y>
-    <width>151</width>
-    <height>21</height>
-    </rect>
-   </property>
-   <property name="text">
-    <string>Speed</string>
-   </property>
-  </widget>
-  <widget class="QSlider" name="sliderSpeed">
-   <property name="geometry">
-    <rect>
-     <x>40</x>
-     <y>260</y>
-     <width>210</width>
-     <height>22</height>
-    </rect>
-   </property>
-   <property name="minimum">
-    <number>0</number>
-   </property>
-   <property name="maximum">
-    <number>100</number>
-   </property>
-   <property name="value">
-    <number>50</number>
-   </property>
-   <property name="orientation">
-    <enum>Qt::Horizontal</enum>
-   </property>
-  </widget>
-  <widget class="QLabel" name="labelAccuracy">
-   <property name="geometry">
-    <rect>
-     <x>40</x>
-     <y>285</y>
-     <width>151</width>
-     <height>21</height>
-    </rect>
-   </property>
-   <property name="text">
-    <string>Accuracy</string>
-   </property>
-  </widget>
-  <widget class="QSlider" name="sliderAccuracy">
-   <property name="geometry">
-    <rect>
-     <x>40</x>
-     <y>310</y>
-     <width>210</width>
-     <height>22</height>
-    </rect>
-   </property>
-   <property name="minimum">
-    <number>0</number>
-   </property>
-   <property name="maximum">
-    <number>100</number>
-   </property>
-   <property name="value">
-    <number>70</number>
-   </property>
-   <property name="orientation">
-    <enum>Qt::Horizontal</enum>
    </property>
   </widget>
   <widget class="QPushButton" name="buttonFeedback">

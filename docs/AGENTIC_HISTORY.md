@@ -132,3 +132,33 @@ Copyright (c) 2026 Quant Civil
   - compileall succeeded; no dataset prep or pytest runs executed this phase.
 - Risks/Notes:
   - Requires GDAL CLI and network access; AWS buckets are requester-pays (set AWS_REQUEST_PAYER). 3DEP tier ladder falls back to coarser DEM when 1 m unavailable; manifest preserves gsd/tier for downstream QC. Tile vetting uses nodata fraction threshold only; imagery quality/capture dates not filtered.
+
+## Phase 8 — Test Hardening + Docs Restructure (2026-01-15)
+- Intent: add offline/optional coverage across manifest/schema, numpy runtime tiling/export, and record doc relocations plus agentic input checklist.
+- Summary:
+  - Added pytest modules for manifest parsing, geotransform invariants, numpy runtime export/forward, stub tiling, and optional QGIS import smoke (skips unless `QGIS_TESTS=1`).
+  - Documented doc relocation into `docs/plugin`, `docs/training`, `docs/dataset`; added docs/AGENTIC_REQUIRED.md with upload checklist; refreshed CODE_DESCRIPTION and training README links.
+- Files Touched:
+  - Added: tests/test_manifest_schema.py, tests/test_alignment_invariants.py, tests/test_export_to_numpy_runtime.py, tests/test_numpy_runtime_tiling.py, tests/test_qgis_runtime_smoke.py, docs/AGENTIC_REQUIRED.md.
+  - Modified: docs/dataset/CODE_DESCRIPTION.md, training/README.md, docs/AGENTIC_HISTORY.md (this entry).
+- Commands:
+  - Not run in this phase (static updates; tests not executed here).
+- Validation:
+  - Static reasoning only; tests expected to be deterministic/offline; QGIS smoke gated by env var.
+- Risks/Notes:
+  - QGIS coverage remains optional; dataset prep still depends on GDAL/network outside test stubs. Ensure AGENTIC_REQUIRED stays aligned with future doc moves.
+
+## Phase 9 — Numpy-Only Runtime Simplification (2026-01-15)
+- Intent: remove legacy K-Means/CNN TorchScript paths, torch dependency, and profiling hooks so the plugin runs exclusively on the monolithic next-gen numpy runtime.
+- Summary:
+  - Simplified plugin runtime and UI to a single next-gen path; removed model/resolution/heuristic controls and torch-based code paths.
+  - Trimmed dependency bootstrap to NumPy-only and converted perf_tuner to a no-op shim.
+  - Updated docs (architecture, model notes, code description, README) to reflect numpy-only behavior; refreshed func_test coverage accordingly.
+- Files Touched:
+  - Modified: segmenter.py, funcs.py, dependency_manager.py, perf_tuner.py, segmenter_dialog_base.ui, func_test.py, docs/plugin/ARCHITECTURE.md, docs/plugin/MODEL_NOTES.md, docs/dataset/CODE_DESCRIPTION.md, README.md, docs/AGENTIC_HISTORY.md (this entry).
+- Commands:
+  - None executed this phase (code/doc edits only).
+- Validation:
+  - Static reasoning; tests not run in this phase.
+- Risks/Notes:
+  - Ensure `model/best` artifacts exist before running segmentation; legacy TorchScript CNNs are no longer consumed by the plugin UI/runtime.

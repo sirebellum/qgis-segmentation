@@ -67,4 +67,6 @@ def test_manifest_loader_reads_aligned_tiles(tmp_path):
     assert sample["view1"]["rgb"].shape[-2:] == (32, 32)
     assert sample["view2"]["rgb"].shape[-2:] == (32, 32)
     assert sample["view1"].get("elev") is None or sample["view1"]["elev"].shape[-2:] == (32, 32)
-    assert sample["warp_grid"].shape[-2:] == (32, 32)
+    grid = sample["warp_grid"]
+    assert grid.shape[1:3] == (32, 32)
+    assert grid.shape[-1] == 2

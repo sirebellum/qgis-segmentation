@@ -67,50 +67,13 @@ def _skip_requested() -> bool:
 
 
 def _package_specs() -> Iterable[Dict[str, object]]:
-    torch_spec = os.environ.get("SEGMENTER_TORCH_SPEC")
-    if not torch_spec:
-        torch_spec = _default_torch_spec()
-
-    specs: List[Dict[str, object]] = [
-        {
-            "import": "torch",
-            "pip": torch_spec,
-            "label": "PyTorch",
-            "extra_args": _torch_index_args(),
-        },
+    return [
         {
             "import": "numpy",
             "pip": "numpy>=1.23,<2.0",
             "label": "NumPy",
-        },
-        {
-            "import": "sklearn",
-            "pip": "scikit-learn>=1.1,<2.0",
-            "label": "scikit-learn",
-        },
+        }
     ]
-    return specs
-
-
-def _default_torch_spec() -> str:
-    major = sys.version_info.major
-    minor = sys.version_info.minor
-    if (major, minor) >= (3, 13):
-        return "torch>=2.5.1,<3.0"
-    if (major, minor) >= (3, 12):
-        return "torch>=2.3.1,<3.0"
-    return "torch==2.2.2"
-
-
-def _torch_index_args() -> List[str]:
-    custom_index = os.environ.get("SEGMENTER_TORCH_INDEX_URL")
-    if custom_index:
-        return ["--index-url", custom_index]
-
-    system = platform.system().lower()
-    if system == "darwin":
-        return ["--index-url", "https://download.pytorch.org/whl/cpu"]
-    return ["--index-url", "https://download.pytorch.org/whl/cu121"]
 
 
 def _ensure_package(spec: Dict[str, object]) -> None:
@@ -152,21 +115,6 @@ def _ensure_package(spec: Dict[str, object]) -> None:
         subprocess.check_call(command, env=pip_env)
         _log_dependency_status(f"Dependency installed: {label}")
     except (subprocess.CalledProcessError, OSError) as exc:
-        if import_name == "torch":
-            cpu_args = ["--index-url", "https://download.pytorch.org/whl/cpu"]
-            if extra_args != cpu_args:
-                _LOGGER.warning(
-                    "CUDA torch install failed (%s); retrying with CPU wheels.",
-                    exc,
-                )
-                _log_dependency_status("PyTorch CUDA install failed; retrying with CPU wheels.")
-                try:
-                    subprocess.check_call(_build_command(cpu_args), env=pip_env)
-                    _log_dependency_status("PyTorch CPU wheel installed successfully.")
-                    _close_install_popup(dialog)
-                    return
-                except (subprocess.CalledProcessError, OSError) as cpu_exc:
-                    exc = cpu_exc
         _close_install_popup(dialog)
         raise ImportError(
             "Segmenter could not install dependency '" + str(pip_name) + "'."
