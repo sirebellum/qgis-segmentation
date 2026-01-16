@@ -53,7 +53,7 @@ try:
         warp_to_grid,
     )
     from ._naip_aws_provider import NaipAwsConfig, NaipIndex, NaipTileRef, build_naip_vrt
-    from ._usgs_3dep_provider import DemSelection, download_product, query_products, select_best_dem
+    from ._usgs_3dep_provider import DEM_TIERS, DemSelection, Product, download_product, query_products, select_best_dem
 except ImportError:  # pragma: no cover - fallback when executed directly
     from scripts.data._gdal_utils import (
         GridSpec,
@@ -68,7 +68,7 @@ except ImportError:  # pragma: no cover - fallback when executed directly
         warp_to_grid,
     )
     from scripts.data._naip_aws_provider import NaipAwsConfig, NaipIndex, NaipTileRef, build_naip_vrt
-    from scripts.data._usgs_3dep_provider import DemSelection, download_product, query_products, select_best_dem
+    from scripts.data._usgs_3dep_provider import DEM_TIERS, DemSelection, Product, download_product, query_products, select_best_dem
 
 try:  # Optional dependency for nodata stats
     import rasterio
@@ -82,6 +82,11 @@ CITY_AOIS: Dict[str, Tuple[float, float, float, float]] = {
     "atlanta_ga": (-84.45, 33.70, -84.34, 33.82),
 }
 MOUNTAIN_REGION = (-106.4, 39.2, -105.6, 39.8)
+
+SAMPLE_NAIP_URL = "https://raw.githubusercontent.com/OSGeo/gdal/master/autotest/gcore/data/rgbsmall.tif"
+SAMPLE_NAIP_BBOX = (-44.84032, -23.104184, -44.66872, -22.932584)
+SAMPLE_DEM_URL = "https://raw.githubusercontent.com/OSGeo/gdal/master/autotest/gcore/data/byte.tif"
+SAMPLE_DEM_NATIVE_GSD = 60.0
 
 
 @dataclass
@@ -226,8 +231,59 @@ def _select_naip_tiles(index: NaipIndex, bbox: Sequence[float]) -> List[NaipTile
     return tiles
 
 
-def _select_dem(bbox: Sequence[float], prefer_1m: bool, logger) -> DemSelection:
-    from ._usgs_3dep_provider import DEM_TIERS
+def _write_sample_naip_index(path: Path) -> Path:
+    feature = {
+        "type": "Feature",
+        "geometry": {
+            "type": "Polygon",
+            "bbox": SAMPLE_NAIP_BBOX,
+            "coordinates": [
+                [
+                    [SAMPLE_NAIP_BBOX[0], SAMPLE_NAIP_BBOX[1]],
+                    [SAMPLE_NAIP_BBOX[2], SAMPLE_NAIP_BBOX[1]],
+                    [SAMPLE_NAIP_BBOX[2], SAMPLE_NAIP_BBOX[3]],
+                    [SAMPLE_NAIP_BBOX[0], SAMPLE_NAIP_BBOX[3]],
+                    [SAMPLE_NAIP_BBOX[0], SAMPLE_NAIP_BBOX[1]],
+                ]
+            ],
+        },
+        "properties": {
+            "name": "naip_sample_rgbsmall",
+            "location": SAMPLE_NAIP_URL,
+            "state": "SAMPLE",
+            "year": "sample",
+            "resolution": 100,
+        },
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    doc = {"type": "FeatureCollection", "features": [feature]}
+    path.write_text(json.dumps(doc))
+    return path
+
+
+def _select_dem(
+    bbox: Sequence[float],
+    prefer_1m: bool,
+    logger,
+    allow_stub: bool = False,
+    override_product: Optional[Product] = None,
+    override_native_gsd: Optional[float] = None,
+) -> DemSelection:
+    if override_product is not None:
+        return DemSelection(product=override_product, native_gsd=override_native_gsd)
+
+    if allow_stub:
+        product = Product(
+            id="dem_stub",
+            title="Stub DEM (dry-run)",
+            download_url="https://example.com/dem_stub.tif",
+            dataset="stub_dem",
+            bbox=bbox,
+            spatial_reference="EPSG:4326",
+            resolution=1.0,
+            tier_label="1m",
+        )
+        return DemSelection(product=product, native_gsd=1.0)
 
     all_products = []
     for tier in DEM_TIERS:
@@ -288,6 +344,10 @@ def _tile_pair(aoi: str, rgb: Path, dem: Path, out_rgb_dir: Path, out_dem_dir: P
 
     out_rgb_dir.mkdir(parents=True, exist_ok=True)
     out_dem_dir.mkdir(parents=True, exist_ok=True)
+
+    if patch > width or patch > height:
+        patch = min(patch, width, height)
+        stride = patch
 
     x = 0
     while x + patch <= width:
@@ -381,11 +441,15 @@ def main() -> None:
     parser.add_argument("--naip-index-source", type=str, default=None, help="Override NAIP index URL (default: official footprint)")
     parser.add_argument("--refresh-index", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--sample-data", action="store_true", help="Use tiny public sample NAIP/DEM assets for a real download smoke run (no AWS/TNM)")
     parser.add_argument("--validate", action="store_true")
     parser.add_argument("--validate-only", action="store_true")
     parser.add_argument("--sample-tiles", type=int, default=8)
     parser.add_argument("--max-nodata-frac", type=float, default=0.25)
     parser.add_argument("--use-https", action="store_true", help="Use HTTPS instead of vsis3 for NAIP COGs")
+    parser.add_argument("--dem-url", type=str, default=None, help="Override DEM download URL (bypasses TNM query)")
+    parser.add_argument("--dem-id", type=str, default=None, help="Optional DEM identifier when using --dem-url")
+    parser.add_argument("--dem-native-gsd", type=float, default=None, help="Native DEM resolution (meters) for --dem-url")
     args = parser.parse_args()
 
     output_root = Path(args.output_dir).expanduser().resolve()
@@ -393,21 +457,46 @@ def main() -> None:
     layout = _ensure_dirs(base)
     cache_dir = Path(args.cache_dir).expanduser().resolve() if args.cache_dir else layout["cache"]
 
+    sample_mode = bool(args.sample_data)
+    if sample_mode and args.dry_run:
+        raise ValueError("--sample-data cannot be combined with --dry-run")
+    if sample_mode and args.patch_size > 64:
+        args.patch_size = 32
+    if sample_mode:
+        args.stride = min(args.stride, args.patch_size)
+
     if args.validate_only:
         _validate_tiles(layout["manifest"], args.sample_tiles)
         return
 
-    require_gdal_tools()
+    if not args.dry_run:
+        require_gdal_tools()
 
-    naip_cfg = NaipAwsConfig(index_url=args.naip_index_source)
-    naip_index = NaipIndex(cache_dir / "index", naip_cfg, index_path=Path(args.naip_index_path) if args.naip_index_path else None, refresh=args.refresh_index, logger=_log)
+    naip_cfg = NaipAwsConfig(index_url=args.naip_index_source, requester_pays=not sample_mode)
+    sample_index_path = None
+    if sample_mode:
+        sample_index_path = _write_sample_naip_index(cache_dir / "index" / "naip_sample.geojson")
+    naip_index = NaipIndex(
+        cache_dir / "index",
+        naip_cfg,
+        index_path=Path(args.naip_index_path) if args.naip_index_path else sample_index_path,
+        refresh=args.refresh_index,
+        logger=_log,
+        allow_stub=bool(args.dry_run),
+    )
+
+    if sample_mode:
+        _log("Sample mode: using public GitHub sample assets (rgbsmall.tif + byte.tif); AWS/TNM access not required.")
 
     aoi_list: List[Tuple[str, Tuple[float, float, float, float]]] = []
-    for name in args.cities:
-        if name not in CITY_AOIS:
-            raise ValueError(f"Unknown city AOI: {name}")
-        aoi_list.append((name, CITY_AOIS[name]))
-    aoi_list.append(_sample_mountain_aoi(args.seed, args.aoi_size_m))
+    if sample_mode:
+        aoi_list.append(("sample_public", SAMPLE_NAIP_BBOX))
+    else:
+        for name in args.cities:
+            if name not in CITY_AOIS:
+                raise ValueError(f"Unknown city AOI: {name}")
+            aoi_list.append((name, CITY_AOIS[name]))
+        aoi_list.append(_sample_mountain_aoi(args.seed, args.aoi_size_m))
 
     manifest: List[ManifestRecord] = []
     retries = args.max_retries
@@ -423,7 +512,40 @@ def main() -> None:
         try:
             naip_tiles = _select_naip_tiles(naip_index, bbox)
             naip_urls = [tile.gdal_source(use_vsis3=not args.use_https) for tile in naip_tiles]
-            dem_selection = _select_dem(bbox, prefer_1m=bool(args.prefer_1m_dem), logger=_log)
+            dem_override_product = None
+            dem_override_native_gsd = args.dem_native_gsd
+            if sample_mode:
+                dem_override_product = Product(
+                    id="sample_dem",
+                    title="Sample DEM (GitHub raw)",
+                    download_url=SAMPLE_DEM_URL,
+                    dataset="sample_dem",
+                    bbox=bbox,
+                    spatial_reference="EPSG:4326",
+                    resolution=dem_override_native_gsd or SAMPLE_DEM_NATIVE_GSD,
+                    tier_label="sample",
+                )
+                dem_override_native_gsd = dem_override_native_gsd or SAMPLE_DEM_NATIVE_GSD
+            elif args.dem_url:
+                dem_override_product = Product(
+                    id=args.dem_id or Path(args.dem_url).stem,
+                    title=args.dem_id or "Custom DEM override",
+                    download_url=args.dem_url,
+                    dataset="custom_dem",
+                    bbox=bbox,
+                    spatial_reference="EPSG:4326",
+                    resolution=args.dem_native_gsd,
+                    tier_label="custom",
+                )
+
+            dem_selection = _select_dem(
+                bbox,
+                prefer_1m=bool(args.prefer_1m_dem),
+                logger=_log,
+                allow_stub=bool(args.dry_run),
+                override_product=dem_override_product,
+                override_native_gsd=dem_override_native_gsd,
+            )
             if args.dry_run:
                 _log(f"Dry-run: selected {len(naip_tiles)} NAIP tiles and DEM {dem_selection.product.title}")
                 continue
@@ -432,7 +554,13 @@ def main() -> None:
             raw_naip_dir.mkdir(parents=True, exist_ok=True)
             raw_dem_dir.mkdir(parents=True, exist_ok=True)
             vrt_naip = raw_naip_dir / f"{aoi_name}_naip.vrt"
-            build_naip_vrt(naip_urls, vrt_naip, requester_pays=naip_cfg.requester_pays, logger=_log)
+            build_naip_vrt(
+                naip_urls,
+                vrt_naip,
+                requester_pays=naip_cfg.requester_pays,
+                logger=_log,
+                force_vsicurl=True,
+            )
 
             dem_products = dem_selection.product
             dem_path = download_product(dem_products, cache_dir, logger=_log)
@@ -449,6 +577,8 @@ def main() -> None:
             reproj_dem = proc_dir_dem / f"{aoi_name}_dem.tif"
             rgb_info = _warp_naip(vrt_naip, reproj_rgb, bbox, final_px, target_epsg, env_req, _log)
             grid = _grid_from_info(rgb_info)
+            if grid.epsg == 0 and target_epsg:
+                grid.epsg = target_epsg
             warp_to_grid(dem_vrt, reproj_dem, grid, resampling="bilinear", dst_nodata=-9999, env=env_req, logger=_log)
             dem_info = gdalinfo_json(reproj_dem)
             if not geotransforms_equal(rgb_info.get("geoTransform", []), dem_info.get("geoTransform", [])):

@@ -1,0 +1,28 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Polygon",
+        "bbox": [-90.0, 30.0, -80.0, 40.0],
+        "coordinates": [
+          [
+            [-90.0, 30.0],
+            [-80.0, 30.0],
+            [-80.0, 40.0],
+            [-90.0, 40.0],
+            [-90.0, 30.0]
+          ]
+        ]
+      },
+      "properties": {
+        "name": "naip_fixture_tile",
+        "location": "s3://naip-visualization/example.tif",
+        "state": "GA",
+        "year": "2020",
+        "resolution": 60
+      }
+    }
+  ]
+}

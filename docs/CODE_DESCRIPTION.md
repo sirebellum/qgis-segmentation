@@ -64,3 +64,13 @@ Copyright (c) 2026 Quant Civil
 ## Ops (Phase 10)
 - Validation-only pass: python -m compileall . (pass) and ./.venv/bin/python -m pytest -q (44 passed, 1 skipped); no runtime changes.
 - System python lacks pytest; use the repo venv for default test invocation to keep offline checks green.
+
+## Ops (Phase 11 — NAIP AWS dry-run hardening)
+- `prepare_naip_aws_3dep_dataset.py` now skips GDAL tool checks in `--dry-run` and uses an embedded NAIP index + DEM stub to avoid network failures; real runs unchanged.
+- `scripts/data/_naip_aws_provider.py` gains GeoJSON-first querying, bbox overlap filtering, and stub index emission for dry-run.
+- Added offline tests: `tests/test_prepare_naip_aws_3dep_dry_run.py` plus fixture `tests/fixtures/naip_index_min.geojson` to ensure dry-run succeeds without GDAL/network.
+
+## Ops (Phase 12 — NAIP AWS real-run fallback)
+- Added `--sample-data` smoke mode to `prepare_naip_aws_3dep_dataset.py` that downloads tiny public GitHub rasters (rgbsmall.tif + byte.tif) and executes the full warp/tile/manifest path without AWS/TNM credentials.
+- Introduced explicit DEM override flags (`--dem-url`, `--dem-id`, `--dem-native-gsd`) and requester-pays headers for NAIP index downloads to avoid silent 403s.
+- New offline tests cover DEM override short-circuit and NAIP requester-pays header propagation.

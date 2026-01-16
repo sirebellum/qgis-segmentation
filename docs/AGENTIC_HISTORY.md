@@ -180,3 +180,43 @@ Copyright (c) 2026 Quant Civil
   - pytest (venv): pass; torch absent from runtime path per existing tests.
 - Risks/Notes:
   - System python lacks pytest; use repo venv for default test invocation. No runtime/state changes performed.
+
+## Phase 11 — NAIP AWS Dry-Run Hardening (2026-01-16)
+- Intent: Make the NAIP AWS + 3DEP dataset prep dry-run succeed offline and add deterministic tests.
+- Summary:
+  - Added stub NAIP index + DEM selection for `--dry-run`, skipping GDAL checks and network fetches.
+  - Enhanced NAIP provider with GeoJSON-first parsing, bbox overlap filter, and cached/stub handling.
+  - Introduced offline dry-run tests and fixture to validate stub index path.
+- Files Touched:
+  - Modified: scripts/data/prepare_naip_aws_3dep_dataset.py, scripts/data/_naip_aws_provider.py, docs/dataset/DATASETS.md, docs/CODE_DESCRIPTION.md.
+  - Added: tests/test_prepare_naip_aws_3dep_dry_run.py, tests/fixtures/naip_index_min.geojson, docs/dataset/CODE_DESCRIPTION.md.
+- Commands:
+  - /Users/josh/gits/qgis-segmentation/.venv/bin/python scripts/data/prepare_naip_aws_3dep_dataset.py --output-dir /tmp/naipaws3dep --dry-run --seed 123
+  - /Users/josh/gits/qgis-segmentation/.venv/bin/python -m compileall .
+  - /Users/josh/gits/qgis-segmentation/.venv/bin/python -m pytest -q
+- Validation:
+  - Dry-run command exits 0 with stub index/DEM logs; compileall + pytest (46 passed, 1 skipped) succeeded in repo venv.
+- Risks/Notes:
+  - Full (non-dry-run) path still requires GDAL CLI + network; stub index is dry-run only.
+
+## Phase 12 — NAIP AWS Real-Run Fallback (2026-01-16)
+- Intent: Fix real-run failures (NAIP index 403, TNM DNS resolution) by enabling a minimal real download path without AWS/TNM credentials and tightening requester-pays handling.
+- Summary:
+  - Added `--sample-data` mode to `prepare_naip_aws_3dep_dataset.py` that downloads tiny public GitHub rasters (rgbsmall.tif/byte.tif) and exercises the full warp/tile/manifest pipeline; clamped patch/stride for small sources.
+  - Introduced DEM override flags (`--dem-url`, `--dem-id`, `--dem-native-gsd`) and Requester Pays headers + actionable 403 error for NAIP index fetches.
+  - Documented minimal real download recipe in DATASETS.md and recorded the new ops phase in CODE_DESCRIPTION.
+- Files Touched:
+  - Modified: scripts/data/prepare_naip_aws_3dep_dataset.py, scripts/data/_naip_aws_provider.py, docs/dataset/DATASETS.md, docs/CODE_DESCRIPTION.md.
+  - Modified tests: tests/test_prepare_naip_aws_3dep_dry_run.py (new overrides/header coverage).
+- Commands:
+  - /Users/josh/gits/qgis-segmentation/.venv/bin/python scripts/data/prepare_naip_aws_3dep_dataset.py --output-dir /tmp/naipaws3dep-real --cities chicago_il --aoi-size-m 600 --patch-size 256 --stride 256 --prefer-1m-dem 0 --target-gsd 10 --use-https --seed 7 (failed: NAIP index 403 Requester Pays).
+  - curl -I https://naip-visualization.s3.amazonaws.com/index/naip_footprint.gpkg (403 AccessDenied without credentials).
+  - curl -I https://tnmaccess.usgs.gov/api/v1/products (DNS resolution failed).
+  - /Users/josh/gits/qgis-segmentation/.venv/bin/python -m compileall .
+  - /Users/josh/gits/qgis-segmentation/.venv/bin/python -m pytest -q
+  - /Users/josh/gits/qgis-segmentation/.venv/bin/python scripts/data/prepare_naip_aws_3dep_dataset.py --output-dir /tmp/naipaws3dep-sample --sample-data --patch-size 32 --stride 32 --target-gsd 30 --use-https --seed 7
+- Validation:
+  - compileall: pass; pytest: pass (including new override/header tests).
+  - Sample real download exits 0; manifest and tiles written under /tmp/naipaws3dep-sample/data/naip_aws_3dep/.
+- Risks/Notes:
+  - True AWS/TNM runs still require credentials/network; Requester Pays now surfaces actionable errors. Sample mode is for smoke validation, not production data quality.

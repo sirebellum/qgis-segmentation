@@ -11,6 +11,7 @@ Copyright (c) 2026 Quant Civil
 - DEM tier ladder: prefers 1 m (`3DEP 1 meter DEM`, `USGS 1 meter x 1 meter Resolution DEM`), falls back to 1/3 arc-second (~10 m), then 1 arc-second (~30 m). Selection recorded in manifest.
 - Layout (under `--output-dir` → `data/naip_aws_3dep/`): `raw/naip/`, `raw/dem/`, `processed/rgb/`, `processed/dem/`, `processed/manifest.jsonl`, `logs/`, `cache/` (index + downloads).
 - Manifest fields per tile: `aoi_name`, `tile_id`, `rgb_path`, `dem_path`, `epsg`, `pixel_size`, `bounds`, `geotransform`, `nodata_fraction`, `source_naip_urls`, `source_naip_year/state`, `source_dem_id`, `dem_tier`, `dem_native_gsd`, `dem_target_gsd`, `dem_resampled`.
+- Dry-run: skips GDAL/tool checks and uses an embedded GeoJSON stub index plus stub DEM selection; no downloads are attempted. Full runs still require GDAL CLIs and network access.
 
 Quickstart:
 ```
@@ -18,6 +19,13 @@ python scripts/data/prepare_naip_aws_3dep_dataset.py --output-dir /tmp/naipaws3d
 python scripts/data/prepare_naip_aws_3dep_dataset.py --output-dir /tmp/naipaws3dep --seed 123 --aoi-size-m 4000 --patch-size 512 --stride 128
 python scripts/data/prepare_naip_aws_3dep_dataset.py --output-dir /tmp/naipaws3dep --validate --sample-tiles 10
 ```
+
+Minimal real download (no AWS/TNM creds):
+```
+python scripts/data/prepare_naip_aws_3dep_dataset.py --output-dir /tmp/naipaws3dep --sample-data --patch-size 32 --stride 32 --target-gsd 30 --use-https --seed 7
+```
+- Uses public GitHub sample rasters (`rgbsmall.tif`, `byte.tif`) via HTTPS; still runs the real warp/tile/manifest pipeline with tiny artifacts under `data/naip_aws_3dep/`.
+- For full AWS runs, provide AWS credentials (Requester Pays) or `--naip-index-path`; TNM access remains required for DEM discovery unless `--dem-url` is supplied.
 
 ## TNM NAIP + 3DEP (legacy)
 - Script: `scripts/data/prepare_naip_3dep_dataset.py` (TNM NAIP download) remains for backward compatibility. Manifest schema is a subset of the AWS version and still works with the loader.
