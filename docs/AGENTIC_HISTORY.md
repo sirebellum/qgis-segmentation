@@ -231,3 +231,14 @@ Copyright (c) 2026 Quant Civil
 - Commands: not yet rerun in this phase (compileall/pytest recommended post-dataset rewrite).
 - Validation: pending; synthetic-only defaults expected to keep offline pytest green once rerun.
 - Risks/Notes: Manifest/DEM ingestion temporarily disabled; downstream datasets will need reintroduction once new ingestion lands.
+
+## Phase 14 — Series Reset + Ingest Scaffold (2026-01-16)
+- Intent: archive prior phases, start a new history series from the current code state, and seed a datasets ingestion scaffold without touching runtime paths.
+- Summary:
+  - Added [docs/AGENTIC_HISTORY_SERIES_2.md](AGENTIC_HISTORY_SERIES_2.md) with Phase 0 capturing the present numpy-only plugin, RGB-only training stack, and paused dataset ingestion; included a template for future phases.
+  - Appended pointer here to the new series and noted that numbering restarts there with Phase 0 as current state.
+  - Seeded a dataset ingestion scaffold under `scripts/datasets_ingest/` (config/interfaces/manifest/provider stubs + CLI) with offline-only defaults and minimal tests; created `docs/dataset/DATASETS.md` to flag the rewrite.
+- Files Touched: docs/AGENTIC_HISTORY_SERIES_2.md, docs/AGENTIC_HISTORY.md, docs/CODE_DESCRIPTION.md, docs/dataset/DATASETS.md, scripts/datasets_ingest/*, tests/test_datasets_ingest_stub.py.
+- Commands: pending (compileall/pytest to be run after scaffold addition).
+- Validation: not yet executed in this phase; scaffold is import-safe and offline by construction.
+- Risks/Notes: New history lives alongside this file (append-only). Dataset ingestion scaffold is stub-only; existing configs remain historical until migration.
