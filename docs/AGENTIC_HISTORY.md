@@ -29,3 +29,11 @@ New series beginning at the current repository state. Phase numbering restarts h
 - **Commands**: none (doc-only).
 - **Validation**: Manual link sanity checks (internal doc links); no tests executed.
 - **Risks/Notes**: Snapshot reflects current workspace only; unused torch-prefetch helpers remain in funcs.py but are not on the plugin path.
+
+## Phase 2 — Training baseline snapshot
+- **Intent**: Capture a repo-verified baseline of the current training pipeline, export contract, and ingestion scaffold status.
+- **Summary**: Added [docs/training/TRAINING_BASELINE.md](training/TRAINING_BASELINE.md) covering synthetic-only data flow, config/CLI entrypoints, numpy export/runtime contract, tests, and documented code-vs-doc gaps; fixed dataset doc reference in [docs/CODE_DESCRIPTION.md](CODE_DESCRIPTION.md).
+- **Files Touched**: [docs/training/TRAINING_BASELINE.md](training/TRAINING_BASELINE.md), [docs/CODE_DESCRIPTION.md](CODE_DESCRIPTION.md), [docs/AGENTIC_HISTORY.md](AGENTIC_HISTORY.md).
+- **Commands**: none (doc-only).
+- **Validation**: Link sanity checks for new baseline doc; no tests executed.
+- **Risks/Notes**: Dataset ingestion remains stubbed; legacy NAIP/DEM prep scripts referenced historically are still absent.

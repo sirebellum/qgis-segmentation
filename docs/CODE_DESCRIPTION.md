@@ -33,7 +33,7 @@ Copyright (c) 2026 Quant Civil
 - scripts/data/prepare_naip_3dep_dataset.py + helpers: TNM discovery, GDAL-based mosaic/clip/reproject, DEM-to-RGB alignment, tiling, manifest.jsonl.
 - training/data/naip_3dep_dataset.py: manifest reader + elevation standardization over rasterio; reusable for other manifest-based paired rasters.
 - configs/datasets/naip_3dep_example.yaml: sample manifest-driven config (PyYAML optional, python configs still supported).
-- Docs added: docs/DATASETS.md, docs/TRAINING_PIPELINE.md.
+- Docs added: docs/dataset/DATASETS.md, docs/training/TRAINING_PIPELINE.md.
 
 ## Training (Phase 7, NAIP-on-AWS refactor)
 - scripts/data/prepare_naip_aws_3dep_dataset.py: NAIP AWS Requester Pays COG ingestion via cached footprint index + 3DEP TNM Access DEM ladder; derives a single grid (-tap) and warps DEM to RGB grid; tiles 512x512/stride 128 with nodata filtering; emits enriched manifest (tier/native/resampled metadata).
@@ -88,3 +88,7 @@ Copyright (c) 2026 Quant Civil
 ## Ops (Phase 15 — runtime snapshot doc)
 - Added [docs/plugin/RUNTIME_STATUS.md](plugin/RUNTIME_STATUS.md) as a token-efficient snapshot of the QGIS runtime (UI → task → numpy engine → render) with contracts, config points, and known gaps.
 - Linked [docs/plugin/ARCHITECTURE.md](plugin/ARCHITECTURE.md) to the new snapshot and recorded the iteration in [docs/AGENTIC_HISTORY.md](AGENTIC_HISTORY.md).
+
+## Docs (Phase 16 — training baseline snapshot)
+- Added [docs/training/TRAINING_BASELINE.md](training/TRAINING_BASELINE.md) summarizing current RGB-only training flow, synthetic data default, ingestion scaffold status, export/runtime contract, and offline tests.
+- Corrected dataset doc reference to [docs/dataset/DATASETS.md](dataset/DATASETS.md).
