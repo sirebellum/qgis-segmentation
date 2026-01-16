@@ -21,5 +21,5 @@ Purpose: minimal list of files to upload when generating agentic prompt iteratio
 
 ## Zip archive command
 ```bash
-zip agent.zip docs/dataset/CODE_DESCRIPTION.md docs/AGENTIC_HISTORY.md docs/plugin/ARCHITECTURE.md docs/plugin/MODEL_NOTES.md docs/training/TRAINING_PIPELINE.md docs/dataset/DATASETS.md training/config.py scripts/data/prepare_naip_aws_3dep_dataset.py scripts/data/prepare_naip_3dep_dataset.py model/runtime_numpy.py funcs.py segmenter.py
+zip agent.zip docs/AGENTIC_REQUIRED.md docs/AGENTIC_HISTORY.md docs/CODE_DESCRIPTION.md docs/plugin/ARCHITECTURE.md docs/plugin/MODEL_NOTES.md docs/training/TRAINING_PIPELINE.md docs/dataset/DATASETS.md
 ```
