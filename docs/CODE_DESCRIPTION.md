@@ -60,3 +60,7 @@ Copyright (c) 2026 Quant Civil
 ## Notes
 - TorchScript runtime paths were removed; plugin is numpy-only.
 - Real raster IO is stubbed behind optional rasterio/gdal; synthetic paths remain the CI-safe default.
+
+## Ops (Phase 10)
+- Validation-only pass: python -m compileall . (pass) and ./.venv/bin/python -m pytest -q (44 passed, 1 skipped); no runtime changes.
+- System python lacks pytest; use the repo venv for default test invocation to keep offline checks green.

@@ -162,3 +162,21 @@ Copyright (c) 2026 Quant Civil
   - Static reasoning; tests not run in this phase.
 - Risks/Notes:
   - Ensure `model/best` artifacts exist before running segmentation; legacy TorchScript CNNs are no longer consumed by the plugin UI/runtime.
+
+## Phase 10 — Offline Stabilization Check (2026-01-15)
+- Intent: verify numpy-only runtime invariants and confirm offline tests/compileall pass without code changes.
+- Summary:
+  - Ran compileall across the repo (venv python) — success.
+  - Default `python -m pytest -q` failed on system python (pytest missing); reran with repo venv and all tests passed (44 passed, 1 skipped, ~5s).
+  - No source/runtime changes made; validation only.
+- Files Touched:
+  - Modified: docs/AGENTIC_HISTORY.md (this entry), docs/CODE_DESCRIPTION.md (phase note update).
+- Commands:
+  - python -m compileall .
+  - python -m pytest -q (system python; fails: No module named pytest)
+  - ./.venv/bin/python -m pytest -q
+- Validation:
+  - compileall: pass.
+  - pytest (venv): pass; torch absent from runtime path per existing tests.
+- Risks/Notes:
+  - System python lacks pytest; use repo venv for default test invocation. No runtime/state changes performed.
