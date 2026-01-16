@@ -4,43 +4,42 @@ Copyright (c) 2026 Quant Civil
 -->
 # Architecture
 
-For a current-state runtime snapshot, see [RUNTIME_STATUS.md](RUNTIME_STATUS.md).
+For a current-state runtime snapshot, see [RUNTIME_STATUS.md](RUNTIME_STATUS.md). The plugin runtime has been restored to the original legacy path (TorchScript CNN + scikit-learn K-Means). Future integration of the new numpy/torch runtime is deferred until the new model is trained.
 
-- Scope: QGIS 3 plugin "Map Segmenter"; code is source of truth. Dependency bootstrap runs on plugin load and now optionally installs torch when enabled.
+- Scope: QGIS 3 plugin "Map Segmenter"; dependency bootstrap runs on plugin import and installs torch, NumPy, and scikit-learn into `vendor/` unless skipped via env.
 
 ## End-to-end flow
-- User opens dialog from plugin action in [segmenter.py](segmenter.py); UI defined by [segmenter_dialog_base.ui](segmenter_dialog_base.ui) and loaded via [segmenter_dialog.py](segmenter_dialog.py).
-- `Segmenter.predict()` validates 3-band GDAL raster selection, parses segment count, and dispatches a `QgsTask` via `run_task()`.
-- Task runs `predict_nextgen_numpy()` from [funcs.py](funcs.py) with cancellation token + progress callbacks while the runtime loader in [model/runtime_backend.py](model/runtime_backend.py) selects torch (CUDA/MPS/CPU) when available or falls back to numpy. Raster IO stays off the UI thread.
-- Segmentation output is rendered to a temporary GeoTIFF with source extent/CRS through [qgis_funcs.py](qgis_funcs.py) `render_raster()` and added to the QGIS project.
+- User opens the dialog from the plugin action in [segmenter.py](segmenter.py); UI defined by [segmenter_dialog_base.ui](segmenter_dialog_base.ui) and loaded via [segmenter_dialog.py](segmenter_dialog.py) (layer selector, segment count, smoothness/speed/accuracy sliders, log/progress, buttons).
+- `Segmenter.run()` sets the device preference (CUDA → MPS → CPU) and initializes heuristics/progress state.
+- `Segmenter.predict()` validates the selected GDAL raster (provider `gdal`, source `.tif/.tiff`, exactly 3 bands), parses segment count and resolution, builds blur + heuristic overrides, and dispatches a `QgsTask` via `run_task()`.
+- Task executes either `legacy_kmeans_segmentation` or `legacy_cnn_segmentation` from [funcs.py](funcs.py) with a cancellation token + status callbacks. The CNN path loads a TorchScript model from [models/](../../models) (`model_<resolution>.pth`) and tiles/stitches via `predict_cnn`; the K-Means path clusters block samples via scikit-learn with optional torch-accelerated assignment.
+- On completion, `Task.finished()` renders the uint8 label map to a temporary GeoTIFF with source extent/CRS through [qgis_funcs.py](qgis_funcs.py) `render_raster()` and adds it to the QGIS project; progress is finalized in the dialog.
 
 ## Module responsibilities
-- [segmenter.py](segmenter.py): plugin entrypoint; menu/toolbar wiring; dialog lifecycle; progress bar/status logging; `QgsTask` wrapper; loads numpy runtime from `model/best` and dispatches `predict_nextgen_numpy`; enforces GDAL + `.tif/.tiff` + 3-band requirement with user-facing reasons.
-- [segmenter_dialog.py](segmenter_dialog.py) / [segmenter_dialog_base.ui](segmenter_dialog_base.ui): Qt dialog shell and widgets (layer selector, segment count input, log/progress, buttons).
-- [funcs.py](funcs.py): numerical engine. Raster materialization (strict 3-band channel-first validation + `.tif/.tiff` check), tiling/stitching, cancellation/status helpers, and tiled `predict_nextgen_numpy` that accepts any backend exposing `predict_labels`.
-- [model/runtime_backend.py](model/runtime_backend.py): backend selector (torch preferred, numpy fallback) with device preference handling; logs fallback reason via status callbacks.
-- [model/runtime_torch.py](model/runtime_torch.py): torch runtime consuming the same `model.npz` + `meta.json` artifacts, preferring CUDA → MPS → CPU; mirrors numpy forward pass.
-- [qgis_funcs.py](qgis_funcs.py): writes numpy labels to temp GeoTIFF and registers a `QgsRasterLayer` with opacity preserved.
-- [dependency_manager.py](dependency_manager.py): on-demand vendor install of NumPy into `vendor/`, honoring env toggles (`SEGMENTER_*`); optional torch install is gated by `SEGMENTER_ENABLE_TORCH=1` and otherwise skipped.
-- [perf_tuner.py](perf_tuner.py): compatibility shim returning default adaptive settings (no profiling).
-- [raster_utils.py](raster_utils.py): `ensure_channel_first` utility for GDAL writes.
-- [model/runtime_numpy.py](model/runtime_numpy.py): numpy-only runtime for the next-gen variable-K model consuming `model/best` artifacts.
-- [model/README.md](model/README.md): artifact contract and producer/consumer notes for the numpy runtime.
+- [segmenter.py](segmenter.py): plugin entrypoint; menu/toolbar wiring; dialog lifecycle; progress/log handling; task wrapper; 3-band GeoTIFF validation; heuristic/blur tuning; dispatches legacy CNN/K-Means flows; device selection (CUDA → MPS → CPU).
+- [segmenter_dialog.py](segmenter_dialog.py) / [segmenter_dialog_base.ui](segmenter_dialog_base.ui): Qt dialog shell and widgets (layer chooser, segment count, sliders, log/progress, buttons, logo hover interactions).
+- [funcs.py](funcs.py): numerical engine for legacy flows. Raster materialization via GDAL, tiling/stitching, cancellation/status helpers, legacy CNN/TorchScript inference (`predict_cnn`) and legacy K-Means (`predict_kmeans`), optional GPU cluster assignment, blur smoothing.
+- [qgis_funcs.py](qgis_funcs.py): writes numpy labels to temp GeoTIFF and registers a `QgsRasterLayer` with opacity 1.0.
+- [dependency_manager.py](dependency_manager.py): on-demand vendor install of torch, NumPy, and scikit-learn (skip with `SEGMENTER_SKIP_AUTO_INSTALL`; torch index/args configurable via env); interpreter override via `SEGMENTER_PYTHON`.
+- Adaptive settings: static defaults from [funcs.py](funcs.py) `AdaptiveSettings` (prefetch depth 2, safety factor 8); no device profiling thread.
+- [raster_utils.py](raster_utils.py): `ensure_channel_first` helper for GDAL writes.
+- [model/runtime_backend.py](model/runtime_backend.py), [model/runtime_numpy.py](model/runtime_numpy.py), [model/runtime_torch.py](model/runtime_torch.py): next-gen runtime selector and numpy/torch implementations for the new model type — **present but not wired into the current plugin flow; deferred until the new model is trained.**
+- [model/README.md](model/README.md): artifact contract for the planned next-gen numpy runtime.
 - [metadata.txt](metadata.txt): QGIS plugin metadata (name, version 2.2.1, author, tracker/homepage).
 
 ## Key extension points / config
-- Runtime: backend selector prefers torch GPU/CPU when available, falls back to numpy; segment count is user-configurable; torch path remains optional.
-- Env toggles: `SEGMENTER_SKIP_AUTO_INSTALL`, `SEGMENTER_PYTHON` for bootstrap; `SEGMENTER_ENABLE_TORCH` to attempt installing torch; `SEGMENTER_RUNTIME_BACKEND`/`SEGMENTER_DEVICE` override backend/device selection.
-- Rendering: `render_raster()` uses tempdir GeoTIFF; layer name includes input layer and segment count.
+- Runtime selection (current): user chooses CNN vs K-Means in the UI; device auto-selected (CUDA → MPS → CPU). Historical runtime selector env flags are inactive; next-gen runtime selector is deferred.
+- Env toggles: `SEGMENTER_SKIP_AUTO_INSTALL`, `SEGMENTER_PYTHON`, torch index overrides (`SEGMENTER_TORCH_SPEC`, `SEGMENTER_TORCH_INDEX_URL`), and pip flags in `dependency_manager.py`.
+- Rendering: `render_raster()` writes to tempdir GeoTIFF; layer name includes input layer, model choice, segment count, and resolution label.
 
-## Runtime/perf notes
-- Tiling: `tile_raster` pads to square tiles, stitches canvas back, and trims padding after inference. Inputs must already be validated 3-band arrays.
-- Cancellation: `CancellationToken` checked via `_maybe_raise_cancel` across loops; task cancel cancels token and updates UI.
-- Logging/progress: worker emits status strings parsed by `_maybe_update_progress_from_message` to keep UI progress bar moving; history buffered in dialog log.
+## Runtime/perf notes (legacy path)
+- Tiling: CNN path tiles to 512px by default with heuristic overrides (192–768px) and stitches back; K-Means uses block-based clustering and upsamples.
+- Blur smoothing: optional legacy blur kernel/iteration applied to outputs for stability.
+- Cancellation: `CancellationToken` checked throughout loops; task cancel toggles token and UI state.
+- Logging/progress: worker status strings parsed by `_maybe_update_progress_from_message` keep the progress bar monotonic; log buffer shown in the dialog.
 
 ## Training scaffolding (isolated)
-- Location: [training/](training) (pure PyTorch, eager mode). Not wired into QGIS runtime; exports numpy artifacts for runtime pickup.
-- Components: config dataclasses, synthetic RGB dataset with paired-view augmentations, monolithic model (encoder stride/4, soft k-means head, fast/learned refinement lanes), unsupervised losses (consistency, entropy shaping, edge-aware smoothness), proxy metrics, CLI train/eval runners.
-- Export: `training/export.py` writes best checkpoint weights to `model/best` and `training/best_model` as `model.npz` + `meta.json` + `metrics.json` when training loss improves (unless `--no-export`).
-- Contract: forward(rgb, K) → probabilities [B,K,512,512] (K ≤ 16) + embeddings stride/4; RGB-only inputs.
-- CLI: `python -m training.train --steps 3 --grad-accum 2 --amp 0` for smoke training; `python -m training.eval --synthetic` for proxy metrics.
+- Location: [training/](training) (eager PyTorch). Not wired into the current plugin runtime; exports numpy artifacts for the future runtime path.
+- Components: config dataclasses, synthetic RGB dataset with paired-view augmentations, monolithic model (stride/4 encoder, soft k-means head, smoothing lanes), unsupervised losses, proxy metrics, CLI train/eval runners.
+- Export: `training/export.py` writes best checkpoints to `model/best` and `training/best_model` as `model.npz` + `meta.json` + `metrics.json` when enabled.
+- Note: Runtime update to consume these new artifacts is **deferred** until training is complete.

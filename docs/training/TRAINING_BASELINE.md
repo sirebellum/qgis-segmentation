@@ -4,7 +4,7 @@ Copyright (c) 2026 Quant Civil
 -->
 # Training Baseline (Jan 2026)
 
-- Scope (verified): current RGB-only PyTorch training scaffold, numpy export path, and offline ingestion stubs. No changes to plugin runtime; runtime stays numpy-only.
+- Scope (verified): current RGB-only PyTorch training scaffold, numpy export path, and offline ingestion stubs. Plugin runtime is presently the legacy TorchScript CNN/K-Means path; adoption of the new numpy runtime is **deferred** until the new model is trained.
 - Sources of truth reviewed: [TRAINING_PIPELINE.md](TRAINING_PIPELINE.md), [docs/dataset/DATASETS.md](../dataset/DATASETS.md), [docs/plugin/ARCHITECTURE.md](../plugin/ARCHITECTURE.md), [docs/plugin/MODEL_NOTES.md](../plugin/MODEL_NOTES.md), [docs/CODE_DESCRIPTION.md](../CODE_DESCRIPTION.md), [docs/AGENTIC_HISTORY.md](../AGENTIC_HISTORY.md), plus [training](../../training), [scripts/datasets_ingest](../../scripts/datasets_ingest), [scripts/data](../../scripts/data), and [model](../../model) runtime files.
 
 ## Flow (verified)
@@ -32,7 +32,7 @@ Copyright (c) 2026 Quant Civil
   - `model.npz` with weights renamed for the runtime stem/block1/block2/seed_proj layout.
   - `meta.json` fields: `version`, `max_k`, `embed_dim`, `temperature`, `cluster_iters_default`, `smooth_iters_default`, `input_mean/std/scale`, `stride=4`, `supports_learned_refine=false`.
   - `metrics.json` with `score` (best loss proxy) and `step` plus optional extras.
-- Runtime consumer: [model/runtime_numpy.py](model/runtime_numpy.py) loads `model/best`, pads to stride, runs encoder + soft k-means + optional depthwise smoothing, upsamples, and returns labels via `predict_labels`. Learned refinement is not implemented in the runtime; only fast smoothing is applied.
+- Runtime consumer: [model/runtime_numpy.py](model/runtime_numpy.py) loads `model/best`, pads to stride, runs encoder + soft k-means + optional depthwise smoothing, upsamples, and returns labels via `predict_labels`. Learned refinement is not implemented in the runtime; only fast smoothing is applied. **The QGIS plugin does not yet consume these artifacts; runtime integration is deferred.**
 
 ## Tests (offline by default)
 - Numpy runtime/export: [tests/test_export_to_numpy_runtime.py](tests/test_export_to_numpy_runtime.py), [tests/test_numpy_runtime_tiling.py](tests/test_numpy_runtime_tiling.py).

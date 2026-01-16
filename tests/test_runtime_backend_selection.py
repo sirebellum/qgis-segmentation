@@ -6,8 +6,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from segmenter.model import runtime_backend
-from segmenter.model.runtime_numpy import load_runtime_model
+from model import runtime_backend
+from model.runtime_numpy import load_runtime_model
 from training.export import smoke_export_runtime
 
 

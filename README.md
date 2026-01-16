@@ -3,16 +3,28 @@ A [Quant Civil](https://www.quantcivil.ai) product
 
 ![image](https://github.com/sirebellum/qgis-segmentation/assets/25124443/898b5b91-830f-47b1-9300-ca173fe093de)
 
-Welcome to the plugin description!
+Welcome!
 
 Ever needed to intelligently divide your map into different sections? Have you been drawing polygons for days?
 Not anymore! Introducing the machine learning powered qgis plugin that will change your workflow.
 
 ## Dependencies
 
-Segmenter now ships with a lightweight dependency bootstrapper for the numpy-only runtime. When the plugin loads it checks for `numpy` and, if it is missing, installs it into `<plugin>/vendor` using the Python interpreter that ships with QGIS. This keeps the QGIS installation untouched while ensuring the model can run.
+Segmenter now ships with a lightweight dependency bootstrapper. When the plugin loads it checks for `torch`, `scikit-learn`, and `numpy` and, if they are missing, installs them into `<plugin>/vendor` using the Python interpreter that ships with QGIS. This keeps the QGIS installation untouched while ensuring the models can run.
 
-Set `SEGMENTER_SKIP_AUTO_INSTALL=1` if you prefer to manage dependencies yourself. If QGIS embeds Python in a non-standard way, set `SEGMENTER_PYTHON` to the absolute path of the interpreter that should run `pip`.
+The default PyTorch spec is chosen automatically based on the Python runtime that QGIS embeds (Python 3.13 gets a `torch>=2.5.1,<3.0` constraint, Python 3.12 uses `torch>=2.3.1,<3.0`, and older versions stay on `torch==2.2.2`). Override this behaviour anytime with `SEGMENTER_TORCH_SPEC="torch==<version>"` if you need to pin a particular wheel.
+
+On macOS we also set `KMP_DUPLICATE_LIB_OK=TRUE` and `OMP_NUM_THREADS=1` before loading PyTorch/scikit-learn to avoid the `libomp` duplication crash that can occur when the plugin spins up OpenMP workloads inside the QGIS process.
+
+On macOS the installer defaults to the CPU build of PyTorch. Windows and Linux systems default to the CUDA 12.1 build so that GPU acceleration remains available; set `SEGMENTER_TORCH_INDEX_URL` or `SEGMENTER_TORCH_SPEC` in the environment before starting QGIS to pin a different wheel. Set `SEGMENTER_SKIP_AUTO_INSTALL=1` if you prefer to manage dependencies yourself.
+
+If QGIS embeds Python in a non-standard way, set `SEGMENTER_PYTHON` to the absolute path of the interpreter that should run `pip`.
+
+While a model is running, the log panel in the dialog now streams live status updates (tiling progress, clustering stages, rendering) so you can monitor long operations.
+
+Large rasters are processed with a YOLO-style overlapping sliding window. The plugin inspects the available VRAM on CUDA devices (using 0.9% of the free memory) or MPS (0.75%) to pick a safe chunk size, then blends the overlapping predictions back together so you get a seamless output without exhausting GPU memory. Within each chunk the CNN tiles are now batched and prefetched to the GPU using the same memory budget, so utilization stays high without increasing peak RAM use.
+
+On first launch, Segmenter profiles your local GPU to pick the best safety factor and prefetch depth for the batching logic. Results are cached in `perf_profile.json` inside the plugin so later runs reuse them instantly. Set `SEGMENTER_SKIP_PROFILING=1` if you prefer the default heuristics.
 
 If you need to perform a manual install (for example on an offline machine), open the QGIS Python console and run:
 
@@ -20,13 +32,15 @@ If you need to perform a manual install (for example on an offline machine), ope
 import sys
 import subprocess
 subprocess.check_call([
-    sys.executable,
-    "-m",
-    "pip",
-    "install",
-    "numpy>=1.23,<2.0",
-    "--target",
-    r"/path/to/segmenter/vendor",
+	sys.executable,
+	"-m",
+	"pip",
+	"install",
+	"torch>=2.5.1,<3.0",
+	"scikit-learn>=1.1,<2.0",
+	"numpy>=1.23,<2.0",
+	"--target",
+	r"/path/to/segmenter/vendor",
 ])
 ```
 
@@ -35,18 +49,19 @@ Replace the `--target` path with the Segmenter plugin directory in your profile.
 ## Instructions
 Below are the steps for a basic segmentation:
 1. Choose a raster. Make sure the raster is in RGB format with 3 channels. The tool will process everything within the raster, so if you find your device running out of RAM, try using a smaller section of the raster or reducing the resolution. If you are using a web generated map (Google satelite), please convert the map to a raster first with the "Convert map to raster" tool available in QGIS.
-2. Enter the number of segments. Choose a value that reflects the variety of land cover in view (e.g., 6–8 for roads/buildings/trees/water).
-3. Segment! A raster layer will be produced overlaying the input with the different segments using the monolithic next-gen numpy model.
+2. Choose a model. CNN will provide better results but requires more processing power, see images below.
+3. Choose a resolution. Higher resolutions will result in a more detailed segmentation map. Lower resolutions will be less noisy.
+4. Choose number of segments. This will determine how many segments are generated. You should choose the number based on how "complex" the raster is. That is, if there 4 different kinds of land cover on your map (trees, roads, buildings, water, etc.), you should set the number of segments to something slightly higher than 4, between 6 and 8.
+5. Segment! A raster layer will be produced overlaying the input with the different segments.
 
 ## Example Images
 Below are some examples from the tool. First, a sample map, rendered at 0.1 map units per pixel:
 <img width="800" alt="image" src="https://github.com/user-attachments/assets/c3cdf14d-3717-4e39-ad98-71c7e457cc15">
 
-Then, a segmentation map produced by the next-gen numpy model at low resolution with 6 segments:
+Then, the K-Means segmentation map at low resolution with 6 segments:
+<img width="800" alt="image" src="https://github.com/user-attachments/assets/2bf88670-db9f-48dc-919d-4813f788a1cd">
+
+Finally, a CNN segmentation map at low resolution with 6 segments:
 <img width="800" alt="image" src="https://github.com/user-attachments/assets/50863c0c-64b0-4603-b2e7-85ddaba60f21">
 
-## Documentation
-- Plugin architecture and runtime notes: [docs/plugin/ARCHITECTURE.md](docs/plugin/ARCHITECTURE.md), [docs/plugin/MODEL_NOTES.md](docs/plugin/MODEL_NOTES.md)
-- Dataset preparation and manifests: [docs/dataset/DATASETS.md](docs/dataset/DATASETS.md)
-- Training pipeline: [docs/TRAINING_PIPELINE.md](docs/TRAINING_PIPELINE.md) and [docs/training/MODEL_HISTORY.md](docs/training/MODEL_HISTORY.md)
-- Change log and agent workflow: [docs/AGENTIC_HISTORY.md](docs/AGENTIC_HISTORY.md) and [docs/AGENTIC_REQUIRED.md](docs/AGENTIC_REQUIRED.md)
+In general, CNN provides cleaner results while K-Means is quick and easy.

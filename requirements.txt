@@ -4,8 +4,3 @@ scikit-learn
 torch
 pytest
 flake8
-rasterio
-gdal
-tensorboard
-pyyaml
-pb_tool

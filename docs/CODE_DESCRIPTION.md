@@ -6,15 +6,14 @@ Copyright (c) 2026 Quant Civil
 
 - Purpose: concise registry of modules and their current phase of stewardship (replaces CODE_SCRIPTURE.md).
 
-## Runtime (Phase 0–6)
-- segmenter.py / segmenter_dialog.py / segmenter_dialog_base.ui: QGIS UI + task dispatch for the next-gen runtime path; validates layer/segment count and queues `predict_nextgen_numpy`.
-- funcs.py: numerical engine (materialize/tiling/stitching, cancellation/status helpers); includes `predict_nextgen_numpy` that delegates to whichever backend exposes `predict_labels`.
-- model/runtime_backend.py: backend selector preferring torch (CUDA/MPS/CPU) when available and falling back to numpy; surfaces backend/device labels and logs fallback reasons.
-- model/runtime_torch.py: torch runtime consuming numpy-exported artifacts; mirrors numpy forward pass and honors device preference.
+## Runtime (current — legacy TorchScript + K-Means)
+- segmenter.py / segmenter_dialog.py / segmenter_dialog_base.ui: QGIS UI + task dispatch for the legacy runtime; validates 3-band GDAL GeoTIFFs and segment count; builds heuristic/blur overrides and queues `legacy_cnn_segmentation` or `legacy_kmeans_segmentation` via `QgsTask`.
+- funcs.py: numerical engine for legacy flows (materialize/tiling/stitching, cancellation/status helpers); TorchScript CNN path via `predict_cnn`, scikit-learn K-Means via `predict_kmeans`, optional torch-accelerated cluster assignment, and optional blur smoothing. Next-gen helpers remain but are not invoked by the plugin.
+- models/: packaged TorchScript CNN weights (`model_4/8/16.pth`) loaded by `segmenter.load_model`. Next-gen numpy artifacts under model/best exist for future work but are unused.
 - qgis_funcs.py: GDAL render to GeoTIFF + layer registration.
-- dependency_manager.py / perf_tuner.py / raster_utils.py: NumPy bootstrap, profiling shim, array utilities; optional torch install gated by `SEGMENTER_ENABLE_TORCH`.
-- model/runtime_numpy.py: numpy runtime for next-gen variable-K model consuming `model/best` artifacts; validates `meta.json` schema/version before loading weights.
-- model/README.md: artifact contract + producer/consumer notes for runtime.
+- dependency_manager.py / raster_utils.py: dependency bootstrap (torch, NumPy, scikit-learn) with env overrides and array utilities; adaptive batching uses static defaults (no profiling shim).
+- model/runtime_backend.py / model/runtime_numpy.py / model/runtime_torch.py: future runtime selector + numpy/torch implementations for the new model type — present but not wired into the current plugin; update deferred until the new model is trained.
+- model/README.md: artifact contract for the deferred next-gen runtime.
 
 ## Training (Phase 3, scaffolding)
 - training/config.py, config_loader.py: dataclass configs + python-loader overrides.
@@ -47,7 +46,7 @@ Copyright (c) 2026 Quant Civil
 ## Training (Phase 6, export to runtime)
 - training/export.py: converts MonolithicSegmenter checkpoints to numpy artifacts (`model.npz`, `meta.json`, `metrics.json`).
 - training/train.py: tracks best loss and auto-exports to `model/best` and `training/best_model` (configurable; can disable with `--no-export`).
-- func_test.py: includes dummy runtime smoke test for numpy loader.
+- tests/test_funcs_runtime.py: runtime engine regression tests (tiling/segmentation shapes, blur, adaptive batching/performance guardrails).
 
 ## Docs (Phase 8)
 - All supporting docs live under [docs/plugin](../plugin), [docs/training](../training), and [docs/dataset](.). History is tracked at [docs/AGENTIC_HISTORY.md](../AGENTIC_HISTORY.md); required prompt inputs listed in [docs/AGENTIC_REQUIRED.md](../AGENTIC_REQUIRED.md).
@@ -60,8 +59,8 @@ Copyright (c) 2026 Quant Civil
 - [tests/test_qgis_runtime_smoke.py](../../tests/test_qgis_runtime_smoke.py): optional QGIS import smoke (skips unless `QGIS_TESTS=1`).
 
 ## Notes
-- TorchScript runtime paths were removed; plugin is numpy-only.
-- Real raster IO is stubbed behind optional rasterio/gdal; synthetic paths remain the CI-safe default.
+- Current runtime uses the legacy TorchScript CNN + K-Means path; next-gen numpy runtime artifacts/selectors remain present but are deferred until the new model is trained.
+- Real raster IO in training is stubbed behind optional rasterio/gdal; synthetic paths remain the CI-safe default.
 
 ## Ops (Phase 10)
 - Validation-only pass: python -m compileall . (pass) and ./.venv/bin/python -m pytest -q (44 passed, 1 skipped); no runtime changes.
@@ -83,13 +82,13 @@ Copyright (c) 2026 Quant Civil
 - Validation: pending full rerun of compileall/pytest after dataset tooling refresh; synthetic smoke remains default.
 
 ## Ops (Phase 14 — history reset + ingest scaffold)
-- Added [docs/AGENTIC_HISTORY_SERIES_2.md](AGENTIC_HISTORY_SERIES_2.md) to start a new phase series with Phase 0 capturing the current numpy-only runtime, RGB-only training, and paused dataset ingestion.
+- Added [docs/AGENTIC_HISTORY_SERIES_2.md](AGENTIC_HISTORY_SERIES_2.md) to start a new phase series with Phase 0 capturing the then-current numpy-only runtime, RGB-only training, and paused dataset ingestion (historical; runtime has since been restored to the legacy TorchScript path).
 - Appended pointer entry to [docs/AGENTIC_HISTORY.md](AGENTIC_HISTORY.md) while keeping prior phases intact.
 - Seeded dataset ingestion scaffold under [scripts/datasets_ingest](../scripts/datasets_ingest) (config, interfaces, manifest validation, provider stubs, CLI); scaffold is offline-only and performs no network/GDAL work.
 - Documented dataset rewrite status in [docs/dataset/DATASETS.md](dataset/DATASETS.md); added stub tests [tests/test_datasets_ingest_stub.py](../tests/test_datasets_ingest_stub.py) to keep coverage deterministic and QGIS-free.
 
 ## Ops (Phase 15 — runtime snapshot doc)
-- Added [docs/plugin/RUNTIME_STATUS.md](plugin/RUNTIME_STATUS.md) as a token-efficient snapshot of the QGIS runtime (UI → task → numpy engine → render) with contracts, config points, and known gaps.
+- Added [docs/plugin/RUNTIME_STATUS.md](plugin/RUNTIME_STATUS.md) as a token-efficient snapshot of the QGIS runtime (UI → task → numpy engine → render) with contracts, config points, and known gaps. Snapshot has since been updated to reflect the restored legacy TorchScript path.
 - Linked [docs/plugin/ARCHITECTURE.md](plugin/ARCHITECTURE.md) to the new snapshot and recorded the iteration in [docs/AGENTIC_HISTORY.md](AGENTIC_HISTORY.md).
 
 ## Docs (Phase 16 — training baseline snapshot)
@@ -98,21 +97,30 @@ Copyright (c) 2026 Quant Civil
 
 ## Ops (Phase 17 — runtime invariants)
 - Enforced hard 3-band `.tif/.tiff` validation in `segmenter.py` and `funcs.py` with user-facing reasons.
-- Removed torch/prefetch helpers from runtime modules; dependency bootstrap now runs in `classFactory` via `ensure_dependencies()`.
+- (Historical) Removed torch/prefetch helpers during the prior numpy-only phase; the current code has been restored to the legacy TorchScript path.
 - Shipped stub runtime artifacts under `model/best` for packaging (`pb_tool.cfg` `extra_dirs`); document GitHub artifact + Git LFS expectation.
 - Added runtime snapshot update [docs/plugin/RUNTIME_STATUS.md](plugin/RUNTIME_STATUS.md) and offline regression tests guarding dependency specs, torch-free runtime, model artifacts, and 3-band validation.
 
-## Runtime (Phase 18 — torch backend selector)
-- Added backend selector [model/runtime_backend.py](../model/runtime_backend.py) to prefer torch (CUDA/MPS/CPU) with device hints and fall back to numpy with logged reasons.
-- Implemented torch runtime [model/runtime_torch.py](../model/runtime_torch.py) consuming the existing `.npz` artifacts and mirroring the numpy forward pass.
-- Segmenter now loads runtimes via the selector with env overrides (`SEGMENTER_RUNTIME_BACKEND`, `SEGMENTER_DEVICE`); dependency manager can optionally install torch when `SEGMENTER_ENABLE_TORCH=1`.
-- Tests added for backend selection and torch CPU/GPU paths; pytest `gpu` marker registered.
+## Runtime (Historical Phase 18 — torch backend selector; superseded by restore)
+- Historical branch added [model/runtime_backend.py](../model/runtime_backend.py) to prefer torch and fall back to numpy; the restored plugin does **not** load runtimes via this selector. Modules remain for future work only.
+- Historical env overrides (`SEGMENTER_RUNTIME_BACKEND`, `SEGMENTER_DEVICE`, `SEGMENTER_ENABLE_TORCH`, etc.) are not honored by the restored legacy flow; current dependency bootstrap simply installs torch/NumPy/scikit-learn unless skipped.
+- Backend-selection tests referenced here apply to the historical numpy-first branch, not the current code.
 
-## Ops (Phase 19 — import/package hardening)
-- Converted plugin runtime imports to explicit relative form and added lightweight QGIS/PyQt stubs so `segmenter.segmenter` can be imported in non-QGIS environments without side effects.
-- Bootstrapped the plugin package name for tests via `conftest.py` to mirror the deployed `segmenter` folder despite the repository root name.
-- Added offline regression tests guarding package importability and static checks against bare absolute imports; expanded the optional QGIS smoke to cover `classFactory`, gated by `RUN_QGIS_TESTS=1` (or legacy `QGIS_TESTS=1`).
-- Scope limited to packaging/install robustness; no runtime logic changes.
+## Ops (Historical Phase 19 — import/package hardening; superseded by restore)
+- Earlier numpy-only branch introduced QGIS/PyQt stubs and relative-import guards. The restored legacy TorchScript path again imports QGIS/PyQt directly and is not importable outside QGIS.
+- Historical import/package tests remain in the tree but do not reflect the current runtime constraints.
 
-## Ops (Phase 20 — torch bootstrap knobs)
-- Dependency bootstrap now honors `SEGMENTER_TORCH_EXTRA_INDEX_URL` and `SEGMENTER_TORCH_PIP_ARGS` to pass CUDA/MPS-capable wheel indexes/flags when `SEGMENTER_ENABLE_TORCH=1` is set; defaults remain CPU-safe.
+## Ops (Historical Phase 20 — torch bootstrap knobs; superseded by restore)
+- Historical branch added extra pip knobs (`SEGMENTER_TORCH_EXTRA_INDEX_URL`, `SEGMENTER_TORCH_PIP_ARGS`, `SEGMENTER_ENABLE_TORCH`). The restored bootstrap honors only `SEGMENTER_SKIP_AUTO_INSTALL`, `SEGMENTER_TORCH_SPEC`, `SEGMENTER_TORCH_INDEX_URL`, `SEGMENTER_PYTHON`, and `SEGMENTER_PIP_EXECUTABLE`.
+- GPU wheel selection is determined by index URL; there is no runtime toggle in the restored code.
+
+## Docs (Phase 21 — restored runtime doc sync)
+- Reconciled runtime docs (ARCHITECTURE, MODEL_NOTES, RUNTIME_STATUS) to match the restored legacy TorchScript/K-Means plugin path; marked next-gen numpy/torch runtime as deferred until the new model is trained.
+- Updated CODE_DESCRIPTION and AGENTIC_HISTORY accordingly; retained historical phase notes with clarification where the runtime differed.
+- Scope limited to documentation; runtime code unchanged.
+
+## Docs (Phase 22 — doc reconciliation to restored legacy runtime)
+- Re-read current legacy runtime code (TorchScript CNN + scikit-learn K-Means) and aligned docs to match; code now overrides historical numpy-path notes where they conflicted.
+- Clarified historical phases (backend selector, import stubs, torch bootstrap knobs) as superseded; future runtime update remains deferred until the new model is trained.
+- Files updated: docs/plugin/ARCHITECTURE.md, docs/plugin/MODEL_NOTES.md, docs/plugin/RUNTIME_STATUS.md, docs/CODE_DESCRIPTION.md, docs/AGENTIC_HISTORY.md.
+- Validation: `python -m compileall .` and `python -m pytest -q` (default QGIS-free suite); results captured in AGENTIC_HISTORY.

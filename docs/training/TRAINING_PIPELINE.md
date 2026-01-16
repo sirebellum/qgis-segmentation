@@ -23,6 +23,9 @@ python -m training.export --smoke-out /tmp/runtime_smoke --seed 7 --steps 1 --em
 ```
 Outputs `model.npz` + `meta.json` under the provided directory; runtime meta version is locked to the numpy path.
 
+### Runtime adoption status
+- The QGIS plugin currently runs the legacy TorchScript CNN/K-Means path. Wiring the new numpy runtime artifacts into the plugin is **deferred** until the new model is trained.
+
 ## Expectations
 - Inputs are RGB tensors normalized to `[0,1]`; no DEM/elevation fields are consumed.
 - Training remains separate from QGIS runtime; the plugin consumes exported numpy artifacts (`model/best`).

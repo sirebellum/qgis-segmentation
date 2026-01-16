@@ -56,25 +56,7 @@ def ensure_dependencies() -> None:
         return
 
     for spec in _package_specs():
-        optional = bool(spec.get("optional"))
-        enabled_env = spec.get("enable_env")
-        label = str(spec.get("label", spec.get("pip", spec.get("import", "unknown"))))
-
-        if optional and enabled_env:
-            if not _env_truthy(enabled_env):
-                if not _package_installed(spec["import"]):  # type: ignore[index]
-                    _log_dependency_status(
-                        f"Skipping optional dependency {label}; set {enabled_env}=1 to attempt install."
-                    )
-                    continue
-
-        try:
-            _ensure_package(spec, optional=optional)
-        except ImportError:
-            if optional:
-                _log_dependency_status(f"Optional dependency {label} not installed; continuing without it.")
-                continue
-            raise
+        _ensure_package(spec)
 
     _ENSURED = True
 
@@ -84,59 +66,54 @@ def _skip_requested() -> bool:
     return flag in {"1", "true", "yes"}
 
 
-def _env_truthy(name: str) -> bool:
-    value = os.environ.get(name, "").strip().lower()
-    return value in {"1", "true", "yes", "on"}
-
-
-def _package_installed(import_name: str) -> bool:
-    try:
-        importlib.import_module(import_name)
-        return True
-    except Exception:
-        return False
-
-
 def _package_specs() -> Iterable[Dict[str, object]]:
-    return [
+    torch_spec = os.environ.get("SEGMENTER_TORCH_SPEC")
+    if not torch_spec:
+        torch_spec = _default_torch_spec()
+
+    specs: List[Dict[str, object]] = [
+        {
+            "import": "torch",
+            "pip": torch_spec,
+            "label": "PyTorch",
+            "extra_args": _torch_index_args(),
+        },
         {
             "import": "numpy",
             "pip": "numpy>=1.23,<2.0",
             "label": "NumPy",
         },
         {
-            "import": "torch",
-            "pip": "torch>=2.1,<3.0",
-            "label": "PyTorch (CPU/MPS default)",
-            "optional": True,
-            "enable_env": "SEGMENTER_ENABLE_TORCH",
-            "extra_args": _torch_extra_args(),
+            "import": "sklearn",
+            "pip": "scikit-learn>=1.1,<2.0",
+            "label": "scikit-learn",
         },
     ]
+    return specs
 
 
-def _torch_extra_args() -> List[str]:
-    """Return pip args to prefer GPU-capable torch wheels when requested.
-
-    Environment knobs:
-    - SEGMENTER_TORCH_EXTRA_INDEX_URL: full URL to an extra index (e.g., CUDA wheels).
-    - SEGMENTER_TORCH_PIP_ARGS: space-separated extra args passed verbatim.
-    """
-
-    args: List[str] = []
-
-    extra_index = os.environ.get("SEGMENTER_TORCH_EXTRA_INDEX_URL", "").strip()
-    if extra_index:
-        args.extend(["--extra-index-url", extra_index])
-
-    pip_args = os.environ.get("SEGMENTER_TORCH_PIP_ARGS", "").strip()
-    if pip_args:
-        args.extend(pip_args.split())
-
-    return args
+def _default_torch_spec() -> str:
+    major = sys.version_info.major
+    minor = sys.version_info.minor
+    if (major, minor) >= (3, 13):
+        return "torch>=2.5.1,<3.0"
+    if (major, minor) >= (3, 12):
+        return "torch>=2.3.1,<3.0"
+    return "torch==2.2.2"
 
 
-def _ensure_package(spec: Dict[str, object], optional: bool = False) -> None:
+def _torch_index_args() -> List[str]:
+    custom_index = os.environ.get("SEGMENTER_TORCH_INDEX_URL")
+    if custom_index:
+        return ["--index-url", custom_index]
+
+    system = platform.system().lower()
+    if system == "darwin":
+        return ["--index-url", "https://download.pytorch.org/whl/cpu"]
+    return ["--index-url", "https://download.pytorch.org/whl/cu121"]
+
+
+def _ensure_package(spec: Dict[str, object]) -> None:
     import_name = spec["import"]  # type: ignore[index]
     try:
         importlib.import_module(import_name)  # type: ignore[arg-type]
@@ -175,12 +152,22 @@ def _ensure_package(spec: Dict[str, object], optional: bool = False) -> None:
         subprocess.check_call(command, env=pip_env)
         _log_dependency_status(f"Dependency installed: {label}")
     except (subprocess.CalledProcessError, OSError) as exc:
+        if import_name == "torch":
+            cpu_args = ["--index-url", "https://download.pytorch.org/whl/cpu"]
+            if extra_args != cpu_args:
+                _LOGGER.warning(
+                    "CUDA torch install failed (%s); retrying with CPU wheels.",
+                    exc,
+                )
+                _log_dependency_status("PyTorch CUDA install failed; retrying with CPU wheels.")
+                try:
+                    subprocess.check_call(_build_command(cpu_args), env=pip_env)
+                    _log_dependency_status("PyTorch CPU wheel installed successfully.")
+                    _close_install_popup(dialog)
+                    return
+                except (subprocess.CalledProcessError, OSError) as cpu_exc:
+                    exc = cpu_exc
         _close_install_popup(dialog)
-        if optional:
-            _log_dependency_status(
-                f"Optional dependency '{pip_name}' failed to install; proceeding without it."
-            )
-            return
         raise ImportError(
             "Segmenter could not install dependency '" + str(pip_name) + "'."
             "Run QGIS Python console and install it manually."
