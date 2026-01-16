@@ -630,8 +630,9 @@ class Segmenter:
             self._reset_progress_bar()
             return
         layer = layers[0]
-        if not self._is_supported_raster_layer(layer):
-            self.log_status("Selected layer is not a supported 3-band GeoTIFF raster.")
+        supported, reason = self._is_supported_raster_layer(layer)
+        if not supported:
+            self.log_status(f"Selected layer is not supported: {reason}")
             self._reset_progress_bar()
             return
         assert layer.isValid(), f"Invalid raster layer! \n{layer_name}"
@@ -713,11 +714,11 @@ class Segmenter:
     # Display layers in dropdown
     def render_layers(self):
         project_layers = QgsProject.instance().mapLayers().values()
-        raster_layers = [
-            layer
-            for layer in project_layers
-            if isinstance(layer, QgsRasterLayer) and self._is_supported_raster_layer(layer)
-        ]
+        raster_layers = []
+        for layer in project_layers:
+            ok, _ = self._is_supported_raster_layer(layer)
+            if isinstance(layer, QgsRasterLayer) and ok:
+                raster_layers.append(layer)
         raster_layers.sort(key=lambda lyr: lyr.name().lower())
 
         current = self.dlg.inputLayer.currentText()
@@ -739,23 +740,23 @@ class Segmenter:
 
     def _is_supported_raster_layer(self, layer):
         if not isinstance(layer, QgsRasterLayer):
-            return False
+            return False, "Layer is not a raster layer."
         try:
             band_count = layer.bandCount()
         except Exception:
-            return False
+            return False, "Unable to read raster band count."
         if band_count != 3:
-            return False
+            return False, f"Layer has {band_count} band(s); requires exactly 3."
         provider = layer.dataProvider()
         if not provider:
-            return False
+            return False, "Layer has no data provider."
         if provider.name().lower() != "gdal":
-            return False
+            return False, f"Layer provider must be GDAL; found {provider.name()}."
         source = layer.source().split("|")[0]
         _, ext = os.path.splitext(source)
         if ext.lower() not in SUPPORTED_RASTER_EXTENSIONS:
-            return False
-        return True
+            return False, f"Layer source must be a GeoTIFF (.tif/.tiff); found extension '{ext or 'unknown'}'."
+        return True, ""
 
     def run(self):
         """Run method that performs all the real work"""

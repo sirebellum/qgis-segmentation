@@ -4,14 +4,23 @@
 """Export helpers for numpy-only runtime artifacts."""
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 from typing import Dict, Optional
 
 import numpy as np
 import torch
+from torch.utils.data import DataLoader
 
+from model.runtime_numpy import RUNTIME_META_VERSION
+
+from .data.dataset import UnsupervisedRasterDataset
+from .data.synthetic import SyntheticDataset
 from .config import Config
+from .losses import total_loss
+from .models.model import MonolithicSegmenter
+from .utils.seed import set_seed
 
 
 def _rename_state_dict(state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
@@ -104,7 +113,7 @@ def export_numpy_artifacts(
     weights_np = {k: v.numpy() for k, v in weights.items()}
 
     meta = {
-        "version": "phase1-numpy-v0",
+        "version": RUNTIME_META_VERSION,
         "max_k": int(cfg.model.max_k),
         "embed_dim": int(cfg.model.embed_dim),
         "temperature": float(cfg.model.temperature),
@@ -132,4 +141,127 @@ def export_numpy_artifacts(
         _write(Path(mirror_dir))
 
 
-__all__ = ["export_numpy_artifacts"]
+def _collate_minibatch(batch: list[Dict]) -> Dict:
+    view1_rgb = torch.cat([item["view1"]["rgb"] for item in batch], dim=0)
+    view2_rgb = torch.cat([item["view2"]["rgb"] for item in batch], dim=0)
+    grid = torch.cat([item["warp_grid"] for item in batch], dim=0)
+    return {"view1_rgb": view1_rgb, "view2_rgb": view2_rgb, "grid": grid}
+
+
+def smoke_export_runtime(
+    out_dir: str,
+    *,
+    seed: int = 7,
+    steps: int = 1,
+    embed_dim: int = 8,
+    max_k: int = 4,
+    patch_size: int = 64,
+    mirror_dir: Optional[str] = None,
+) -> Path:
+    """Produce a deterministic, CPU-friendly runtime artifact using the synthetic trainer path."""
+
+    set_seed(seed)
+    cfg = Config()
+    cfg.model.embed_dim = max(1, int(embed_dim))
+    cfg.model.max_k = max(2, int(max_k))
+    cfg.model.cluster_iters = (1, 1)
+    cfg.model.smoothing_iters = (0, 0)
+    cfg.model.smoothing_lanes = ("fast",)
+    cfg.model.downsample_choices = (1,)
+
+    cfg.data.patch_size = max(8, int(patch_size))
+    cfg.data.stride = cfg.data.patch_size
+
+    cfg.train.batch_size = 1
+    cfg.train.steps = max(1, int(steps))
+    cfg.train.grad_accum = 1
+    cfg.train.amp = False
+    cfg.train.log_interval = 1
+
+    cfg.data.max_samples = cfg.train.batch_size
+
+    device = torch.device("cpu")
+    model = MonolithicSegmenter(cfg.model).to(device)
+    opt = torch.optim.Adam(model.parameters(), lr=cfg.train.lr, weight_decay=cfg.train.weight_decay)
+
+    base = SyntheticDataset(num_samples=cfg.train.batch_size * 2, cfg=cfg.data)
+    dataset = UnsupervisedRasterDataset(base.samples, cfg.data, cfg.aug)
+    loader = DataLoader(dataset, batch_size=cfg.train.batch_size, shuffle=False, collate_fn=_collate_minibatch)
+    it = iter(loader)
+
+    final_loss = torch.tensor(0.0)
+    for _ in range(cfg.train.steps):
+        try:
+            batch = next(it)
+        except StopIteration:  # pragma: no cover - defensive reuse
+            it = iter(loader)
+            batch = next(it)
+
+        v1_rgb = batch["view1_rgb"].to(device)
+        v2_rgb = batch["view2_rgb"].to(device)
+        grid = batch["grid"].to(device)
+
+        k = min(cfg.model.max_k, 3)
+        cluster_iters = cfg.model.cluster_iters[0]
+        smooth_iters = cfg.model.smoothing_iters[0]
+
+        opt.zero_grad(set_to_none=True)
+        out1 = model(
+            v1_rgb,
+            k=k,
+            downsample=1,
+            cluster_iters=cluster_iters,
+            smooth_iters=smooth_iters,
+            smoothing_lane="fast",
+        )
+        out2 = model(
+            v2_rgb,
+            k=k,
+            downsample=1,
+            cluster_iters=cluster_iters,
+            smooth_iters=smooth_iters,
+            smoothing_lane="fast",
+        )
+        losses = total_loss(cfg.loss, out1["probs"], out2["probs"], v1_rgb, v2_rgb, grid)
+        final_loss = losses["loss"]
+        final_loss.backward()
+        opt.step()
+
+    export_numpy_artifacts(
+        model.state_dict(),
+        cfg,
+        score=float(final_loss.detach().cpu()),
+        step=cfg.train.steps,
+        out_dir=out_dir,
+        mirror_dir=mirror_dir,
+    )
+    return Path(out_dir)
+
+
+def _main():  # pragma: no cover - exercised in docs/CLI, not default tests
+    parser = argparse.ArgumentParser(description="Runtime artifact utilities")
+    parser.add_argument("--smoke-out", type=str, required=True, help="Directory to write runtime artifact")
+    parser.add_argument("--seed", type=int, default=7)
+    parser.add_argument("--steps", type=int, default=1)
+    parser.add_argument("--embed-dim", type=int, default=8)
+    parser.add_argument("--max-k", type=int, default=4)
+    parser.add_argument("--patch-size", type=int, default=64)
+    parser.add_argument("--mirror-out", type=str, default=None)
+    args = parser.parse_args()
+
+    smoke_export_runtime(
+        out_dir=args.smoke_out,
+        seed=args.seed,
+        steps=args.steps,
+        embed_dim=args.embed_dim,
+        max_k=args.max_k,
+        patch_size=args.patch_size,
+        mirror_dir=args.mirror_out,
+    )
+
+
+if __name__ == "__main__":
+    _main()
+
+
+__all__ = ["export_numpy_artifacts", "smoke_export_runtime"]

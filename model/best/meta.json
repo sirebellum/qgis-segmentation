@@ -1,0 +1,21 @@
+{
+  "version": "numpy-nextgen-v1",
+  "max_k": 4,
+  "embed_dim": 4,
+  "temperature": 0.8,
+  "cluster_iters_default": 2,
+  "smooth_iters_default": 0,
+  "input_mean": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "input_std": [
+    1.0,
+    1.0,
+    1.0
+  ],
+  "input_scale": 0.00392156862745098,
+  "stride": 4,
+  "supports_learned_refine": false
+}

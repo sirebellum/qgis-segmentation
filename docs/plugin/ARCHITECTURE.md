@@ -6,7 +6,7 @@ Copyright (c) 2026 Quant Civil
 
 For a current-state runtime snapshot, see [RUNTIME_STATUS.md](RUNTIME_STATUS.md).
 
-- Scope: QGIS 3 plugin "Map Segmenter"; code is source of truth.
+- Scope: QGIS 3 plugin "Map Segmenter"; code is source of truth. Dependency bootstrap runs on plugin load.
 
 ## End-to-end flow
 - User opens dialog from plugin action in [segmenter.py](segmenter.py); UI defined by [segmenter_dialog_base.ui](segmenter_dialog_base.ui) and loaded via [segmenter_dialog.py](segmenter_dialog.py).
@@ -15,11 +15,11 @@ For a current-state runtime snapshot, see [RUNTIME_STATUS.md](RUNTIME_STATUS.md)
 - Segmentation output is rendered to a temporary GeoTIFF with source extent/CRS through [qgis_funcs.py](qgis_funcs.py) `render_raster()` and added to the QGIS project.
 
 ## Module responsibilities
-- [segmenter.py](segmenter.py): plugin entrypoint; menu/toolbar wiring; dialog lifecycle; progress bar/status logging; `QgsTask` wrapper; loads numpy runtime from `model/best` and dispatches `predict_nextgen_numpy`.
+- [segmenter.py](segmenter.py): plugin entrypoint; menu/toolbar wiring; dialog lifecycle; progress bar/status logging; `QgsTask` wrapper; loads numpy runtime from `model/best` and dispatches `predict_nextgen_numpy`; enforces GDAL + `.tif/.tiff` + 3-band requirement with user-facing reasons.
 - [segmenter_dialog.py](segmenter_dialog.py) / [segmenter_dialog_base.ui](segmenter_dialog_base.ui): Qt dialog shell and widgets (layer selector, segment count input, log/progress, buttons).
-- [funcs.py](funcs.py): numerical engine. Raster materialization, tiling/stitching, cancellation/status helpers, and numpy-only `predict_nextgen_numpy`.
+- [funcs.py](funcs.py): numerical engine. Raster materialization (strict 3-band channel-first validation + `.tif/.tiff` check), tiling/stitching, cancellation/status helpers, and numpy-only `predict_nextgen_numpy`.
 - [qgis_funcs.py](qgis_funcs.py): writes numpy labels to temp GeoTIFF and registers a `QgsRasterLayer` with opacity preserved.
-- [dependency_manager.py](dependency_manager.py): on-demand vendor install of NumPy into `vendor/`, honoring env toggles (`SEGMENTER_*`).
+- [dependency_manager.py](dependency_manager.py): on-demand vendor install of NumPy into `vendor/`, honoring env toggles (`SEGMENTER_*`); invoked from `classFactory` on plugin load.
 - [perf_tuner.py](perf_tuner.py): compatibility shim returning default adaptive settings (no profiling).
 - [raster_utils.py](raster_utils.py): `ensure_channel_first` utility for GDAL writes.
 - [model/runtime_numpy.py](model/runtime_numpy.py): numpy-only runtime for the next-gen variable-K model consuming `model/best` artifacts.
@@ -27,12 +27,12 @@ For a current-state runtime snapshot, see [RUNTIME_STATUS.md](RUNTIME_STATUS.md)
 - [metadata.txt](metadata.txt): QGIS plugin metadata (name, version 2.2.1, author, tracker/homepage).
 
 ## Key extension points / config
-- Runtime: single numpy path; segment count is user-configurable.
+- Runtime: single numpy path; segment count is user-configurable; runtime is torch/prefetch-free.
 - Env toggles: `SEGMENTER_SKIP_AUTO_INSTALL` and `SEGMENTER_PYTHON` govern dependency bootstrap (NumPy only).
 - Rendering: `render_raster()` uses tempdir GeoTIFF; layer name includes input layer and segment count.
 
 ## Runtime/perf notes
-- Tiling: `tile_raster` pads to square tiles, stitches canvas back, and trims padding after inference.
+- Tiling: `tile_raster` pads to square tiles, stitches canvas back, and trims padding after inference. Inputs must already be validated 3-band arrays.
 - Cancellation: `CancellationToken` checked via `_maybe_raise_cancel` across loops; task cancel cancels token and updates UI.
 - Logging/progress: worker emits status strings parsed by `_maybe_update_progress_from_message` to keep UI progress bar moving; history buffered in dialog log.
 

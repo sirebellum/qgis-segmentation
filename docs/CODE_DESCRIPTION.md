@@ -11,7 +11,7 @@ Copyright (c) 2026 Quant Civil
 - funcs.py: numerical engine (materialize/tiling/stitching, cancellation/status helpers); includes `predict_nextgen_numpy` for the numpy runtime.
 - qgis_funcs.py: GDAL render to GeoTIFF + layer registration.
 - dependency_manager.py / perf_tuner.py / raster_utils.py: NumPy bootstrap, profiling shim, array utilities.
-- model/runtime_numpy.py: numpy-only runtime for next-gen variable-K model consuming `model/best` artifacts (no torch import).
+- model/runtime_numpy.py: numpy-only runtime for next-gen variable-K model consuming `model/best` artifacts (no torch import); validates `meta.json` schema/version before loading weights.
 - model/README.md: artifact contract + producer/consumer notes for runtime.
 
 ## Training (Phase 3, scaffolding)
@@ -54,6 +54,7 @@ Copyright (c) 2026 Quant Civil
 - [tests/test_alignment_invariants.py](../../tests/test_alignment_invariants.py): geotransform/bounds helpers (`derive_utm_epsg`, pixel sizes, tolerance).
 - [tests/test_export_to_numpy_runtime.py](../../tests/test_export_to_numpy_runtime.py): export-to-runtime pipeline and probability normalization.
 - [tests/test_numpy_runtime_tiling.py](../../tests/test_numpy_runtime_tiling.py): numpy runtime tiling/blending smoke via stub runtime.
+- [tests/test_runtime_smoke_export.py](../../tests/test_runtime_smoke_export.py): deterministic synthetic-trainer smoke export and runtime contract/meta validation.
 - [tests/test_qgis_runtime_smoke.py](../../tests/test_qgis_runtime_smoke.py): optional QGIS import smoke (skips unless `QGIS_TESTS=1`).
 
 ## Notes
@@ -92,3 +93,9 @@ Copyright (c) 2026 Quant Civil
 ## Docs (Phase 16 — training baseline snapshot)
 - Added [docs/training/TRAINING_BASELINE.md](training/TRAINING_BASELINE.md) summarizing current RGB-only training flow, synthetic data default, ingestion scaffold status, export/runtime contract, and offline tests.
 - Corrected dataset doc reference to [docs/dataset/DATASETS.md](dataset/DATASETS.md).
+
+## Ops (Phase 17 — runtime invariants)
+- Enforced hard 3-band `.tif/.tiff` validation in `segmenter.py` and `funcs.py` with user-facing reasons.
+- Removed torch/prefetch helpers from runtime modules; dependency bootstrap now runs in `classFactory` via `ensure_dependencies()`.
+- Shipped stub runtime artifacts under `model/best` for packaging (`pb_tool.cfg` `extra_dirs`); document GitHub artifact + Git LFS expectation.
+- Added runtime snapshot update [docs/plugin/RUNTIME_STATUS.md](plugin/RUNTIME_STATUS.md) and offline regression tests guarding dependency specs, torch-free runtime, model artifacts, and 3-band validation.

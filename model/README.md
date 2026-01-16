@@ -19,3 +19,7 @@ Canonical runtime artifact location for the next-gen variable-K segmenter (numpy
 
 ## Consumer
 `segmenter.py` loads `model/best` when the "Next-Gen (Numpy)" model is selected. No torch import is required at runtime.
+
+## Distribution
+- Include `model/best` in the packaged QGIS plugin (`pb_tool.cfg` `extra_dirs` already lists `model`).
+- Publish the same directory as a GitHub build artifact; prefer Git LFS if the files exceed normal repository size limits.

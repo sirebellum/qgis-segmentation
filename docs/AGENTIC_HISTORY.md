@@ -37,3 +37,13 @@ New series beginning at the current repository state. Phase numbering restarts h
 - **Commands**: none (doc-only).
 - **Validation**: Link sanity checks for new baseline doc; no tests executed.
 - **Risks/Notes**: Dataset ingestion remains stubbed; legacy NAIP/DEM prep scripts referenced historically are still absent.
+
+## Phase 3 — Runtime invariants hardening
+
+## Phase 4 — Runtime contract sync + smoke export
+- **Intent**: align plugin runtime with the numpy export contract and add a deterministic synthetic-trainer path for runtime artifacts.
+- **Summary**: Added meta/weight schema validation with a fixed runtime meta version in [model/runtime_numpy.py](model/runtime_numpy.py); aligned stub meta to the new schema; introduced `smoke_export_runtime` in [training/export.py](training/export.py) plus a CLI flag for fast CPU-only artifact generation; added deterministic round-trip/meta tests in [tests/test_runtime_smoke_export.py](tests/test_runtime_smoke_export.py); documented the smoke export command in [docs/training/TRAINING_PIPELINE.md](training/TRAINING_PIPELINE.md) and refreshed [docs/CODE_DESCRIPTION.md](CODE_DESCRIPTION.md).
+- **Files Touched**: [model/runtime_numpy.py](model/runtime_numpy.py), [training/export.py](training/export.py), [tests/test_runtime_smoke_export.py](tests/test_runtime_smoke_export.py), [model/best/meta.json](model/best/meta.json), [docs/training/TRAINING_PIPELINE.md](training/TRAINING_PIPELINE.md), [docs/CODE_DESCRIPTION.md](CODE_DESCRIPTION.md).
+- **Commands**: Not run (offline doc/code edit only).
+- **Validation**: Not run (pending CI/local pytest and compileall).
+- **Risks/Notes**: Smoke export depends on torch availability; runtime meta version is now enforced, so stale artifacts must be regenerated via the smoke export or training pipeline.

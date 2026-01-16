@@ -3,7 +3,7 @@
 
 """Numpy-only inference runtime for the next-gen variable-K segmenter.
 
-This runtime avoids torch imports and consumes exported numpy weights from
+This runtime avoids heavyweight ML backends and consumes exported numpy weights from
 ``model/best``. It implements a minimal subset of the training architecture:
 - stride-4 encoder with two residual blocks
 - 1x1 seed projection + soft k-means refinement
@@ -21,6 +21,117 @@ from typing import Callable, Dict, Optional, Tuple
 import numpy as np
 
 Array = np.ndarray
+
+RUNTIME_META_VERSION = "numpy-nextgen-v1"
+REQUIRED_META_KEYS = {
+    "version",
+    "max_k",
+    "embed_dim",
+    "temperature",
+    "cluster_iters_default",
+    "smooth_iters_default",
+    "input_mean",
+    "input_std",
+    "input_scale",
+    "stride",
+    "supports_learned_refine",
+}
+
+
+def _parse_runtime_meta(meta_raw: Dict[str, object]) -> RuntimeMeta:
+    missing = sorted(REQUIRED_META_KEYS.difference(meta_raw.keys()))
+    if missing:
+        raise ValueError(f"Runtime metadata missing required keys: {missing}")
+
+    version = str(meta_raw.get("version"))
+    if version != RUNTIME_META_VERSION:
+        raise ValueError(
+            f"Runtime artifact version mismatch: expected {RUNTIME_META_VERSION}, found {version}"
+        )
+
+    def _tuple3(name: str) -> Tuple[float, float, float]:
+        value = meta_raw.get(name)
+        if not isinstance(value, (list, tuple)) or len(value) != 3:
+            raise ValueError(f"meta.json[{name}] must be a 3-item list/tuple")
+        try:
+            parsed = tuple(float(v) for v in value)
+        except Exception as exc:  # pragma: no cover - defensive parsing
+            raise ValueError(f"meta.json[{name}] must contain numeric values") from exc
+        return parsed
+
+    max_k = int(meta_raw.get("max_k", 0))
+    embed_dim = int(meta_raw.get("embed_dim", 0))
+    stride = int(meta_raw.get("stride", 0))
+    input_scale = float(meta_raw.get("input_scale", 0.0))
+
+    if max_k < 2:
+        raise ValueError("meta.json[max_k] must be >= 2")
+    if embed_dim <= 0:
+        raise ValueError("meta.json[embed_dim] must be > 0")
+    if stride <= 0:
+        raise ValueError("meta.json[stride] must be > 0")
+    if input_scale <= 0:
+        raise ValueError("meta.json[input_scale] must be > 0")
+
+    return RuntimeMeta(
+        version=version,
+        max_k=max_k,
+        embed_dim=embed_dim,
+        temperature=float(meta_raw.get("temperature", 0.8)),
+        cluster_iters_default=int(meta_raw.get("cluster_iters_default", 1)),
+        smooth_iters_default=int(meta_raw.get("smooth_iters_default", 0)),
+        input_mean=_tuple3("input_mean"),
+        input_std=_tuple3("input_std"),
+        input_scale=input_scale,
+        stride=stride,
+        supports_learned_refine=bool(meta_raw.get("supports_learned_refine", False)),
+    )
+
+
+def _validate_required_weights(weights: Dict[str, Array]) -> None:
+    required = {
+        "stem.conv1.weight",
+        "stem.conv1.bias",
+        "stem.bn1.weight",
+        "stem.bn1.bias",
+        "stem.bn1.running_mean",
+        "stem.bn1.running_var",
+        "stem.conv2.weight",
+        "stem.conv2.bias",
+        "stem.bn2.weight",
+        "stem.bn2.bias",
+        "stem.bn2.running_mean",
+        "stem.bn2.running_var",
+        "block1.conv1.weight",
+        "block1.conv1.bias",
+        "block1.bn1.weight",
+        "block1.bn1.bias",
+        "block1.bn1.running_mean",
+        "block1.bn1.running_var",
+        "block1.conv2.weight",
+        "block1.conv2.bias",
+        "block1.bn2.weight",
+        "block1.bn2.bias",
+        "block1.bn2.running_mean",
+        "block1.bn2.running_var",
+        "block2.conv1.weight",
+        "block2.conv1.bias",
+        "block2.bn1.weight",
+        "block2.bn1.bias",
+        "block2.bn1.running_mean",
+        "block2.bn1.running_var",
+        "block2.conv2.weight",
+        "block2.conv2.bias",
+        "block2.bn2.weight",
+        "block2.bn2.bias",
+        "block2.bn2.running_mean",
+        "block2.bn2.running_var",
+        "seed_proj.weight",
+        "seed_proj.bias",
+    }
+    missing = sorted(name for name in required if name not in weights)
+    if missing:
+        raise ValueError(f"Runtime weights missing required tensors: {missing}")
 
 
 @dataclass
@@ -213,27 +324,16 @@ def load_runtime_model(model_dir: str, status_callback: Optional[Callable[[str],
         raise FileNotFoundError(f"Missing runtime artifacts in {model_dir}; expected meta.json and model.npz")
     with open(meta_path, "r", encoding="utf-8") as f:
         meta_raw = json.load(f)
-    meta = RuntimeMeta(
-        version=meta_raw.get("version", "unknown"),
-        max_k=int(meta_raw.get("max_k", 16)),
-        embed_dim=int(meta_raw.get("embed_dim", 96)),
-        temperature=float(meta_raw.get("temperature", 0.8)),
-        cluster_iters_default=int(meta_raw.get("cluster_iters_default", 3)),
-        smooth_iters_default=int(meta_raw.get("smooth_iters_default", 1)),
-        input_mean=tuple(meta_raw.get("input_mean", [0.0, 0.0, 0.0])),
-        input_std=tuple(meta_raw.get("input_std", [1.0, 1.0, 1.0])),
-        input_scale=float(meta_raw.get("input_scale", 1.0 / 255.0)),
-        stride=int(meta_raw.get("stride", 4)),
-        supports_learned_refine=bool(meta_raw.get("supports_learned_refine", False)),
-    )
+    meta = _parse_runtime_meta(meta_raw)
     if status_callback:
         try:
             status_callback(f"Loading next-gen numpy runtime (version {meta.version})...")
         except Exception:
             pass
-    weights = np.load(weights_path)
-    named = {k: weights[k] for k in weights.files}
+    with np.load(weights_path) as weights:
+        named = {k: weights[k] for k in weights.files}
+    _validate_required_weights(named)
     return NumpySegmenter(named, meta)
 
 
-__all__ = ["RuntimeMeta", "NumpySegmenter", "load_runtime_model"]
+__all__ = ["RuntimeMeta", "NumpySegmenter", "load_runtime_model", "RUNTIME_META_VERSION"]

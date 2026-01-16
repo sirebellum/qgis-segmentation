@@ -16,6 +16,13 @@ python -m training.train --steps 2 --amp 0 --checkpoint_dir /tmp/seg_ckpt
 python -m training.eval --synthetic --seed 7
 ```
 
+### Smoke runtime export (deterministic, CPU-only)
+Use the synthetic trainer path to write a minimal runtime artifact for tests and offline validation:
+```
+python -m training.export --smoke-out /tmp/runtime_smoke --seed 7 --steps 1 --embed-dim 8 --max-k 4 --patch-size 32
+```
+Outputs `model.npz` + `meta.json` under the provided directory; runtime meta version is locked to the numpy path.
+
 ## Expectations
 - Inputs are RGB tensors normalized to `[0,1]`; no DEM/elevation fields are consumed.
 - Training remains separate from QGIS runtime; the plugin consumes exported numpy artifacts (`model/best`).

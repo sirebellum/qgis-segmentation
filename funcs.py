@@ -2,6 +2,8 @@
 SPDX-License-Identifier: BSD-3-Clause
 Copyright (c) 2026 Quant Civil
 """
+import math
+import os
 from typing import Callable, Optional, Tuple
 
 import numpy as np
@@ -32,16 +34,38 @@ def _emit_status(callback, message):
         pass
 
 
+def _require_tiff_path(source: str) -> str:
+    """Ensure the path points to a GeoTIFF the runtime supports."""
+
+    root = source.split("|")[0]
+    _, ext = os.path.splitext(root)
+    normalized = ext.lower()
+    if normalized not in {".tif", ".tiff"}:
+        raise ValueError(
+            f"Raster source must be a .tif or .tiff file; got '{ext or 'unknown'}' for {root}"
+        )
+    return root
+
+
+def _ensure_three_band(array: np.ndarray, source_label: str) -> np.ndarray:
+    arr = np.asarray(array)
+    if arr.ndim != 3 or arr.shape[0] != 3:
+        raise ValueError(
+            f"{source_label} must be a 3-band channel-first array of shape (3,H,W); got shape {arr.shape}"
+        )
+    return np.ascontiguousarray(arr)
+
+
 def _materialize_raster(raster_input):
     if isinstance(raster_input, np.ndarray):
-        return raster_input
+        return _ensure_three_band(raster_input, "NumPy raster input")
     if callable(raster_input):
         materialized = raster_input()
         if not isinstance(materialized, np.ndarray):
             raise TypeError("Raster loader must return a numpy.ndarray")
-        return materialized
+        return _ensure_three_band(materialized, "Raster loader output")
     if isinstance(raster_input, str):
-        source = raster_input.split("|")[0]
+        source = _require_tiff_path(raster_input)
         try:
             from osgeo import gdal  # type: ignore
         except ImportError as exc:  # pragma: no cover - requires QGIS runtime
@@ -49,11 +73,14 @@ def _materialize_raster(raster_input):
         dataset = gdal.Open(source)
         if dataset is None:
             raise RuntimeError(f"Unable to open raster source: {source}")
+        bands = int(dataset.RasterCount) if dataset else 0
+        if bands != 3:
+            raise ValueError(f"Raster '{source}' must have exactly 3 bands; found {bands}.")
         array = dataset.ReadAsArray()
         dataset = None
         if array is None:
             raise RuntimeError("Raster source returned no data.")
-        return np.ascontiguousarray(array)
+        return _ensure_three_band(array, f"Raster '{source}'")
     raise TypeError(f"Unsupported raster input type: {type(raster_input)!r}")
 
 
@@ -249,114 +276,3 @@ def _normalize_cluster_labels(labels, centers):
     mapping[ordering] = np.arange(ordering.size)
     flat = mapping[flat]
     return flat.reshape(labels.shape)
-
-
-def _recommended_batch_size(channels, height, width, memory_budget, settings):
-    # Ensure all dimensions are at least 1 to avoid division by zero
-    channels = max(1, channels)
-    height = max(1, height)
-    width = max(1, width)
-    bytes_per_tile = channels * height * width * 4
-    # bytes_per_tile is guaranteed > 0 since all dimensions are clamped to >= 1
-    budget = max(memory_budget or DEFAULT_MEMORY_BUDGET, bytes_per_tile)
-    safety = max(1, settings.safety_factor)
-    depth = max(1, settings.prefetch_depth)
-    effective_budget = max(1, budget // safety)
-    denom = max(bytes_per_tile * (1 + depth), 1)
-    return max(1, effective_budget // denom)
-
-
-def _prefetch_batches(tiles, batch_size, device, depth=2, cancel_token=None):
-    total = tiles.shape[0]
-    if total == 0:
-        return
-    if device.type == "cuda" and torch.cuda.is_available():
-        yield from _prefetch_batches_cuda(tiles, batch_size, device, cancel_token)
-        return
-    yield from _prefetch_batches_threaded(tiles, batch_size, device, depth, cancel_token)
-
-
-def _prefetch_batches_threaded(tiles, batch_size, device, depth=2, cancel_token=None):
-    total = tiles.shape[0]
-    depth = max(1, depth or 1)
-    executor = ThreadPoolExecutor(max_workers=depth)
-    futures = deque()
-    index = 0
-
-    try:
-        while index < total or futures:
-            while index < total and len(futures) < depth:
-                _maybe_raise_cancel(cancel_token)
-                start = index
-                end = min(start + batch_size, total)
-                batch = tiles[start:end]
-                future = executor.submit(_batch_to_tensor, batch, device)
-                futures.append((future, start, end))
-                index = end
-            future, start, end = futures.popleft()
-            try:
-                _maybe_raise_cancel(cancel_token)
-                yield future.result(), start, end, total
-            except Exception:
-                while futures:
-                    leftover_future, _, _ = futures.popleft()
-                    try:
-                        leftover_future.result()
-                    except Exception:
-                        pass
-                raise
-    finally:
-        executor.shutdown(wait=True)
-
-
-def _prefetch_batches_cuda(tiles, batch_size, device, cancel_token=None):
-    total = tiles.shape[0]
-    if total == 0:
-        return
-    stream = torch.cuda.Stream(device=device)
-    next_start = 0
-    next_tensor = None
-    next_bounds = None
-
-    def _stage_copy(start, end):
-        _maybe_raise_cancel(cancel_token)
-        batch = torch.from_numpy(tiles[start:end])
-        if not batch.is_floating_point():
-            batch = batch.float()
-        pinned = batch.pin_memory()
-        with torch.cuda.stream(stream):
-            gpu_tensor = pinned.to(device, non_blocking=True)
-        del pinned
-        return gpu_tensor
-
-    if next_start < total:
-        staged_end = min(next_start + batch_size, total)
-        next_tensor = _stage_copy(next_start, staged_end)
-        next_bounds = (next_start, staged_end)
-        next_start = staged_end
-
-    current_stream = torch.cuda.current_stream(device)
-    while next_tensor is not None:
-        current_stream.wait_stream(stream)
-        tensor = next_tensor
-        if next_bounds is None:
-            break
-        start, end = next_bounds
-        if next_start < total:
-            staged_end = min(next_start + batch_size, total)
-            next_tensor = _stage_copy(next_start, staged_end)
-            next_bounds = (next_start, staged_end)
-            next_start = staged_end
-        else:
-            next_tensor = None
-            next_bounds = None
-        yield tensor, start, end, total
-
-
-def _batch_to_tensor(batch, device):
-    tensor = torch.from_numpy(batch)
-    if not tensor.is_floating_point():
-        tensor = tensor.float().div_(255.0)
-    else:
-        tensor = tensor / 255.0
-    return tensor.to(device)
