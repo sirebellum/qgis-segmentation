@@ -5,8 +5,8 @@ import os
 import pytest
 
 
-if os.environ.get("QGIS_TESTS") != "1":  # pragma: no cover - optional runtime
-    pytest.skip("QGIS tests disabled; set QGIS_TESTS=1 to enable.", allow_module_level=True)
+if os.environ.get("RUN_QGIS_TESTS", "0").lower() not in {"1", "true"} and os.environ.get("QGIS_TESTS") != "1":  # pragma: no cover - optional runtime
+    pytest.skip("QGIS tests disabled; set RUN_QGIS_TESTS=1 (or QGIS_TESTS=1) to enable.", allow_module_level=True)
 
 try:
     from qgis.core import QgsApplication  # type: ignore
@@ -17,3 +17,10 @@ except Exception:  # pragma: no cover - optional dependency
 def test_qgis_core_imports():
     # Smoke-test that QGIS core is importable when explicitly enabled.
     assert QgsApplication is not None
+
+
+def test_class_factory_available():
+    # Ensure plugin entrypoint is discoverable when QGIS bindings are present.
+    from segmenter import classFactory
+
+    assert callable(classFactory)

@@ -41,17 +41,21 @@ New series beginning at the current repository state. Phase numbering restarts h
 ## Phase 3 — Runtime invariants hardening
 
 ## Phase 4 — Runtime contract sync + smoke export
-- **Intent**: align plugin runtime with the numpy export contract and add a deterministic synthetic-trainer path for runtime artifacts.
-- **Summary**: Added meta/weight schema validation with a fixed runtime meta version in [model/runtime_numpy.py](model/runtime_numpy.py); aligned stub meta to the new schema; introduced `smoke_export_runtime` in [training/export.py](training/export.py) plus a CLI flag for fast CPU-only artifact generation; added deterministic round-trip/meta tests in [tests/test_runtime_smoke_export.py](tests/test_runtime_smoke_export.py); documented the smoke export command in [docs/training/TRAINING_PIPELINE.md](training/TRAINING_PIPELINE.md) and refreshed [docs/CODE_DESCRIPTION.md](CODE_DESCRIPTION.md).
-- **Files Touched**: [model/runtime_numpy.py](model/runtime_numpy.py), [training/export.py](training/export.py), [tests/test_runtime_smoke_export.py](tests/test_runtime_smoke_export.py), [model/best/meta.json](model/best/meta.json), [docs/training/TRAINING_PIPELINE.md](training/TRAINING_PIPELINE.md), [docs/CODE_DESCRIPTION.md](CODE_DESCRIPTION.md).
-- **Commands**: Not run (offline doc/code edit only).
-- **Validation**: Not run (pending CI/local pytest and compileall).
-- **Risks/Notes**: Smoke export depends on torch availability; runtime meta version is now enforced, so stale artifacts must be regenerated via the smoke export or training pipeline.
 
-## Phase 5 — Torch backend selector + optional GPU runtime
-- **Intent**: add a torch runtime (CUDA/MPS/CPU) while keeping the numpy CPU fallback and make backend choice deterministic with tests.
-- **Summary**: Introduced backend selector [model/runtime_backend.py](model/runtime_backend.py) and torch runtime [model/runtime_torch.py](model/runtime_torch.py) consuming existing `.npz` artifacts; `segmenter.py` now loads runtimes through the selector with env overrides (`SEGMENTER_RUNTIME_BACKEND`, `SEGMENTER_DEVICE`). Dependency bootstrap gained optional torch install gated by `SEGMENTER_ENABLE_TORCH`; backend selection/fallback behavior is covered by new pytest cases (CPU + opt-in GPU marker). Docs updated across architecture/model notes/runtime snapshot/code description/history.
-- **Files Touched**: [segmenter.py](segmenter.py), [model/runtime_backend.py](model/runtime_backend.py), [model/runtime_torch.py](model/runtime_torch.py), [model/runtime_numpy.py](model/runtime_numpy.py), [model/__init__.py](model/__init__.py), [dependency_manager.py](dependency_manager.py), [tests/test_runtime_backend_selection.py](tests/test_runtime_backend_selection.py), [tests/test_runtime_torch_gpu.py](tests/test_runtime_torch_gpu.py), [tests/test_runtime_invariants.py](tests/test_runtime_invariants.py), [pytest.ini](pytest.ini), [docs/plugin/ARCHITECTURE.md](plugin/ARCHITECTURE.md), [docs/plugin/MODEL_NOTES.md](plugin/MODEL_NOTES.md), [docs/plugin/RUNTIME_STATUS.md](plugin/RUNTIME_STATUS.md), [docs/CODE_DESCRIPTION.md](CODE_DESCRIPTION.md), [docs/AGENTIC_HISTORY.md](AGENTIC_HISTORY.md).
-- **Commands**: `python -m compileall .`; `./.venv/bin/pytest -q`.
-- **Validation**: compileall passed; pytest: 48 passed, 2 skipped (GPU/QGIS opt-in), 1 GDAL warning.
+
+## Phase 6 — Import/package hardening
+- **Intent**: Resolve QGIS plugin load failures (ModuleNotFoundError for `funcs`) by making intra-plugin imports package-safe and adding regression coverage.
+- **Summary**: Switched runtime imports to explicit relative form, added lightweight QGIS/PyQt stubs so [segmenter.py](segmenter.py) can import without bindings, and guarded `Segmenter` instantiation when QGIS is absent. Bootstrapped the `segmenter` package name in [conftest.py](conftest.py) to mirror the deployed plugin folder, added offline import/regression tests ([tests/test_plugin_imports.py](tests/test_plugin_imports.py)) and updated existing tests to use package paths. Optional QGIS smoke now honors `RUN_QGIS_TESTS=1` (legacy `QGIS_TESTS=1` still works) and covers `classFactory` discovery.
+- **Files Touched**: [segmenter.py](segmenter.py), [conftest.py](conftest.py), [func_test.py](func_test.py), [tests/test_runtime_invariants.py](tests/test_runtime_invariants.py), [tests/test_runtime_backend_selection.py](tests/test_runtime_backend_selection.py), [tests/test_runtime_torch_gpu.py](tests/test_runtime_torch_gpu.py), [tests/test_numpy_runtime_tiling.py](tests/test_numpy_runtime_tiling.py), [tests/test_qgis_runtime_smoke.py](tests/test_qgis_runtime_smoke.py), [tests/test_plugin_imports.py](tests/test_plugin_imports.py), [docs/CODE_DESCRIPTION.md](docs/CODE_DESCRIPTION.md).
+- **Commands**: Not run (offline changes only).
+- **Validation**: Not run (CI/default pytest expected to cover new import tests once executed).
+- **Risks/Notes**: QGIS-dependent behavior remains stubbed in non-QGIS environments; runtime execution still requires actual QGIS bindings and GDAL. Ensure the deployed plugin folder remains named `segmenter` so relative imports resolve.
+
+## Phase 7 — Torch bootstrap knobs
+- **Intent**: Allow dependency bootstrap to install GPU-capable torch wheels when optional torch is enabled.
+- **Summary**: Added env-configurable pip args (`SEGMENTER_TORCH_EXTRA_INDEX_URL`, `SEGMENTER_TORCH_PIP_ARGS`) wired into torch install when `SEGMENTER_ENABLE_TORCH=1`, keeping CPU-safe defaults otherwise.
+- **Files Touched**: [dependency_manager.py](dependency_manager.py), [docs/CODE_DESCRIPTION.md](docs/CODE_DESCRIPTION.md).
+- **Commands**: Not run (offline edit only).
+- **Validation**: Not run; behavior change is configuration-gated.
+- **Risks/Notes**: GPU wheels depend on platform/index availability; installs still gated by `SEGMENTER_ENABLE_TORCH` to avoid unexpected downloads.
 - **Risks/Notes**: Torch wheels remain platform-specific; selector logs and falls back to numpy if torch import/device fails. GPU tests are opt-in via `RUN_GPU_TESTS=1` and `-m gpu`.

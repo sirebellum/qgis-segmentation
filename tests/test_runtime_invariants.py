@@ -7,8 +7,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from funcs import _materialize_raster, _require_tiff_path
-from model.runtime_numpy import load_runtime_model
+from segmenter.funcs import _materialize_raster, _require_tiff_path
+from segmenter.model.runtime_numpy import load_runtime_model
 
 
 def test_validate_three_band_numpy_accepts_rgb():

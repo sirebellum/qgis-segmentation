@@ -3,7 +3,7 @@
 
 import numpy as np
 
-from funcs import predict_nextgen_numpy
+from segmenter.funcs import predict_nextgen_numpy
 
 
 class _StubRuntime:

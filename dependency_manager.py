@@ -110,8 +110,30 @@ def _package_specs() -> Iterable[Dict[str, object]]:
             "label": "PyTorch (CPU/MPS default)",
             "optional": True,
             "enable_env": "SEGMENTER_ENABLE_TORCH",
+            "extra_args": _torch_extra_args(),
         },
     ]
+
+
+def _torch_extra_args() -> List[str]:
+    """Return pip args to prefer GPU-capable torch wheels when requested.
+
+    Environment knobs:
+    - SEGMENTER_TORCH_EXTRA_INDEX_URL: full URL to an extra index (e.g., CUDA wheels).
+    - SEGMENTER_TORCH_PIP_ARGS: space-separated extra args passed verbatim.
+    """
+
+    args: List[str] = []
+
+    extra_index = os.environ.get("SEGMENTER_TORCH_EXTRA_INDEX_URL", "").strip()
+    if extra_index:
+        args.extend(["--extra-index-url", extra_index])
+
+    pip_args = os.environ.get("SEGMENTER_TORCH_PIP_ARGS", "").strip()
+    if pip_args:
+        args.extend(pip_args.split())
+
+    return args
 
 
 def _ensure_package(spec: Dict[str, object], optional: bool = False) -> None:

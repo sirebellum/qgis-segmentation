@@ -107,3 +107,12 @@ Copyright (c) 2026 Quant Civil
 - Implemented torch runtime [model/runtime_torch.py](../model/runtime_torch.py) consuming the existing `.npz` artifacts and mirroring the numpy forward pass.
 - Segmenter now loads runtimes via the selector with env overrides (`SEGMENTER_RUNTIME_BACKEND`, `SEGMENTER_DEVICE`); dependency manager can optionally install torch when `SEGMENTER_ENABLE_TORCH=1`.
 - Tests added for backend selection and torch CPU/GPU paths; pytest `gpu` marker registered.
+
+## Ops (Phase 19 — import/package hardening)
+- Converted plugin runtime imports to explicit relative form and added lightweight QGIS/PyQt stubs so `segmenter.segmenter` can be imported in non-QGIS environments without side effects.
+- Bootstrapped the plugin package name for tests via `conftest.py` to mirror the deployed `segmenter` folder despite the repository root name.
+- Added offline regression tests guarding package importability and static checks against bare absolute imports; expanded the optional QGIS smoke to cover `classFactory`, gated by `RUN_QGIS_TESTS=1` (or legacy `QGIS_TESTS=1`).
+- Scope limited to packaging/install robustness; no runtime logic changes.
+
+## Ops (Phase 20 — torch bootstrap knobs)
+- Dependency bootstrap now honors `SEGMENTER_TORCH_EXTRA_INDEX_URL` and `SEGMENTER_TORCH_PIP_ARGS` to pass CUDA/MPS-capable wheel indexes/flags when `SEGMENTER_ENABLE_TORCH=1` is set; defaults remain CPU-safe.

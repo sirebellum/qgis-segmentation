@@ -7,10 +7,10 @@ import json
 import numpy as np
 import pytest
 
-from funcs import predict_nextgen_numpy, tile_raster
-from model import load_runtime_model
-from model.runtime_numpy import RUNTIME_META_VERSION
-from raster_utils import ensure_channel_first
+from segmenter.funcs import predict_nextgen_numpy, tile_raster
+from segmenter.model import load_runtime_model
+from segmenter.model.runtime_numpy import RUNTIME_META_VERSION
+from segmenter.raster_utils import ensure_channel_first
 
 
 def test_tile_raster_reassembles_original_extent():
@@ -55,7 +55,7 @@ def test_tile_raster_shape_preservation(
 
 
 def test_funcs_runtime_is_numpy_only():
-    import funcs  # noqa: F401
+    import segmenter.funcs as funcs  # noqa: F401
 
     assert "torch" not in funcs.__dict__
 

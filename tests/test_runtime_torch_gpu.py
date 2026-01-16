@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from model import runtime_backend
+from segmenter.model import runtime_backend
 from training.export import smoke_export_runtime
 
 

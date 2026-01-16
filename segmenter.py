@@ -13,34 +13,188 @@
      email                : joshua.herrera@quantcivil.ai
  ***************************************************************************/
 """
+from __future__ import annotations
+
 from collections import deque
 from datetime import datetime
 import os
 import re
 import weakref
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 import numpy as np
-from qgis.PyQt.QtCore import (
-    QCoreApplication,
-    QEvent,
-    QObject,
-    QSettings,
-    Qt,
-    QThread,
-    QTranslator,
-    QUrl,
-    pyqtSignal,
-)
-from qgis.PyQt.QtGui import QDesktopServices, QIcon, QPixmap
-from qgis.PyQt.QtWidgets import QAction, QMessageBox
-from qgis.core import Qgis, QgsApplication, QgsMessageLog, QgsProject, QgsRasterLayer, QgsTask
-from qgis.gui import QgsInterface
 
-from funcs import SegmentationCanceled, predict_nextgen_numpy
-from model import load_runtime
-from qgis_funcs import render_raster
-from segmenter_dialog import SegmenterDialog
+try:  # Import QGIS/Qt lazily so the module can be imported without QGIS
+    from qgis.PyQt.QtCore import (  # type: ignore
+        QCoreApplication,
+        QEvent,
+        QObject,
+        QSettings,
+        Qt,
+        QThread,
+        QTranslator,
+        QUrl,
+        pyqtSignal,
+    )
+    from qgis.PyQt.QtGui import QDesktopServices, QIcon, QPixmap  # type: ignore
+    from qgis.PyQt.QtWidgets import QAction, QMessageBox  # type: ignore
+    from qgis.core import Qgis, QgsApplication, QgsMessageLog, QgsProject, QgsRasterLayer, QgsTask  # type: ignore
+    _HAS_QGIS = True
+except Exception:  # pragma: no cover - QGIS not installed in default test envs
+    _HAS_QGIS = False
+
+if TYPE_CHECKING:  # pragma: no cover - type hints only
+    from qgis.gui import QgsInterface  # type: ignore
+
+if not _HAS_QGIS:  # pragma: no cover - optional runtime stubs for tests
+    class _Stub:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __call__(self, *args, **kwargs):  # allow callable behaviors
+            return None
+
+        def __getattr__(self, _):
+            return _Stub()
+
+    class QObject(_Stub):
+        pass
+
+    class QEvent:
+        MouseButtonPress = object()
+        FocusIn = object()
+
+    class QCoreApplication:  # type: ignore
+        @staticmethod
+        def translate(_context, message):
+            return message
+
+        @staticmethod
+        def installTranslator(_):
+            return None
+
+    class QSettings(_Stub):
+        def value(self, *_args, **_kwargs):
+            return ""
+
+        def setValue(self, *_args, **_kwargs):
+            return None
+
+    class Qt:
+        WA_Hover = 0
+
+    class QThread(_Stub):
+        @staticmethod
+        def idealThreadCount():
+            return 1
+
+    class QTranslator(_Stub):
+        pass
+
+    class QUrl(_Stub):
+        def __init__(self, url: str = ""):
+            super().__init__()
+            self.url = url
+
+    def pyqtSignal(*_args, **_kwargs):  # type: ignore
+        return _Stub()
+
+    class QDesktopServices:
+        @staticmethod
+        def openUrl(_):
+            return False
+
+    class QIcon(_Stub):
+        def __init__(self, *_args, **_kwargs):
+            super().__init__()
+
+    class QPixmap(_Stub):
+        def setPixmap(self, *_args, **_kwargs):
+            return None
+
+    class QAction(_Stub):
+        def __init__(self, *args, **kwargs):
+            super().__init__()
+
+        def triggered(self, *_args, **_kwargs):
+            return _Stub()
+
+        def setEnabled(self, *_args, **_kwargs):
+            return None
+
+        def setStatusTip(self, *_args, **_kwargs):
+            return None
+
+        def setWhatsThis(self, *_args, **_kwargs):
+            return None
+
+    class QMessageBox:
+        @staticmethod
+        def warning(*_args, **_kwargs):
+            return None
+
+    class Qgis:
+        Info = "Info"
+        Critical = "Critical"
+
+    class QgsMessageLog:
+        @staticmethod
+        def logMessage(*_args, **_kwargs):
+            return None
+
+    class _StubTaskManager:
+        def addTask(self, *_args, **_kwargs):
+            return None
+
+        def cancelTask(self, *_args, **_kwargs):
+            return None
+
+    class QgsApplication:
+        @staticmethod
+        def taskManager():
+            return _StubTaskManager()
+
+        @staticmethod
+        def setMaxThreads(_count):
+            return None
+
+    class QgsProject:
+        @staticmethod
+        def instance():
+            return QgsProject()
+
+        def mapLayersByName(self, *_args, **_kwargs):
+            return []
+
+        def mapLayers(self):
+            return {}
+
+    class QgsRasterLayer(_Stub):
+        pass
+
+    class QgsTask(_Stub):
+        def isCanceled(self):
+            return False
+
+        def taskId(self):
+            return None
+
+        def cancel(self):
+            return False
+
+    def render_raster(*_args, **_kwargs):  # type: ignore
+        raise ImportError("QGIS runtime is required to render rasters.")
+
+    class SegmenterDialog(_Stub):
+        def __init__(self, *args, **kwargs):
+            super().__init__()
+
+else:
+    from .qgis_funcs import render_raster
+    from .segmenter_dialog import SegmenterDialog
+
+from .funcs import SegmentationCanceled, predict_nextgen_numpy
+from .model import load_runtime
 
 SUPPORTED_RASTER_EXTENSIONS = {".tif", ".tiff"}
 TILE_SIZE = 256
@@ -221,6 +375,8 @@ class Segmenter:
             application at run time.
         :type iface: QgsInterface
         """
+        if not _HAS_QGIS:
+            raise ImportError("Segmenter requires QGIS runtime; QGIS bindings were not detected.")
         # Save reference to the QGIS interface
         self.iface = iface
         # initialize plugin directory
