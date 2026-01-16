@@ -56,7 +56,25 @@ def ensure_dependencies() -> None:
         return
 
     for spec in _package_specs():
-        _ensure_package(spec)
+        optional = bool(spec.get("optional"))
+        enabled_env = spec.get("enable_env")
+        label = str(spec.get("label", spec.get("pip", spec.get("import", "unknown"))))
+
+        if optional and enabled_env:
+            if not _env_truthy(enabled_env):
+                if not _package_installed(spec["import"]):  # type: ignore[index]
+                    _log_dependency_status(
+                        f"Skipping optional dependency {label}; set {enabled_env}=1 to attempt install."
+                    )
+                    continue
+
+        try:
+            _ensure_package(spec, optional=optional)
+        except ImportError:
+            if optional:
+                _log_dependency_status(f"Optional dependency {label} not installed; continuing without it.")
+                continue
+            raise
 
     _ENSURED = True
 
@@ -66,17 +84,37 @@ def _skip_requested() -> bool:
     return flag in {"1", "true", "yes"}
 
 
+def _env_truthy(name: str) -> bool:
+    value = os.environ.get(name, "").strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
+
+def _package_installed(import_name: str) -> bool:
+    try:
+        importlib.import_module(import_name)
+        return True
+    except Exception:
+        return False
+
+
 def _package_specs() -> Iterable[Dict[str, object]]:
     return [
         {
             "import": "numpy",
             "pip": "numpy>=1.23,<2.0",
             "label": "NumPy",
-        }
+        },
+        {
+            "import": "torch",
+            "pip": "torch>=2.1,<3.0",
+            "label": "PyTorch (CPU/MPS default)",
+            "optional": True,
+            "enable_env": "SEGMENTER_ENABLE_TORCH",
+        },
     ]
 
 
-def _ensure_package(spec: Dict[str, object]) -> None:
+def _ensure_package(spec: Dict[str, object], optional: bool = False) -> None:
     import_name = spec["import"]  # type: ignore[index]
     try:
         importlib.import_module(import_name)  # type: ignore[arg-type]
@@ -116,6 +154,11 @@ def _ensure_package(spec: Dict[str, object]) -> None:
         _log_dependency_status(f"Dependency installed: {label}")
     except (subprocess.CalledProcessError, OSError) as exc:
         _close_install_popup(dialog)
+        if optional:
+            _log_dependency_status(
+                f"Optional dependency '{pip_name}' failed to install; proceeding without it."
+            )
+            return
         raise ImportError(
             "Segmenter could not install dependency '" + str(pip_name) + "'."
             "Run QGIS Python console and install it manually."

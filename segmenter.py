@@ -38,7 +38,7 @@ from qgis.core import Qgis, QgsApplication, QgsMessageLog, QgsProject, QgsRaster
 from qgis.gui import QgsInterface
 
 from funcs import SegmentationCanceled, predict_nextgen_numpy
-from model import load_runtime_model
+from model import load_runtime
 from qgis_funcs import render_raster
 from segmenter_dialog import SegmenterDialog
 
@@ -702,7 +702,14 @@ class Segmenter:
     def load_nextgen_runtime(self, model_dir: Optional[str] = None):
         target = model_dir or self.nextgen_model_dir
         try:
-            return load_runtime_model(target, status_callback=self.log_status)
+            backend_pref = os.environ.get("SEGMENTER_RUNTIME_BACKEND", "auto")
+            device_pref = os.environ.get("SEGMENTER_DEVICE", "auto")
+            return load_runtime(
+                target,
+                prefer=backend_pref,
+                device_preference=device_pref,
+                status_callback=self.log_status,
+            )
         except FileNotFoundError as exc:
             self.log_status(str(exc))
             raise

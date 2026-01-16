@@ -8,3 +8,4 @@ rasterio
 gdal
 tensorboard
 pyyaml
+pb_tool

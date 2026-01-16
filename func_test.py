@@ -9,6 +9,7 @@ import pytest
 
 from funcs import predict_nextgen_numpy, tile_raster
 from model import load_runtime_model
+from model.runtime_numpy import RUNTIME_META_VERSION
 from raster_utils import ensure_channel_first
 
 
@@ -74,7 +75,7 @@ def test_ensure_channel_first_rejects_invalid_ndarrays():
 
 def test_runtime_numpy_smoke(tmp_path):
     meta = {
-        "version": "test",
+        "version": RUNTIME_META_VERSION,
         "max_k": 4,
         "embed_dim": 4,
         "temperature": 1.0,

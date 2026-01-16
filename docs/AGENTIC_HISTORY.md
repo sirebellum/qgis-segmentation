@@ -47,3 +47,11 @@ New series beginning at the current repository state. Phase numbering restarts h
 - **Commands**: Not run (offline doc/code edit only).
 - **Validation**: Not run (pending CI/local pytest and compileall).
 - **Risks/Notes**: Smoke export depends on torch availability; runtime meta version is now enforced, so stale artifacts must be regenerated via the smoke export or training pipeline.
+
+## Phase 5 — Torch backend selector + optional GPU runtime
+- **Intent**: add a torch runtime (CUDA/MPS/CPU) while keeping the numpy CPU fallback and make backend choice deterministic with tests.
+- **Summary**: Introduced backend selector [model/runtime_backend.py](model/runtime_backend.py) and torch runtime [model/runtime_torch.py](model/runtime_torch.py) consuming existing `.npz` artifacts; `segmenter.py` now loads runtimes through the selector with env overrides (`SEGMENTER_RUNTIME_BACKEND`, `SEGMENTER_DEVICE`). Dependency bootstrap gained optional torch install gated by `SEGMENTER_ENABLE_TORCH`; backend selection/fallback behavior is covered by new pytest cases (CPU + opt-in GPU marker). Docs updated across architecture/model notes/runtime snapshot/code description/history.
+- **Files Touched**: [segmenter.py](segmenter.py), [model/runtime_backend.py](model/runtime_backend.py), [model/runtime_torch.py](model/runtime_torch.py), [model/runtime_numpy.py](model/runtime_numpy.py), [model/__init__.py](model/__init__.py), [dependency_manager.py](dependency_manager.py), [tests/test_runtime_backend_selection.py](tests/test_runtime_backend_selection.py), [tests/test_runtime_torch_gpu.py](tests/test_runtime_torch_gpu.py), [tests/test_runtime_invariants.py](tests/test_runtime_invariants.py), [pytest.ini](pytest.ini), [docs/plugin/ARCHITECTURE.md](plugin/ARCHITECTURE.md), [docs/plugin/MODEL_NOTES.md](plugin/MODEL_NOTES.md), [docs/plugin/RUNTIME_STATUS.md](plugin/RUNTIME_STATUS.md), [docs/CODE_DESCRIPTION.md](CODE_DESCRIPTION.md), [docs/AGENTIC_HISTORY.md](AGENTIC_HISTORY.md).
+- **Commands**: `python -m compileall .`; `./.venv/bin/pytest -q`.
+- **Validation**: compileall passed; pytest: 48 passed, 2 skipped (GPU/QGIS opt-in), 1 GDAL warning.
+- **Risks/Notes**: Torch wheels remain platform-specific; selector logs and falls back to numpy if torch import/device fails. GPU tests are opt-in via `RUN_GPU_TESTS=1` and `-m gpu`.

@@ -37,29 +37,33 @@ def test_runtime_artifact_loads_and_predicts():
     assert labels.dtype == np.uint8
 
 
-def test_dependency_specs_are_numpy_only():
+def test_dependency_specs_cover_numpy_and_optional_torch():
     import dependency_manager
 
     specs = list(dependency_manager._package_specs())  # pylint: disable=protected-access
     assert specs, "Package spec list must not be empty"
-    for spec in specs:
-        assert "torch" not in str(spec), "Runtime dependency list must be torch-free"
-    labels = [spec.get("pip") for spec in specs if isinstance(spec, dict)]
-    assert any("numpy" in str(label) for label in labels)
+
+    numpy_specs = [spec for spec in specs if isinstance(spec, dict) and spec.get("import") == "numpy"]
+    torch_specs = [spec for spec in specs if isinstance(spec, dict) and spec.get("import") == "torch"]
+
+    assert numpy_specs, "NumPy spec must be present"
+    assert torch_specs, "Torch spec should be present for optional acceleration"
+    for spec in torch_specs:
+        assert spec.get("optional") is True
+        assert spec.get("enable_env") == "SEGMENTER_ENABLE_TORCH"
 
 
-def test_runtime_modules_are_torch_free():
+def test_core_runtime_avoids_hard_torch_imports():
     root = Path(__file__).resolve().parents[1]
     runtime_files = [
         root / "funcs.py",
         root / "segmenter.py",
         root / "model" / "runtime_numpy.py",
         root / "qgis_funcs.py",
-        root / "dependency_manager.py",
     ]
     for path in runtime_files:
         text = path.read_text()
-        assert "torch" not in text
+        assert "import torch" not in text
 
 
 def test_packaging_manifest_ships_model_artifacts():

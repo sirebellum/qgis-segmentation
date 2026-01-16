@@ -6,13 +6,13 @@ Copyright (c) 2026 Quant Civil
 
 ## Inference pipeline (current)
 - Inputs: 3-band GDAL raster layer validated in [segmenter.py](segmenter.py) `_is_supported_raster_layer` (RGB GeoTIFF, provider `gdal`, band count 3). Data materialized via [funcs.py](funcs.py) `_materialize_raster` (numpy array, file path, or loader callable) which enforces `.tif/.tiff` and exact 3-band shape with clear errors.
-- Runtime: numpy-only path via `predict_nextgen_numpy` (tiles/stitches with padding trim) and `model/runtime_numpy.py` (loads `model/best` artifacts and exposes `predict_labels`). No torch/scikit-learn dependency in the plugin runtime; torch/prefetch helpers removed.
+- Runtime: backend selector in [model/runtime_backend.py](model/runtime_backend.py) chooses torch (CUDA → MPS → CPU) when available or falls back to numpy. Both backends consume the same `model/best` artifacts and expose `predict_labels`; tiled stitching remains in `predict_nextgen_numpy`.
 - Output: segmentation labels as uint8 numpy array (class IDs start at 0). Rendering writes GeoTIFF via [qgis_funcs.py](qgis_funcs.py) preserving extent/CRS; opacity set to 1.0. No explicit nodata handling beyond padding trim.
 
 ## Controls, heuristics, and perf
 - User input: segment count only (tile size fixed; no blur/heuristic sliders in UI).
-- Dependency bootstrap: [dependency_manager.py](dependency_manager.py) installs NumPy into `vendor/` at import time unless `SEGMENTER_SKIP_AUTO_INSTALL` is set; accepts `SEGMENTER_PYTHON` for interpreter override; invoked from `classFactory` before the plugin initializes.
-- Profiling: [perf_tuner.py](perf_tuner.py) is a shim returning default settings; no torch imports or device benchmarking.
+- Dependency bootstrap: [dependency_manager.py](dependency_manager.py) installs NumPy into `vendor/` at import time unless `SEGMENTER_SKIP_AUTO_INSTALL` is set; accepts `SEGMENTER_PYTHON` for interpreter override; optional torch install is gated by `SEGMENTER_ENABLE_TORCH=1` and otherwise skipped (torch may still be used if pre-installed).
+- Profiling: [perf_tuner.py](perf_tuner.py) is a shim returning default settings; no torch-prefetch or device benchmarking beyond runtime selection.
 
 ## Training (unsupervised — implemented, isolated)
 - Status: eager-PyTorch pipeline in [training/](training); not wired into QGIS runtime.

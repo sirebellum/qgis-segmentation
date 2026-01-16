@@ -7,11 +7,13 @@ Copyright (c) 2026 Quant Civil
 - Purpose: concise registry of modules and their current phase of stewardship (replaces CODE_SCRIPTURE.md).
 
 ## Runtime (Phase 0–6)
-- segmenter.py / segmenter_dialog.py / segmenter_dialog_base.ui: QGIS UI + task dispatch for the single numpy runtime path; validates layer/segment count and queues `predict_nextgen_numpy`.
-- funcs.py: numerical engine (materialize/tiling/stitching, cancellation/status helpers); includes `predict_nextgen_numpy` for the numpy runtime.
+- segmenter.py / segmenter_dialog.py / segmenter_dialog_base.ui: QGIS UI + task dispatch for the next-gen runtime path; validates layer/segment count and queues `predict_nextgen_numpy`.
+- funcs.py: numerical engine (materialize/tiling/stitching, cancellation/status helpers); includes `predict_nextgen_numpy` that delegates to whichever backend exposes `predict_labels`.
+- model/runtime_backend.py: backend selector preferring torch (CUDA/MPS/CPU) when available and falling back to numpy; surfaces backend/device labels and logs fallback reasons.
+- model/runtime_torch.py: torch runtime consuming numpy-exported artifacts; mirrors numpy forward pass and honors device preference.
 - qgis_funcs.py: GDAL render to GeoTIFF + layer registration.
-- dependency_manager.py / perf_tuner.py / raster_utils.py: NumPy bootstrap, profiling shim, array utilities.
-- model/runtime_numpy.py: numpy-only runtime for next-gen variable-K model consuming `model/best` artifacts (no torch import); validates `meta.json` schema/version before loading weights.
+- dependency_manager.py / perf_tuner.py / raster_utils.py: NumPy bootstrap, profiling shim, array utilities; optional torch install gated by `SEGMENTER_ENABLE_TORCH`.
+- model/runtime_numpy.py: numpy runtime for next-gen variable-K model consuming `model/best` artifacts; validates `meta.json` schema/version before loading weights.
 - model/README.md: artifact contract + producer/consumer notes for runtime.
 
 ## Training (Phase 3, scaffolding)
@@ -99,3 +101,9 @@ Copyright (c) 2026 Quant Civil
 - Removed torch/prefetch helpers from runtime modules; dependency bootstrap now runs in `classFactory` via `ensure_dependencies()`.
 - Shipped stub runtime artifacts under `model/best` for packaging (`pb_tool.cfg` `extra_dirs`); document GitHub artifact + Git LFS expectation.
 - Added runtime snapshot update [docs/plugin/RUNTIME_STATUS.md](plugin/RUNTIME_STATUS.md) and offline regression tests guarding dependency specs, torch-free runtime, model artifacts, and 3-band validation.
+
+## Runtime (Phase 18 — torch backend selector)
+- Added backend selector [model/runtime_backend.py](../model/runtime_backend.py) to prefer torch (CUDA/MPS/CPU) with device hints and fall back to numpy with logged reasons.
+- Implemented torch runtime [model/runtime_torch.py](../model/runtime_torch.py) consuming the existing `.npz` artifacts and mirroring the numpy forward pass.
+- Segmenter now loads runtimes via the selector with env overrides (`SEGMENTER_RUNTIME_BACKEND`, `SEGMENTER_DEVICE`); dependency manager can optionally install torch when `SEGMENTER_ENABLE_TORCH=1`.
+- Tests added for backend selection and torch CPU/GPU paths; pytest `gpu` marker registered.

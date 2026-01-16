@@ -318,6 +318,14 @@ class NumpySegmenter:
 
 
 def load_runtime_model(model_dir: str, status_callback: Optional[Callable[[str], None]] = None) -> NumpySegmenter:
+    weights, meta = load_runtime_artifacts(model_dir, status_callback=status_callback)
+    runtime = NumpySegmenter(weights, meta)
+    runtime.backend = "numpy"
+    runtime.device_label = "cpu"
+    return runtime
+
+
+def load_runtime_artifacts(model_dir: str, status_callback: Optional[Callable[[str], None]] = None):
     meta_path = os.path.join(model_dir, "meta.json")
     weights_path = os.path.join(model_dir, "model.npz")
     if not os.path.exists(meta_path) or not os.path.exists(weights_path):
@@ -333,7 +341,7 @@ def load_runtime_model(model_dir: str, status_callback: Optional[Callable[[str],
     with np.load(weights_path) as weights:
         named = {k: weights[k] for k in weights.files}
     _validate_required_weights(named)
-    return NumpySegmenter(named, meta)
+    return named, meta
 
 
-__all__ = ["RuntimeMeta", "NumpySegmenter", "load_runtime_model", "RUNTIME_META_VERSION"]
+__all__ = ["RuntimeMeta", "NumpySegmenter", "load_runtime_model", "load_runtime_artifacts", "RUNTIME_META_VERSION"]
