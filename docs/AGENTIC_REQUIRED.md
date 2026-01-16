@@ -9,9 +9,12 @@ Purpose: minimal list of files to upload when generating agentic prompt iteratio
 ## Upload checklist (exact paths)
 - docs/CODE_DESCRIPTION.md
 - docs/AGENTIC_HISTORY.md
+- docs/AGENTIC_REQUIRED.md
 - docs/plugin/ARCHITECTURE.md
 - docs/plugin/MODEL_NOTES.md
 - docs/training/TRAINING_PIPELINE.md
+- docs/training/MODEL_HISTORY.md
+- docs/dataset/DATASETS.md
 
 ## Regen rules
 - If any checklist file is missing or moved, regenerate docs/CODE_DESCRIPTION.md to reflect new locations.
@@ -20,10 +23,5 @@ Purpose: minimal list of files to upload when generating agentic prompt iteratio
 
 ## Zip archive command
 ```bash
-zip agent.zip \
-  docs/CODE_DESCRIPTION.md \
-  docs/AGENTIC_HISTORY.md \
-  docs/plugin/ARCHITECTURE.md \
-  docs/plugin/MODEL_NOTES.md \
-  docs/training/TRAINING_PIPELINE.md
+zip agent.zip docs/CODE_DESCRIPTION.md docs/AGENTIC_HISTORY.md docs/AGENTIC_REQUIRED.md docs/plugin/ARCHITECTURE.md docs/plugin/MODEL_NOTES.md docs/training/TRAINING_PIPELINE.md docs/training/MODEL_HISTORY.md docs/dataset/DATASETS.md
 ```
