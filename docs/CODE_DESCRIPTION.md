@@ -88,8 +88,7 @@ Copyright (c) 2026 Quant Civil
 - Validation: pending full rerun of compileall/pytest after dataset tooling refresh; synthetic smoke remains default.
 
 ## Ops (Phase 14 — history reset + ingest scaffold)
-- Added [docs/AGENTIC_HISTORY_SERIES_2.md](AGENTIC_HISTORY_SERIES_2.md) to start a new phase series with Phase 0 capturing the then-current numpy-only runtime, RGB-only training, and paused dataset ingestion (historical; runtime has since been restored to the legacy TorchScript path).
-- Appended pointer entry to [docs/AGENTIC_HISTORY.md](AGENTIC_HISTORY.md) while keeping prior phases intact.
+- Re-wrote [docs/AGENTIC_HISTORY.md](AGENTIC_HISTORY.md) to phase 0 for current code state.
 - Seeded dataset ingestion scaffold under [scripts/datasets_ingest](../scripts/datasets_ingest) (config, interfaces, manifest validation, provider stubs, CLI); scaffold is offline-only and performs no network/GDAL work.
 - Documented dataset rewrite status in [docs/dataset/DATASETS.md](dataset/DATASETS.md); added stub tests [tests/test_datasets_ingest_stub.py](../tests/test_datasets_ingest_stub.py) to keep coverage deterministic and QGIS-free.
 
