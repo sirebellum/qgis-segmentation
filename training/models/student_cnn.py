@@ -65,17 +65,19 @@ def batched_kmeans(emb: torch.Tensor, k: int, iters: int = 5, temperature: float
     """Simplified batched k-means on embeddings (B,C,H,W -> assignments, prototypes)."""
     b, c, h, w = emb.shape
     flat = emb.view(b, c, -1)
-    # init by slicing
-    step = max(1, flat.shape[-1] // k)
-    proto = flat[:, :, ::step][:, :, :k].clone()
+    n = flat.shape[-1]
+    k_eff = max(1, min(k, n))
+    # init by slicing evenly spaced points
+    step = max(1, n // k_eff)
+    proto = flat[:, :, ::step][:, :, :k_eff].clone().permute(0, 2, 1)  # [B, K, C]
     for _ in range(max(1, iters)):
-        diff = flat.unsqueeze(2) - proto.unsqueeze(-1)
-        dist = (diff * diff).sum(dim=1)  # [B,K,N]
+        diff = flat.unsqueeze(1) - proto.unsqueeze(-1)  # [B, K, C, N]
+        dist = (diff * diff).sum(dim=2)  # [B, K, N]
         logits = -dist / max(temperature, 1e-6)
         assign = torch.softmax(logits, dim=1)
         denom = assign.sum(dim=2, keepdim=True) + 1e-6
         proto = torch.einsum("bkn,bcn->bkc", assign, flat) / denom
-    assign_map = assign.view(b, k, h, w)
+    assign_map = assign.view(b, k_eff, h, w)
     return assign_map, proto
 
 
