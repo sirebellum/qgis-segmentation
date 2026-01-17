@@ -5,6 +5,7 @@ Copyright (c) 2026 Quant Civil
 # Training Pipeline (RGB-only)
 
 - Data source (current state): synthetic RGB tiles only. Manifest-backed ingestion is temporarily disabled while dataset tooling is rewritten.
+- Dataset prep v0: offline header + shard builder now exists for future real-data wiring (see [docs/dataset/HEADERS.md](../dataset/HEADERS.md)). Shards land under `training/datasets/processed/<dataset>/<split>/shard-xxxxx/` with uncompressed GeoTIFFs and `index.jsonl`; the trainer remains synthetic-only until ingestion is hooked up.
 - Loader: `training/data/dataset.py` builds two augmented RGB views per sample (flip/rotate/noise) with identity warp grids; elevation channels are not supported.
 - Config: `training/config.py` defaults keep patch size 512 and random K in `[2,16]`; only Python configs are supported by default (PyYAML optional).
 - Smoke train (CPU-friendly):

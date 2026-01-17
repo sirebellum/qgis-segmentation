@@ -124,8 +124,8 @@ perf_profile.json
 # Training artifacts
 training/checkpoints/
 training/runs/
-training/data/
-training/datasets/
+training/datasets/headers/
+training/datasets/data
 data/naip_3dep/
 scripts/data/output/
 

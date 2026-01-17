@@ -24,6 +24,12 @@ Copyright (c) 2026 Quant Civil
 - training/train.py, eval.py: CLI runners (synthetic-ready, eager PyTorch).
 - training/tests/: pytest coverage (shapes, losses, synthetic smoke).
 
+## Dataset prep (headers + shards)
+- training/datasets/header_schema.py: YAML schema + validator for dataset headers (modalities, pairing, splits, sharding, validation rules).
+- training/datasets/generate_headers.py: scanner to emit headers from extracted data; ms_buildings auto-detection covers sat/map patterns and label values.
+- training/datasets/build_shards.py: monolithic shard builder producing uncompressed GeoTIFF shards with `index.jsonl`, deterministic split assignment, and summary manifest.
+- training/datasets/metrics.py: IoU helper that ignores labels ≤ threshold; exercised via training/datasets/tests.
+
 ## Training (Phase 4, hardening)
 - Elevation mask plumbing (since removed in Phase 13) and grad-accumulation tweaks.
 - Fast smoothing fixed to depthwise kernel for arbitrary K; optional grad accumulation exposed in CLI/train loop.

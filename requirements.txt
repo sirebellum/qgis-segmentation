@@ -4,3 +4,5 @@ scikit-learn
 torch
 pytest
 flake8
+PyYAML
+rasterio

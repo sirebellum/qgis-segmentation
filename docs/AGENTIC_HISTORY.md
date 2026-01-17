@@ -44,12 +44,6 @@ New series beginning at the current repository state. Phase numbering restarts h
 
 
 ## Phase 6 — Import/package hardening
-- **Intent**: Resolve QGIS plugin load failures (ModuleNotFoundError for `funcs`) by making intra-plugin imports package-safe and adding regression coverage.
-- **Summary**: Switched runtime imports to explicit relative form, added lightweight QGIS/PyQt stubs so [segmenter.py](segmenter.py) can import without bindings, and guarded `Segmenter` instantiation when QGIS is absent. Bootstrapped the `segmenter` package name in [conftest.py](conftest.py) to mirror the deployed plugin folder, added offline import/regression tests ([tests/test_plugin_imports.py](tests/test_plugin_imports.py)) and updated existing tests to use package paths. Optional QGIS smoke now honors `RUN_QGIS_TESTS=1` (legacy `QGIS_TESTS=1` still works) and covers `classFactory` discovery.
-- **Files Touched**: [segmenter.py](segmenter.py), [conftest.py](conftest.py), [func_test.py](func_test.py), [tests/test_runtime_invariants.py](tests/test_runtime_invariants.py), [tests/test_runtime_backend_selection.py](tests/test_runtime_backend_selection.py), [tests/test_runtime_torch_gpu.py](tests/test_runtime_torch_gpu.py), [tests/test_numpy_runtime_tiling.py](tests/test_numpy_runtime_tiling.py), [tests/test_qgis_runtime_smoke.py](tests/test_qgis_runtime_smoke.py), [tests/test_plugin_imports.py](tests/test_plugin_imports.py), [docs/CODE_DESCRIPTION.md](docs/CODE_DESCRIPTION.md).
-- **Commands**: Not run (offline changes only).
-- **Validation**: Not run (CI/default pytest expected to cover new import tests once executed).
-- **Risks/Notes**: QGIS-dependent behavior remains stubbed in non-QGIS environments; runtime execution still requires actual QGIS bindings and GDAL. Ensure the deployed plugin folder remains named `segmenter` so relative imports resolve.
 
 ## Phase 7 — Torch bootstrap knobs
 
@@ -60,3 +54,11 @@ New series beginning at the current repository state. Phase numbering restarts h
 - **Commands**: `/Users/josh/gits/qgis-segmentation/.venv/bin/python -m compileall .` (pass); `/Users/josh/gits/qgis-segmentation/.venv/bin/python -m pytest -q` (fails during collection: `ModuleNotFoundError: No module named 'qgis'` from runtime tests importing segmenter.py). No remediation in this doc-only pass.
 - **Validation**: Compileall succeeded. Pytest requires QGIS bindings for runtime tests; documented failure and left unresolved per scope.
 - **Risks/Notes**: Runtime update for the new model type remains deferred until training is complete. Default test suite currently depends on QGIS for runtime modules; consider gating or stubbing if QGIS-free runs are required in future iterations.
+
+## Phase 23 — Dataset prep v0 (headers + shards)
+- **Intent**: Stand up the dataset header schema, ms_buildings header generation, deterministic shard builder, and masked IoU helper while keeping tests offline/QGIS-free.
+- **Summary**: Added header validator/schema, ms_buildings header, generator CLI (with extracted-root fallback), shard builder producing uncompressed GeoTIFF shards plus index.jsonl and summary manifest, masked IoU helper, and offline tests covering schema parsing, split logic, shard layout, and IoU masking. Documented schema and pipeline references.
+- **Files Touched**: [training/datasets/header_schema.py](training/datasets/header_schema.py), [training/datasets/generate_headers.py](training/datasets/generate_headers.py), [training/datasets/build_shards.py](training/datasets/build_shards.py), [training/datasets/metrics.py](training/datasets/metrics.py), [training/datasets/headers/ms_buildings.yaml](training/datasets/headers/ms_buildings.yaml), [training/datasets/tests/test_pipeline.py](training/datasets/tests/test_pipeline.py), [docs/dataset/HEADERS.md](docs/dataset/HEADERS.md), [docs/dataset/DATASETS.md](docs/dataset/DATASETS.md), [docs/training/TRAINING_PIPELINE.md](docs/training/TRAINING_PIPELINE.md), [docs/CODE_DESCRIPTION.md](docs/CODE_DESCRIPTION.md), [requirements.txt](requirements.txt).
+- **Commands**: `/Users/josh/gits/qgis-segmentation/.venv/bin/python -m training.datasets.generate_headers --dataset ms_buildings --dry-run`; `/Users/josh/gits/qgis-segmentation/.venv/bin/python -m training.datasets.build_shards --dataset-id ms_buildings --dry-run --max-items 5`; `/Users/josh/gits/qgis-segmentation/.venv/bin/python -m pytest -q`.
+- **Validation**: Pytest passed (57 passed, 5 skipped; warnings about custom gpu mark and rasterio non-georeferenced test fixtures). Dry-run header/shard commands verified ms_buildings counts and fallback roots.
+- **Risks/Notes**: Tools default to `training/datasets/extracted` but fall back to `training/datasets/data/extracted`; keep this in sync with future data layout. Shard builder enforces overwrite guard; outputs are uncompressed GeoTIFF. Metrics split sends 25% of labeled tiles to `metrics_train` for metrics-only evaluation.
