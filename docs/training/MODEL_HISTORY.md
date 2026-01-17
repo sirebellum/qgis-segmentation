@@ -27,3 +27,9 @@ Copyright (c) 2026 Quant Civil
 - Data: synthetic default path remains; real rasters still stubbed. Mixed elevation/non-elevation batches supported via masks.
 - Training loop: optional `--grad-accum` averaging loss; logs include micro_step vs step.
 - Notes: synthetic-first by design; real IO to be added in later phases once raster backend is wired.
+
+### 2026-01-17 — Shard ingestion + metrics-only labels
+- Config: `data.source=shards` with `processed_root`, `dataset_id`, worker/prefetch/cache knobs; synthetic remains default.
+- Data: v0 processed shards (`train` unlabeled; `metrics_train` + `val` labeled). Targets used only for IoU metrics; labels `<=0` are ignored during scoring.
+- Loop: train/eval build shard DataLoaders; periodic/final IoU computed on metrics/val splits; loss path unchanged (unsupervised two-view).
+- Notes: plugin runtime still legacy TorchScript CNN/K-Means; runtime adoption of new numpy artifacts remains deferred.

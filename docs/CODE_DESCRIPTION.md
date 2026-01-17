@@ -130,3 +130,8 @@ Copyright (c) 2026 Quant Civil
 - Clarified historical phases (backend selector, import stubs, torch bootstrap knobs) as superseded; future runtime update remains deferred until the new model is trained.
 - Files updated: docs/plugin/ARCHITECTURE.md, docs/plugin/MODEL_NOTES.md, docs/plugin/RUNTIME_STATUS.md, docs/CODE_DESCRIPTION.md, docs/AGENTIC_HISTORY.md.
 - Validation: `python -m compileall .` and `python -m pytest -q` (default QGIS-free suite); results captured in AGENTIC_HISTORY.
+
+## Training (Phase 24 — shard ingestion wiring)
+- Added shard-backed iterable loader [training/data/sharded_tif_dataset.py](training/data/sharded_tif_dataset.py) with worker-partitioned shard streaming and optional per-worker LRU caching (`data.cache_mode=lru`, `data.cache_max_items`). Loader perf knobs (`data.num_workers`, `data.prefetch_factor`, `data.persistent_workers`, `data.pin_memory`) are honored across synthetic and shard paths.
+- [training/train.py](training/train.py) now honors `data.source=shards`, builds shard DataLoaders, and runs IoU metrics on `metrics_train`/`val` splits using [training/datasets/metrics.py](training/datasets/metrics.py) (labels `<=0` ignored). [training/eval.py](training/eval.py) accepts shard overrides via CLI (`--data-source shards --dataset-id ... --split ...`).
+- Tests: [training/tests/test_sharded_dataset_loader.py](training/tests/test_sharded_dataset_loader.py) (worker partitioning, caching determinism) and [training/tests/test_metrics_iou_ignore_zero.py](training/tests/test_metrics_iou_ignore_zero.py).

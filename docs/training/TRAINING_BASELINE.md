@@ -8,12 +8,12 @@ Copyright (c) 2026 Quant Civil
 - Sources of truth reviewed: [TRAINING_PIPELINE.md](TRAINING_PIPELINE.md), [docs/dataset/DATASETS.md](../dataset/DATASETS.md), [docs/plugin/ARCHITECTURE.md](../plugin/ARCHITECTURE.md), [docs/plugin/MODEL_NOTES.md](../plugin/MODEL_NOTES.md), [docs/CODE_DESCRIPTION.md](../CODE_DESCRIPTION.md), [docs/AGENTIC_HISTORY.md](../AGENTIC_HISTORY.md), plus [training](../../training), [scripts/datasets_ingest](../../scripts/datasets_ingest), [scripts/data](../../scripts/data), and [model](../../model) runtime files.
 
 ## Flow (verified)
-- Data prep defaults to synthetic RGB tiles from [training/data/synthetic.py](training/data/synthetic.py) wrapped by two-view augmentations in [training/data/dataset.py](training/data/dataset.py); no manifest or DEM ingestion is active.
+- Data prep defaults to synthetic RGB tiles from [training/data/synthetic.py](training/data/synthetic.py) wrapped by two-view augmentations in [training/data/dataset.py](training/data/dataset.py). Shard-backed ingestion is now available via `data.source=shards`, consuming v0 processed shards under `training/datasets/processed/<dataset>/<split>/shard-xxxxx/` with `index.jsonl` entries (`input`, optional `target`, `item_id`, `split`). Unlabeled items feed `train`; labeled tiles are split 25% to `metrics_train` (metrics-only) and 75% to `val`.
 - Training loop in [training/train.py](training/train.py) builds a loader from synthetic samples, trains `MonolithicSegmenter`, logs to TensorBoard/JSON, and auto-exports best numpy artifacts unless `--no-export` is set.
 - Exports land in `model/best` (runtime pickup) and `training/best_model` (ledger mirror) via [training/export.py](training/export.py); plugin runtime consumes `model/best` through [model/runtime_numpy.py](model/runtime_numpy.py).
 
 ## Data prep & manifests
-- Verified active path: synthetic-only; `DataConfig.manifest_path` exists but is unused in the loader wrapper.
+- Verified active paths: synthetic default plus shard ingestion (`data.source=shards`). `DataConfig.manifest_path` remains unused; shards rely on the v0 layout and `index.jsonl` entries produced by [training/datasets/build_shards.py](training/datasets/build_shards.py). Targets are ignored by the loss and used only for IoU metrics with labels `<=0` masked out.
 - Ingestion scaffold (docs-only intent, stubbed implementation): [scripts/datasets_ingest](scripts/datasets_ingest) defines configs, provider interfaces, manifest validation, and stub providers ([providers/placeholder.py](scripts/datasets_ingest/providers/placeholder.py), [providers/naip_aws.py](scripts/datasets_ingest/providers/naip_aws.py)). CLI in [scripts/datasets_ingest/cli.py](scripts/datasets_ingest/cli.py) lists providers and emits placeholder manifest plans; no IO/network/GDAL.
 - Legacy configs: [configs/datasets/naip_3dep_example.yaml](configs/datasets/naip_3dep_example.yaml) and [configs/datasets/naip_aws_3dep_example.yaml](configs/datasets/naip_aws_3dep_example.yaml) reference elevation fields (`standardize_elevation`, etc.) not present in [training/config.py](training/config.py); these are not consumed.
 - Legacy NAIP/DEM prep scripts referenced in history (e.g., `prepare_naip_aws_3dep_dataset.py`) are absent; only GDAL helpers remain in [scripts/data/_gdal_utils.py](scripts/data/_gdal_utils.py).
@@ -42,7 +42,7 @@ Copyright (c) 2026 Quant Civil
 - Optional QGIS smoke skipped unless `QGIS_TESTS=1`: [tests/test_qgis_runtime_smoke.py](tests/test_qgis_runtime_smoke.py).
 
 ## Known gaps / doc ↔ code mismatches
-- Manifest-backed real data ingestion is disabled; scaffold exists but training uses only synthetic tensors.
-- Legacy NAIP/DEM prep scripts cited in history are missing; ingestion rewrite is not yet implemented beyond stubs.
+- Manifest/COG loaders remain stubbed; shard ingestion depends on prebuilt GeoTIFF shards (no online fetch or GDAL pipeline here).
+- Legacy NAIP/DEM prep scripts cited in history are missing; ingestion rewrite is not yet implemented beyond shards.
 - Sample dataset configs carry elevation keys that the current `DataConfig` ignores.
 - Training supports a learned refinement head, but runtime exports flag `supports_learned_refine=false` and the numpy runtime applies only fast smoothing.

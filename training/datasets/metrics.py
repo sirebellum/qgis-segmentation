@@ -24,8 +24,8 @@ def masked_iou(pred: np.ndarray, gt: np.ndarray, *, ignore_label_leq: int = 0) -
     labels = np.unique(gt_arr[valid_mask])
     per_class: Dict[int, float] = {}
     for label in labels:
-        gt_mask = gt_arr == label
-        pred_mask = pred_arr == label
+        gt_mask = (gt_arr == label) & valid_mask
+        pred_mask = (pred_arr == label) & valid_mask
         intersection = float(np.logical_and(gt_mask, pred_mask).sum())
         union = float(np.logical_or(gt_mask, pred_mask).sum())
         iou = float(intersection / union) if union > 0 else 0.0

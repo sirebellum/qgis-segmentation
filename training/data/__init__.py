@@ -5,5 +5,6 @@
 
 from .dataset import UnsupervisedRasterDataset
 from .synthetic import SyntheticDataset
+from .sharded_tif_dataset import ShardedTifDataset
 
-__all__ = ["UnsupervisedRasterDataset", "SyntheticDataset"]
+__all__ = ["UnsupervisedRasterDataset", "SyntheticDataset", "ShardedTifDataset"]

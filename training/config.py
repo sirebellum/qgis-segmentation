@@ -28,6 +28,19 @@ class DataConfig:
     backend: str = "gdal"  # placeholder hint; dataset handles availability
     manifest_path: Optional[str] = None
     max_samples: Optional[int] = None
+    source: str = "synthetic"  # synthetic | shards
+    processed_root: str = "training/datasets/processed"
+    dataset_id: Optional[str] = None
+    train_split: str = "train"
+    metrics_split: str = "metrics_train"
+    val_split: str = "val"
+    cache_mode: str = "none"  # none | lru
+    cache_max_items: int = 0
+    num_workers: int = 0
+    prefetch_factor: int = 2
+    persistent_workers: bool = False
+    pin_memory: bool = False
+    iou_ignore_label_leq: int = 0
 
 
 @dataclass
@@ -59,6 +72,7 @@ class TrainConfig:
     log_interval: int = 20
     checkpoint_path: Optional[str] = None
     seed: int = 42
+    eval_interval: int = 0
 
 
 @dataclass
