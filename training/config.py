@@ -41,6 +41,8 @@ class DataConfig:
     persistent_workers: bool = False
     pin_memory: bool = False
     iou_ignore_label_leq: int = 0
+    raster_paths: Optional[List[str]] = None  # real GeoTIFF inputs (3-band)
+    target_paths: Optional[List[str]] = None  # aligned target rasters (optional)
 
 
 @dataclass

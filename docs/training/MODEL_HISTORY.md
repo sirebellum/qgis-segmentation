@@ -15,6 +15,12 @@ Copyright (c) 2026 Quant Civil
 ## Future entries
 - Add dated sections noting: config, loss mix, augmentations, hardware, metrics, and any regressions/improvements.
 
+### 2026-01-17 — Teacher→Student distillation scaffold
+- Config: GeoTIFF patch loader (RGB-only, 512x512) with optional targets; teacher frozen (default DINOv2 or fake fallback); student CNN embeddings (stride 4, embed_dim configurable, param budget <10M).
+- Loss mix: feature distillation (cosine), affinity distillation (sampled similarities), clustering shaping (k-means-style assignments with balance/sharpness), edge-aware TV. Random K handled via clustering head; teacher never exported.
+- Hardware: teacher prefers cuda:0, student/backward on cuda:1 when available; falls back gracefully to single GPU/CPU.
+- Runtime: unchanged; no teacher or student shipped yet. Exports remain numpy-only for legacy path; distillation artifacts are for training checkpoints.
+
 ### 2026-01-15 — Next-gen unsupervised scaffold
 - Config: default in `training/config.py` (K randomized in [2,16], soft k-means head, FiLM elevation gate, stride/4 embeddings).
 - Loss mix: consistency (symmetric KL), entropy min/max (pixel vs marginal), edge-aware smoothness.

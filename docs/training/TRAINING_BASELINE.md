@@ -9,7 +9,7 @@ Copyright (c) 2026 Quant Civil
 
 ## Flow (verified)
 - Data prep defaults to synthetic RGB tiles from [training/data/synthetic.py](training/data/synthetic.py) wrapped by two-view augmentations in [training/data/dataset.py](training/data/dataset.py). Shard-backed ingestion is now available via `data.source=shards`, consuming v0 processed shards under `training/datasets/processed/<dataset>/<split>/shard-xxxxx/` with `index.jsonl` entries (`input`, optional `target`, `item_id`, `split`). Unlabeled items feed `train`; labeled tiles are split 25% to `metrics_train` (metrics-only) and 75% to `val`.
-- Training loop in [training/train.py](training/train.py) builds a loader from synthetic samples, trains `MonolithicSegmenter`, logs to TensorBoard/JSON, and auto-exports best numpy artifacts unless `--no-export` is set.
+- Training loop in [training/train.py](training/train.py) builds a loader from synthetic samples, trains `MonolithicSegmenter`, logs to TensorBoard/JSON, and auto-exports best numpy artifacts unless `--no-export` is set. A new distillation path lives in [training/train_distill.py](../train_distill.py) for teacher→student training without touching the runtime.
 - Exports land in `model/best` (runtime pickup) and `training/best_model` (ledger mirror) via [training/export.py](training/export.py); plugin runtime consumes `model/best` through [model/runtime_numpy.py](model/runtime_numpy.py).
 
 ## Data prep & manifests
@@ -45,4 +45,4 @@ Copyright (c) 2026 Quant Civil
 - Manifest/COG loaders remain stubbed; shard ingestion depends on prebuilt GeoTIFF shards (no online fetch or GDAL pipeline here).
 - Legacy NAIP/DEM prep scripts cited in history are missing; ingestion rewrite is not yet implemented beyond shards.
 - Sample dataset configs carry elevation keys that the current `DataConfig` ignores.
-- Training supports a learned refinement head, but runtime exports flag `supports_learned_refine=false` and the numpy runtime applies only fast smoothing.
+- Training supports a learned refinement head, but runtime exports flag `supports_learned_refine=false` and the numpy runtime applies only fast smoothing. The new distillation path trains a CNN embedding student (stride 4, variable-K clustering) supervised by a frozen transformer teacher (or fake fallback) and does not alter the packaged runtime until the student is ready.

@@ -36,18 +36,13 @@ Copyright (c) 2026 Quant Civil
 - Synthetic-first default retained; real raster IO still stubbed.
 - Docs aligned: ARCHITECTURE.md, MODEL_NOTES.md, training/README.md, training/MODEL_HISTORY.md.
 
-## Training (Phase 5, NAIP/3DEP scaffolding)
-- scripts/data/prepare_naip_3dep_dataset.py + helpers: TNM discovery, GDAL-based mosaic/clip/reproject, DEM-to-RGB alignment, tiling, manifest.jsonl.
-- training/data/naip_3dep_dataset.py: manifest reader + elevation standardization over rasterio; reusable for other manifest-based paired rasters.
-- configs/datasets/naip_3dep_example.yaml: sample manifest-driven config (PyYAML optional, python configs still supported).
-- Docs added: docs/dataset/DATASETS.md, docs/training/TRAINING_PIPELINE.md.
+## Training (Phase 5, NAIP/3DEP scaffolding — removed)
+- Historical NAIP/3DEP ingestion tooling (mosaicking, DEM alignment, manifest loaders) was removed from the repository; only legacy configs remain for reference. Current ingestion is provided by offline stubs under [scripts/datasets_ingest](../scripts/datasets_ingest).
+- configs/datasets/naip_3dep_example.yaml persists as a historical sample but is not wired into the active loaders.
 
-## Training (Phase 7, NAIP-on-AWS refactor)
-- scripts/data/prepare_naip_aws_3dep_dataset.py: NAIP AWS Requester Pays COG ingestion via cached footprint index + 3DEP TNM Access DEM ladder; derives a single grid (-tap) and warps DEM to RGB grid; tiles 512x512/stride 128 with nodata filtering; emits enriched manifest (tier/native/resampled metadata).
-- scripts/data/_naip_aws_provider.py: NAIP AWS bucket/index wrapper (footprint download, vsis3/HTTPS VRT build).
-- scripts/data/_usgs_3dep_provider.py: TNM Access DEM discovery with tier ladder (1m → 1/3" → 1").
-- training/data/naip_aws_3dep_dataset.py: thin alias to shared manifest loader; loader accepts extended manifest fields (nodata_fraction, dem_native_gsd, resampled flag, source_naip_urls).
-- configs/datasets/naip_aws_3dep_example.yaml: sample config pointing at `data/naip_aws_3dep/processed/manifest.jsonl`.
+## Training (Phase 7, NAIP-on-AWS refactor — removed)
+- Historical NAIP-on-AWS ingestion helpers (prepare scripts and provider modules) were deleted; no runtime code references them. The AWS-specific configs remain for archival reference only.
+- configs/datasets/naip_aws_3dep_example.yaml persists as a historical sample but is not consumed by the current loaders.
 
 ## Training (Phase 6, export to runtime)
 - training/export.py: converts MonolithicSegmenter checkpoints to numpy artifacts (`model.npz`, `meta.json`, `metrics.json`).
@@ -86,6 +81,11 @@ Copyright (c) 2026 Quant Civil
 - Intent: remove elevation/DEM inputs while dataset ingestion is rewritten; keep runtime numpy path intact.
 - Summary: reintroduced `training/data/` with RGB-only `SyntheticDataset` + `UnsupervisedRasterDataset`; dropped NAIP/3DEP manifest tests; model/loss/export/runtime paths no longer mention elevation metadata.
 - Validation: pending full rerun of compileall/pytest after dataset tooling refresh; synthetic smoke remains default.
+
+## Training (Phase 25 — Teacher→Student distillation scaffold)
+- Added GeoTIFF patch loader (`training/data/geo_patch_dataset.py`) for RGB-only 512x512 windows with optional aligned targets and config fields `data.raster_paths`/`data.target_paths`.
+- Introduced training-only teacher adapters (`training/teachers/teacher_base.py`, `training/teachers/dinov2.py`) with a fake fallback for offline tests; teachers stay out of runtime code.
+- Added lightweight student embedding model (`training/models/student_cnn.py`) and distillation/clustering losses (`training/losses_distill.py`), plus CLI trainer (`training/train_distill.py`). Runtime remains the legacy TorchScript path until the student is production-ready.
 
 ## Ops (Phase 14 — history reset + ingest scaffold)
 - Re-wrote [docs/AGENTIC_HISTORY.md](AGENTIC_HISTORY.md) to phase 0 for current code state.

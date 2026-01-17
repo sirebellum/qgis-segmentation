@@ -70,3 +70,17 @@ New series beginning at the current repository state. Phase numbering restarts h
 - **Commands**: `/Users/josh/gits/qgis-segmentation/.venv/bin/python -m compileall training`; `/Users/josh/gits/qgis-segmentation/.venv/bin/python -m pytest -q` (66 passed, 5 skipped; rasterio/georef warnings only).
 - **Validation**: Compileall + full pytest suite passed; multiworker DataLoader test confirmed partitioning once collate function was made picklable.
 - **Risks/Notes**: DataLoader perf knobs default to conservative values; large shard sets may need tuned `num_workers`/`prefetch_factor`. Metrics ignore labels <=0; ensure shard targets use positive IDs for evaluable classes. Runtime path unchanged (still torchscript CNN/KMeans legacy).
+
+## Phase 25 — Doc hygiene (remove missing NAIP/3DEP references)
+- **Intent**: Align docs with repository contents by removing references to deleted NAIP/3DEP ingestion scripts/providers.
+- **Summary**: Marked historical NAIP/3DEP sections in [docs/CODE_DESCRIPTION.md](docs/CODE_DESCRIPTION.md) as removed and clarified that only offline stubs remain under [scripts/datasets_ingest](scripts/datasets_ingest). No code changes.
+- **Files Touched**: [docs/CODE_DESCRIPTION.md](docs/CODE_DESCRIPTION.md), [docs/AGENTIC_HISTORY.md](docs/AGENTIC_HISTORY.md).
+- **Commands**: none (doc-only update).
+- **Validation**: Link sanity check; verified missing paths are no longer referenced.
+
+## Phase 26 — Distillation scaffold (runtime untouched)
+- **Intent**: Stand up training-only teacher→student distillation with real RGB GeoTIFF patches while leaving the QGIS runtime unchanged.
+- **Summary**: Added GeoTIFF patch loader (`training/data/geo_patch_dataset.py`), teacher interfaces with Dinov2 adapter + fake fallback (`training/teachers/*`), student embedding CNN (`training/models/student_cnn.py`), distillation/clustering losses (`training/losses_distill.py`), and CLI trainer (`training/train_distill.py`). Updated docs (CODE_DESCRIPTION, TRAINING_PIPELINE, TRAINING_BASELINE, MODEL_HISTORY, DATASETS). No runtime code or exports were modified.
+- **Files Touched**: training/data/geo_patch_dataset.py, training/teachers/teacher_base.py, training/teachers/dinov2.py, training/models/student_cnn.py, training/losses_distill.py, training/train_distill.py, training/tests/test_student_embed.py, training/tests/test_teacher_fallback.py, docs/CODE_DESCRIPTION.md, docs/training/TRAINING_PIPELINE.md, docs/training/TRAINING_BASELINE.md, docs/training/MODEL_HISTORY.md, docs/dataset/DATASETS.md.
+- **Commands**: none yet (pending full pytest/compileall after code additions).
+- **Validation**: Deferred; ensure tests remain QGIS-free and that defaults still use synthetic path.
