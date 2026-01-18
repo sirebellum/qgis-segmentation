@@ -10,9 +10,10 @@ Copyright (c) 2026 Quant Civil
 - Shard loader: `training/data/sharded_tif_dataset.py` streams shards as an `IterableDataset`, partitions shard directories per DataLoader worker, and supports optional per-worker LRU caching (`data.cache_mode=lru`, `data.cache_max_items`). Perf knobs: `data.num_workers` (CPU workers; 0 uses the main process), `data.prefetch_factor` (batches prefetched per worker; raise when I/O-bound), `data.persistent_workers` (keep workers alive across epochs to avoid fork cost), `data.pin_memory` (pin host buffers before GPU transfer), and cache knobs `data.cache_mode` (`none` disables caching; `lru` keeps the most recent samples) with `data.cache_max_items` (0 means unbounded within a worker).
 - Metrics: Targets are used only for IoU evaluation and ignored during loss. IoU masks out labels `<=0` so unlabeled/background pixels are not penalized.
 - Config: `training/config.py` defaults keep patch size 512 and random K in `[2,16]`; only Python configs are supported by default (PyYAML optional). Real-data fields `data.raster_paths`/`data.target_paths` are provided for GeoTIFF patch sampling.
+- Device/AMP: choose `--device cuda|mps|cpu` (default: auto). AMP is forced on for CUDA, forced off for MPS, and only follows `--amp` on CPU.
 - Smoke train (CPU-friendly):
 ```
-python -m training.train --steps 2 --amp 0 --checkpoint_dir /tmp/seg_ckpt
+python -m training.train --device cpu --steps 2 --checkpoint_dir /tmp/seg_ckpt
 ```
 - Evaluation (synthetic proxy):
 ```

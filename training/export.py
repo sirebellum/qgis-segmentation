@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2026 Quant Civil
 
-"""Export helpers for numpy-only runtime artifacts."""
+"""Export helpers for runtime artifacts."""
 from __future__ import annotations
 
 import argparse
@@ -141,6 +141,48 @@ def export_numpy_artifacts(
         _write(Path(mirror_dir))
 
 
+def export_torch_artifact(
+    model_state: Dict[str, torch.Tensor],
+    cfg: Config,
+    score: float,
+    step: int,
+    out_dir: str,
+    mirror_dir: Optional[str] = None,
+) -> None:
+    """Serialize a TorchScript model for runtime consumption.
+
+    Args:
+        model_state: state_dict() of MonolithicSegmenter.
+        cfg: loaded Config object.
+        score: scalar metric used for best-model selection.
+        step: global step associated with the export.
+        out_dir: primary export destination (e.g., models/ or run artifacts).
+        mirror_dir: optional secondary destination.
+    """
+
+    patch_size = int(getattr(cfg.data, "patch_size", 256) or 256)
+    patch_size = max(8, min(256, patch_size))
+    example = torch.randn(1, 3, patch_size, patch_size)
+    k_arg = int(max(2, min(4, cfg.model.max_k)))
+
+    def _write(target: Path) -> None:
+        target.mkdir(parents=True, exist_ok=True)
+        model = MonolithicSegmenter(cfg.model).cpu()
+        model.load_state_dict(model_state)
+        model.eval()
+        for p in model.parameters():
+            p.requires_grad_(False)
+        with torch.no_grad():
+            traced = torch.jit.trace(lambda x: model(x, k=k_arg), example, strict=False)
+        traced.save(str(target / "model.pt"))
+        metrics = {"score": float(score), "step": int(step)}
+        (target / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+
+    _write(Path(out_dir))
+    if mirror_dir:
+        _write(Path(mirror_dir))
+
+
 def _collate_minibatch(batch: list[Dict]) -> Dict:
     view1_rgb = torch.cat([item["view1"]["rgb"] for item in batch], dim=0)
     view2_rgb = torch.cat([item["view2"]["rgb"] for item in batch], dim=0)
@@ -227,7 +269,7 @@ def smoke_export_runtime(
         final_loss.backward()
         opt.step()
 
-    export_numpy_artifacts(
+    export_torch_artifact(
         model.state_dict(),
         cfg,
         score=float(final_loss.detach().cpu()),
@@ -264,4 +306,4 @@ if __name__ == "__main__":
     _main()
 
 
-__all__ = ["export_numpy_artifacts", "smoke_export_runtime"]
+__all__ = ["export_numpy_artifacts", "export_torch_artifact", "smoke_export_runtime"]

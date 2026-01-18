@@ -11,7 +11,7 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import Dict, Iterable, List, Optional
 
 import numpy as np
 import rasterio
@@ -19,6 +19,7 @@ import torch
 from torch.utils.data import Dataset
 
 from ..config import DataConfig
+from ..utils.warp import identity_grid
 
 
 @dataclass
@@ -117,3 +118,50 @@ class GeoTiffPatchDataset(Dataset):
             target_tensor = self._load_target(target_path, window)
         meta = {"raster": str(raster_path), "window": (window.col_off, window.row_off, window.width, window.height)}
         return GeoPatchSample(rgb=rgb_tensor, target=target_tensor, meta=meta)
+
+
+class GeoPatchViewsDataset(Dataset):
+    """Wrap GeoTiffPatchDataset to emit two augmented views for training.
+
+    This mirrors the structure expected by UnsupervisedRasterDataset so it can
+    share the same collate_fn. Targets are forwarded untouched (optional).
+    """
+
+    def __init__(self, base: GeoTiffPatchDataset, aug_cfg: Optional[DataConfig | "AugConfig"] = None):
+        from ..config import AugConfig  # local import to avoid cycles
+
+        self.base = base
+        self.aug_cfg = aug_cfg if isinstance(aug_cfg, AugConfig) else AugConfig()
+
+    def __len__(self) -> int:  # pragma: no cover - length delegated
+        return len(self.base)
+
+    def _augment(self, rgb: torch.Tensor) -> torch.Tensor:
+        out = rgb
+        if random.random() < self.aug_cfg.flip_prob:
+            out = torch.flip(out, dims=[3])
+        if self.aug_cfg.rotate_choices:
+            k = random.choice(self.aug_cfg.rotate_choices)
+            if k % 90 != 0:
+                raise ValueError("rotate_choices must be multiples of 90 degrees")
+            turns = (k // 90) % 4
+            if turns:
+                out = torch.rot90(out, turns, dims=(2, 3))
+        if self.aug_cfg.gaussian_noise_std > 0:
+            noise = torch.randn_like(out) * float(self.aug_cfg.gaussian_noise_std)
+            out = (out + noise).clamp(0.0, 1.0)
+        return out
+
+    def __getitem__(self, idx: int) -> Dict[str, object]:
+        sample = self.base[idx]
+        rgb = sample.rgb.unsqueeze(0)  # add batch dim for augmentation helpers
+        view1_rgb = self._augment(rgb.clone())
+        view2_rgb = self._augment(rgb.clone())
+        grid = identity_grid(view1_rgb.shape[-2], view1_rgb.shape[-1], device=view1_rgb.device, batch=1)
+        return {
+            "view1": {"rgb": view1_rgb},
+            "view2": {"rgb": view2_rgb},
+            "warp_grid": grid,
+            "target": sample.target,
+            "meta": sample.meta,
+        }

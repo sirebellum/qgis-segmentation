@@ -71,10 +71,23 @@ class TrainConfig:
     batch_size: int = 2
     grad_accum: int = 1
     amp: bool = True
-    log_interval: int = 20
+    log_interval: int = 1
+    log_image_interval: int = 1
+    steps_per_epoch: Optional[int] = None
+    evaluation_epoch: int = 1
     checkpoint_path: Optional[str] = None
     seed: int = 42
     eval_interval: int = 0
+
+
+@dataclass
+class TeacherConfig:
+    enabled: bool = False
+    name: str = "fake"
+    proj_dim: int = 256
+    feature_weight: float = 1.0
+    affinity_weight: float = 1.0
+    sample: int = 256
 
 
 @dataclass
@@ -94,6 +107,7 @@ class Config:
     loss: LossConfig = field(default_factory=LossConfig)
     train: TrainConfig = field(default_factory=TrainConfig)
     knobs: KnobConfig = field(default_factory=KnobConfig)
+    teacher: TeacherConfig = field(default_factory=TeacherConfig)
     preset_name: str = "default"
 
 
