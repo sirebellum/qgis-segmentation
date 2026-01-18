@@ -20,3 +20,10 @@ Copyright (c) 2026 Quant Civil
 - Commands:
 - Validation:
 - Risks/Notes:
+
+## Phase 1 — Runtime export fix + GeoPatch tests (2026-01-17)
+- Summary: `smoke_export_runtime` now emits numpy runtime artifacts (meta.json/model.npz) alongside TorchScript outputs; added GeoTIFF patch dataset tests covering RGB/target loading and rotation validation.
+- Files Touched: [training/export.py](training/export.py), [training/tests/test_geo_patch_dataset.py](training/tests/test_geo_patch_dataset.py), [docs/AGENTIC_REQUIRED.md](docs/AGENTIC_REQUIRED.md).
+- Commands: `.venv/bin/python -m pytest -q`; `.venv/bin/python -m compileall .`.
+- Validation: default pytest green (97 passed, 5 skipped); compileall succeeded; existing TorchScript `TracerWarning` and rasterio NotGeoreferenced warnings remain.
+- Risks/Notes: `docs/CODESTATE.md` now present; TracerWarnings stem from TorchScript tracing guards and are unchanged.

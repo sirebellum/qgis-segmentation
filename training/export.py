@@ -269,6 +269,14 @@ def smoke_export_runtime(
         final_loss.backward()
         opt.step()
 
+    export_numpy_artifacts(
+        model.state_dict(),
+        cfg,
+        score=float(final_loss.detach().cpu()),
+        step=cfg.train.steps,
+        out_dir=out_dir,
+        mirror_dir=mirror_dir,
+    )
     export_torch_artifact(
         model.state_dict(),
         cfg,

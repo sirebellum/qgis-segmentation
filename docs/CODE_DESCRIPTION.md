@@ -134,3 +134,8 @@ Copyright (c) 2026 Quant Civil
 - Added shard-backed iterable loader [training/data/sharded_tif_dataset.py](training/data/sharded_tif_dataset.py) with worker-partitioned shard streaming and optional per-worker LRU caching (`data.cache_mode=lru`, `data.cache_max_items`). Loader perf knobs (`data.num_workers`, `data.prefetch_factor`, `data.persistent_workers`, `data.pin_memory`) are honored across synthetic and shard paths.
 - [training/train.py](training/train.py) now honors `data.source=shards`, builds shard DataLoaders, and runs IoU metrics on `metrics_train`/`val` splits using [training/datasets/metrics.py](training/datasets/metrics.py) (labels `<=0` ignored). [training/eval.py](training/eval.py) accepts shard overrides via CLI (`--data-source shards --dataset-id ... --split ...`).
 - Tests: [training/tests/test_sharded_dataset_loader.py](training/tests/test_sharded_dataset_loader.py) (worker partitioning, caching determinism) and [training/tests/test_metrics_iou_ignore_zero.py](training/tests/test_metrics_iou_ignore_zero.py).
+
+## Ops (Phase 26 — runtime smoke export hardening)
+- `smoke_export_runtime` now writes numpy runtime artifacts (meta/model) alongside the TorchScript export so runtime loaders and backend selectors find `meta.json`/`model.npz` in smoke outputs ([training/export.py](training/export.py)).
+- Added GeoTIFF patch dataset coverage for RGB/target loading and rotation validation ([training/tests/test_geo_patch_dataset.py](training/tests/test_geo_patch_dataset.py)).
+- Validation: `.venv/bin/python -m pytest -q` (97 passed, 5 skipped) and `.venv/bin/python -m compileall .`.
