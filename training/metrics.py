@@ -16,6 +16,10 @@ def cluster_utilization(probs: torch.Tensor) -> torch.Tensor:
 
 
 def speckle_score(labels: torch.Tensor) -> torch.Tensor:
+    if labels.numel() == 0:
+        return torch.zeros((), device=labels.device)
+    if (labels.max() == labels.min()).item():
+        return torch.zeros((), device=labels.device)
     one_hot = F.one_hot(labels, num_classes=int(labels.max().item() + 1)).float()
     one_hot = one_hot.permute(0, 3, 1, 2)
     pooled = F.avg_pool2d(one_hot, kernel_size=3, stride=1, padding=1)
@@ -24,6 +28,12 @@ def speckle_score(labels: torch.Tensor) -> torch.Tensor:
 
 
 def boundary_density(labels: torch.Tensor) -> torch.Tensor:
+    if labels.numel() == 0:
+        return torch.zeros((), device=labels.device)
+    if (labels.max() == labels.min()).item():
+        return torch.zeros((), device=labels.device)
+    if labels.dim() == 3:
+        labels = labels.unsqueeze(1)
     grad = image_gradients(labels.float())
     return grad.mean()
 
