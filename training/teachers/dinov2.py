@@ -32,7 +32,7 @@ class Dinov2Teacher(TeacherBase):
     def __init__(
         self,
         *,
-        model_name: str = "dinov2_vitl14",
+        model_name: str = "dinov2_vitl14_reg",
         proj_dim: int = 256,
         device: Optional[torch.device] = None,
     ) -> None:
@@ -67,7 +67,8 @@ class Dinov2Teacher(TeacherBase):
             feat = self.proj(tokens)
         # Resample to stride 4 alignment
         b, c, h, w = feat.shape
-        target_h = h * (self.stride // 4)
-        target_w = w * (self.stride // 4)
+        # Use float ratio to preserve the intended stride-4 alignment (avoid floor from integer division).
+        target_h = int(round(h * (self.stride / 4.0)))
+        target_w = int(round(w * (self.stride / 4.0)))
         feat_resized = F.interpolate(feat, size=(target_h, target_w), mode="bilinear", align_corners=False)
         return TeacherOutput(features=feat_resized, stride=4)

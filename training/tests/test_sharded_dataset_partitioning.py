@@ -20,6 +20,11 @@ def _write_tiff(path: Path, array: np.ndarray) -> None:
         dst.write(array)
 
 
+def _write_slic(path: Path, size: tuple[int, int] = (4, 4)) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez(path, labels=np.zeros(size, dtype=np.uint16))
+
+
 def _build_index(shard_dir: Path, entries: list[dict]) -> None:
     shard_dir.mkdir(parents=True, exist_ok=True)
     index_path = shard_dir / "index.jsonl"
@@ -36,6 +41,8 @@ def test_include_targets_filters_missing_entries(tmp_path: Path) -> None:
     _write_tiff(shard / "inputs" / "with_target.tif", rgb)
     _write_tiff(shard / "targets" / "with_target.tif", target)
     _write_tiff(shard / "inputs" / "no_target.tif", rgb * 2)
+    _write_slic(shard / "slic" / "with_target.npz", size=(4, 4))
+    _write_slic(shard / "slic" / "no_target.npz", size=(4, 4))
 
     entries = [
         {
@@ -46,6 +53,7 @@ def test_include_targets_filters_missing_entries(tmp_path: Path) -> None:
             "input": "inputs/with_target.tif",
             "has_target": True,
             "target": "targets/with_target.tif",
+            "slic": "slic/with_target.npz",
         },
         {
             "dataset_id": "toy",
@@ -54,6 +62,7 @@ def test_include_targets_filters_missing_entries(tmp_path: Path) -> None:
             "split": "train",
             "input": "inputs/no_target.tif",
             "has_target": False,
+            "slic": "slic/no_target.npz",
         },
     ]
     _build_index(shard, entries)
@@ -90,6 +99,7 @@ def test_max_samples_limits_iteration(tmp_path: Path) -> None:
     entries = []
     for idx in range(3):
         _write_tiff(shard / "inputs" / f"item_{idx}.tif", np.full((3, 2, 2), idx, dtype=np.uint8))
+        _write_slic(shard / "slic" / f"item_{idx}.npz", size=(2, 2))
         entries.append(
             {
                 "dataset_id": "toy",
@@ -98,6 +108,7 @@ def test_max_samples_limits_iteration(tmp_path: Path) -> None:
                 "split": "train",
                 "input": f"inputs/item_{idx}.tif",
                 "has_target": False,
+                "slic": f"slic/item_{idx}.npz",
             }
         )
     _build_index(shard, entries)

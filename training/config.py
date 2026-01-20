@@ -23,6 +23,8 @@ class ModelConfig:
 
 @dataclass
 class DataConfig:
+    patch_sizes: Sequence[int] = (256, 512, 1024)
+    patch_size_sampling: str = "uniform"  # uniform | weighted (not yet implemented)
     patch_size: int = 512
     stride: int = 512
     backend: str = "gdal"  # placeholder hint; dataset handles availability
@@ -36,6 +38,7 @@ class DataConfig:
     val_split: str = "val"
     cache_mode: str = "none"  # none | lru
     cache_max_items: int = 0
+    require_slic: bool = True
     num_workers: int = 0
     prefetch_factor: int = 2
     persistent_workers: bool = False
@@ -61,6 +64,9 @@ class LossConfig:
     entropy_marginal_weight: float = 0.6
     smoothness_weight: float = 0.3
     edge_weight: float = 0.5
+    slic_boundary_weight: float = 0.0
+    slic_antimerge_weight: float = 0.0
+    slic_within_weight: float = 0.0
 
 
 @dataclass
@@ -78,6 +84,7 @@ class TrainConfig:
     checkpoint_path: Optional[str] = None
     seed: int = 42
     eval_interval: int = 0
+    multi_scale_mode: str = "sample_one_scale_per_step"  # sample_one_scale_per_step | per_step_all_scales
 
 
 @dataclass
@@ -88,6 +95,36 @@ class TeacherConfig:
     feature_weight: float = 1.0
     affinity_weight: float = 1.0
     sample: int = 256
+    patch_mode: str = "match"  # match | high | medium | low
+
+
+@dataclass
+class StudentConfig:
+    enabled: bool = True
+    embed_dim: int = 96
+    depth: int = 3
+    norm: str = "group"  # group | batch | instance | none
+    groups: int = 8
+    dropout: float = 0.0
+
+
+@dataclass
+class DistillLossConfig:
+    feature_weight: float = 1.0
+    affinity_weight: float = 1.0
+    affinity_sample: int = 256
+    clustering_weight: float = 1.0
+    cluster_iters: int = 3
+    temperature: float = 0.8
+    tv_weight: float = 0.1
+    consistency_weight: float = 0.3
+    ema_decay: float = 0.9
+    merge_eps: float = 1e-4
+    consistency_ema_decay: float = 0.9
+    consistency_eps: float = 1e-4
+    boundary_weight: float = 1.0
+    antimerge_weight: float = 1.0
+    within_weight: float = 0.05
 
 
 @dataclass
@@ -108,6 +145,8 @@ class Config:
     train: TrainConfig = field(default_factory=TrainConfig)
     knobs: KnobConfig = field(default_factory=KnobConfig)
     teacher: TeacherConfig = field(default_factory=TeacherConfig)
+    student: StudentConfig = field(default_factory=StudentConfig)
+    distill: DistillLossConfig = field(default_factory=DistillLossConfig)
     preset_name: str = "default"
 
 

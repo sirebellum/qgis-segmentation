@@ -56,6 +56,18 @@ class ShardingSpec:
 
 
 @dataclass(frozen=True)
+class SlicSpec:
+    region_size: int = 32
+    ruler: float = 10.0
+    iterations: int = 10
+    algorithm: str = "slico"
+    min_size: int = 8
+    max_size: int = 64
+    scales: Optional[List[float]] = None
+    enable_seeds: bool = True
+
+
+@dataclass(frozen=True)
 class ValidationSpec:
     iou_ignore_label_leq: int = 0
     iou_average: str = "macro_over_present_labels"
@@ -72,6 +84,10 @@ class DatasetHeader:
     splits: SplitSpec
     sharding: ShardingSpec
     validation: ValidationSpec
+    has_target_maps: bool = False
+    target_path_pattern: Optional[str] = None
+    target_description: Optional[str] = None
+    slic: Optional[SlicSpec] = None
     header_path: Optional[Path] = None
 
     def resolve_source_root(self, extracted_root: Optional[Path] = None) -> Path:
@@ -93,6 +109,8 @@ def _parse_modality(raw: Dict[str, Any]) -> ModalitySpec:
     channels = raw.get("channels")
     if channels is not None:
         channels = int(channels)
+    if role == "input" and channels is not None and channels != 3:
+        raise ValueError("input modality must declare exactly 3 channels (RGB-only)")
     dtype = raw.get("dtype")
     nodata = raw.get("nodata")
     if nodata is not None:
@@ -193,6 +211,38 @@ def _parse_sharding(raw: Dict[str, Any]) -> ShardingSpec:
     )
 
 
+def _parse_slic(raw: Optional[Dict[str, Any]]) -> SlicSpec:
+    data = raw or {}
+    region_size = int(data.get("region_size", 32))
+    ruler = float(data.get("ruler", 10.0))
+    iterations = int(data.get("iterations", 10))
+    algorithm = str(data.get("algorithm", "slico") or "slico").strip().lower()
+    min_size = int(data.get("min_size", 8))
+    max_size = int(data.get("max_size", 64))
+    scales_raw = data.get("scales")
+    scales: Optional[List[float]] = None
+    if scales_raw is not None:
+        if not isinstance(scales_raw, (list, tuple)):
+            raise ValueError("slic.scales must be a list of scale multipliers when provided")
+        scales = [float(s) for s in scales_raw]
+    enable_seeds = bool(data.get("enable_seeds", True))
+    _require(region_size > 0, "slic.region_size must be positive")
+    _require(iterations > 0, "slic.iterations must be positive")
+    _require(algorithm in {"slic", "slico", "mslico"}, "slic.algorithm must be slic|slico|mslico")
+    _require(min_size > 0, "slic.min_size must be positive")
+    _require(max_size >= min_size, "slic.max_size must be >= min_size")
+    return SlicSpec(
+        region_size=region_size,
+        ruler=ruler,
+        iterations=iterations,
+        algorithm=algorithm,
+        min_size=min_size,
+        max_size=max_size,
+        scales=scales,
+        enable_seeds=enable_seeds,
+    )
+
+
 def _parse_validation(raw: Dict[str, Any]) -> ValidationSpec:
     ignore = int(raw.get("iou_ignore_label_leq", 0))
     average = str(raw.get("iou_average", "macro_over_present_labels") or "macro_over_present_labels")
@@ -232,6 +282,34 @@ def load_header(path: Path, *, extracted_root: Optional[Path] = None) -> Dataset
     validation_raw = data.get("validation") or data.get("validation_metrics") or {}
     validation = _parse_validation(validation_raw)
 
+    has_target_maps = bool(data.get("has_target_maps", False))
+    target_path_pattern = data.get("target_path_pattern")
+    if target_path_pattern is not None:
+        target_path_pattern = str(target_path_pattern).strip() or None
+    target_description = data.get("target_description")
+    if target_description is not None:
+        target_description = str(target_description).strip() or None
+
+    slic_raw = data.get("slic") or {}
+    slic = _parse_slic(slic_raw)
+
+    # Enforce RGB-only inputs and validate target presence when declared.
+    input_modalities = [m for m in modalities if m.role == "input"]
+    target_modalities = [m for m in modalities if m.role == "target"]
+    if not input_modalities:
+        raise ValueError("at least one input modality is required")
+    for mod in input_modalities:
+        if mod.channels is not None and mod.channels != 3:
+            raise ValueError("input modality must be 3-band RGB")
+
+    if target_modalities:
+        has_target_maps = True if data.get("has_target_maps", None) is None else has_target_maps
+
+    if has_target_maps and not target_modalities:
+        raise ValueError("has_target_maps=true requires a target modality with role 'target'")
+    if not has_target_maps and target_modalities:
+        raise ValueError("target modality present but has_target_maps is false; set has_target_maps=true")
+
     return DatasetHeader(
         dataset_id=dataset_id,
         version=version,
@@ -242,6 +320,10 @@ def load_header(path: Path, *, extracted_root: Optional[Path] = None) -> Dataset
         splits=splits,
         sharding=sharding,
         validation=validation,
+        has_target_maps=has_target_maps,
+        target_path_pattern=target_path_pattern,
+        target_description=target_description,
+        slic=slic,
         header_path=Path(path),
     )
 

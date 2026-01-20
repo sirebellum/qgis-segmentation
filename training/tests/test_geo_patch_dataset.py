@@ -83,3 +83,15 @@ def test_views_dataset_rejects_non_right_angle_rotations(tmp_path):
 
     with pytest.raises(ValueError):
         _ = views[0]
+
+
+def test_geo_patch_supports_multiple_patch_sizes(tmp_path):
+    rgb_path = tmp_path / "rgb_large.tif"
+    rgb = np.ones((3, 32, 32), dtype=np.uint8)
+    _write_rgb_tif(rgb_path, rgb)
+
+    for patch in (8, 16):
+        dataset = GeoTiffPatchDataset([rgb_path], data_cfg=DataConfig(patch_size=patch))
+        sample = dataset[0]
+        assert sample.rgb.shape[-2:] == (patch, patch)
+        assert sample.meta["patch_size"] == patch

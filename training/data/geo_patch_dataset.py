@@ -67,15 +67,6 @@ class GeoTiffPatchDataset(Dataset):
         return self.max_samples if self.max_samples is not None else 10_000_000
 
     @staticmethod
-    def _read_rgb(path: Path) -> np.ndarray:
-        with rasterio.open(path) as src:
-            if src.count != 3:
-                raise ValueError(f"Expected 3 bands, found {src.count} in {path}")
-            window = GeoTiffPatchDataset._random_window(src, 512)
-            array = src.read(window=window)
-        return np.asarray(array, dtype=np.float32)
-
-    @staticmethod
     def _random_window(src: rasterio.io.DatasetReader, patch: int):
         h = src.height
         w = src.width
@@ -116,7 +107,11 @@ class GeoTiffPatchDataset(Dataset):
         if self.with_targets and self.targets is not None:
             target_path = self.targets[idx]
             target_tensor = self._load_target(target_path, window)
-        meta = {"raster": str(raster_path), "window": (window.col_off, window.row_off, window.width, window.height)}
+        meta = {
+            "raster": str(raster_path),
+            "window": (window.col_off, window.row_off, window.width, window.height),
+            "patch_size": patch,
+        }
         return GeoPatchSample(rgb=rgb_tensor, target=target_tensor, meta=meta)
 
 

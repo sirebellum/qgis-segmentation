@@ -6,3 +6,5 @@ pytest
 flake8
 PyYAML
 rasterio
+opencv-contrib-python-headless>=4.9.0
+GDAL

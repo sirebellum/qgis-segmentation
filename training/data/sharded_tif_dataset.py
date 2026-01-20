@@ -57,6 +57,7 @@ class ShardedTifDataset(IterableDataset):
         include_targets: bool = False,
         cache_mode: str = "none",
         cache_max_items: int = 0,
+        require_slic: Optional[bool] = None,
     ) -> None:
         super().__init__()
         self.root = Path(processed_root).expanduser().resolve()
@@ -69,6 +70,7 @@ class ShardedTifDataset(IterableDataset):
         self.cache_mode = cache_mode
         self.cache_max_items = int(cache_max_items)
         self.max_samples = data_cfg.max_samples
+        self.require_slic = bool(require_slic if require_slic is not None else getattr(data_cfg, "require_slic", True))
         self._cache: Optional[_LruCache] = None
 
         base = self.root / split / dataset_id
@@ -83,7 +85,7 @@ class ShardedTifDataset(IterableDataset):
             self._cache = _LruCache(self.cache_max_items)
         return self._cache
 
-    def _load_array(self, path: Path, cache: Optional[_LruCache]) -> np.ndarray:
+    def _load_array(self, path: Path, cache: Optional[_LruCache], expected_channels: Optional[int] = 3) -> np.ndarray:
         key = str(path)
         if cache:
             cached = cache.get(key)
@@ -91,9 +93,23 @@ class ShardedTifDataset(IterableDataset):
                 return cached
         with rasterio.open(path) as src:
             array = src.read()
+            if expected_channels is not None and array.shape[0] != expected_channels:
+                raise ValueError(f"Expected {expected_channels} channels, found {array.shape[0]} in {path}")
         if cache:
             cache.put(key, array)
         return array
+
+    def _load_slic(self, path: Path, cache: Optional[_LruCache]) -> np.ndarray:
+        key = f"slic::{path}"
+        if cache:
+            cached = cache.get(key)
+            if cached is not None:
+                return cached
+        with np.load(path) as npz:
+            labels = npz["labels"]
+        if cache:
+            cache.put(key, labels)
+        return labels
 
     @staticmethod
     def _to_tensor(array: np.ndarray, *, add_batch: bool) -> torch.Tensor:
@@ -104,21 +120,24 @@ class ShardedTifDataset(IterableDataset):
             tensor = tensor / 255.0
         return tensor.unsqueeze(0) if add_batch else tensor
 
-    def _augment(self, tensor: torch.Tensor) -> torch.Tensor:
-        out = tensor
+    def _augment_pair(self, rgb: torch.Tensor, slic: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        out_rgb = rgb
+        out_slic = slic
         if random.random() < self.aug_cfg.flip_prob:
-            out = torch.flip(out, dims=[3])
+            out_rgb = torch.flip(out_rgb, dims=[3])
+            out_slic = torch.flip(out_slic, dims=[3])
         if self.aug_cfg.rotate_choices:
             k = random.choice(self.aug_cfg.rotate_choices)
             if k % 90 != 0:
                 raise ValueError("rotate_choices must be multiples of 90 degrees")
             turns = (k // 90) % 4
             if turns:
-                out = torch.rot90(out, turns, dims=(2, 3))
+                out_rgb = torch.rot90(out_rgb, turns, dims=(2, 3))
+                out_slic = torch.rot90(out_slic, turns, dims=(2, 3))
         if self.aug_cfg.gaussian_noise_std > 0:
-            noise = torch.randn_like(out) * float(self.aug_cfg.gaussian_noise_std)
-            out = (out + noise).clamp(0.0, 1.0)
-        return out
+            noise = torch.randn_like(out_rgb) * float(self.aug_cfg.gaussian_noise_std)
+            out_rgb = (out_rgb + noise).clamp(0.0, 1.0)
+        return out_rgb, out_slic
 
     @staticmethod
     def _normalize_target(array: np.ndarray) -> torch.Tensor:
@@ -156,34 +175,63 @@ class ShardedTifDataset(IterableDataset):
                 if self.include_targets and not entry.get("has_target"):
                     continue
                 input_rel = entry.get("input")
+                slic_rel = entry.get("slic")
                 if not input_rel:
-                    continue
+                    raise ValueError("Shard index entry must include an input field")
+                if self.require_slic and not slic_rel:
+                    raise ValueError("Shard index entry missing precomputed SLIC; set require_slic=False to bypass")
+
                 rgb_path = shard_dir / str(input_rel)
                 rgb_array = self._load_array(rgb_path, cache)
+
+                slic_array = None
+                if slic_rel:
+                    slic_path = shard_dir / str(slic_rel)
+                    slic_array = self._load_slic(slic_path, cache)
+                    if slic_array.shape[-2:] != rgb_array.shape[-2:]:
+                        raise ValueError(f"SLIC shape {slic_array.shape[-2:]} does not match RGB {rgb_array.shape[-2:]} for {slic_path}")
+                else:
+                    # Backward compatibility for shards created before SLIC precomputation.
+                    slic_array = np.zeros(rgb_array.shape[-2:], dtype=np.int64)
+
                 target_tensor: Optional[torch.Tensor] = None
                 if self.include_targets and entry.get("target"):
                     target_path = shard_dir / str(entry["target"])
-                    target_array = self._load_array(target_path, cache)
+                    target_array = self._load_array(target_path, cache, expected_channels=None)
                     target_tensor = self._normalize_target(target_array)
+
+                slic_tensor = torch.from_numpy(slic_array.astype(np.int64, copy=False))
 
                 if self.with_augmentations:
                     rgb_tensor = self._to_tensor(rgb_array, add_batch=True)
-                    view1 = self._augment(rgb_tensor.clone())
-                    view2 = self._augment(rgb_tensor.clone())
-                    grid = identity_grid(view1.shape[-2], view1.shape[-1], device=view1.device, batch=1)
+                    slic_tensor = slic_tensor.unsqueeze(0).unsqueeze(0).float()
+                    view1_rgb, view1_slic = self._augment_pair(rgb_tensor.clone(), slic_tensor.clone())
+                    view2_rgb, view2_slic = self._augment_pair(rgb_tensor.clone(), slic_tensor.clone())
+                    view1_slic = view1_slic.long().squeeze(0)
+                    view2_slic = view2_slic.long().squeeze(0)
+                    grid = identity_grid(view1_rgb.shape[-2], view1_rgb.shape[-1], device=view1_rgb.device, batch=1)
                     yield {
-                        "view1": {"rgb": view1},
-                        "view2": {"rgb": view2},
+                        "view1": {"rgb": view1_rgb, "slic": view1_slic},
+                        "view2": {"rgb": view2_rgb, "slic": view2_slic},
                         "warp_grid": grid,
                         "target": target_tensor,
-                        "meta": {"item_id": entry.get("item_id"), "split": entry.get("split")},
+                        "meta": {
+                            "item_id": entry.get("item_id"),
+                            "split": entry.get("split"),
+                            "slic_meta": entry.get("slic_meta"),
+                        },
                     }
                 else:
                     rgb_tensor = self._to_tensor(rgb_array, add_batch=False)
                     yield {
                         "rgb": rgb_tensor,
+                        "slic": slic_tensor,
                         "target": target_tensor,
-                        "meta": {"item_id": entry.get("item_id"), "split": entry.get("split")},
+                        "meta": {
+                            "item_id": entry.get("item_id"),
+                            "split": entry.get("split"),
+                            "slic_meta": entry.get("slic_meta"),
+                        },
                     }
 
                 produced += 1

@@ -39,3 +39,15 @@ Copyright (c) 2026 Quant Civil
 - Data: v0 processed shards (`train` unlabeled; `metrics_train` + `val` labeled). Targets used only for IoU metrics; labels `<=0` are ignored during scoring.
 - Loop: train/eval build shard DataLoaders; periodic/final IoU computed on metrics/val splits; loss path unchanged (unsupervised two-view).
 - Notes: plugin runtime still legacy TorchScript CNN/K-Means; runtime adoption of new numpy artifacts remains deferred.
+
+### 2026-01-18 — Multires student distillation
+- Architecture: StudentCNN now emits three embedding slices (coarse/mid/fine, strides 16/8/4) with channel dims 192/128/96. Coarse→mid→fine fusion uses upsample + concat + 1×1 fuse followed by VGG-like 3×3 stacks per slice (stride-preserving, GroupNorm default).
+- Losses: per-slice feature + affinity distill (teacher resized per slice), soft k-means pseudo labels, edge-aware TV; optional cross-resolution consistency (coarse→mid, mid→fine) on assignment maps. Losses merged scale-neutrally via EMA-normalized geometric mean; consistency normalized separately.
+- Knobs: `student.*` (dims/depths/norm/dropout, enable/disable), `distill.*` (cluster iters/temperature, affinity sample, EMA decay/eps, weights). CLI overrides: `--disable-multires`, `--student-dims`, `--student-depths`, `--student-norm`, `--consistency-weight`, `--ema-decay`, `--cluster-iters`.
+- Runtime: unchanged; training-only update. Tests added for multires shapes and scale-neutral merge invariants.
+
+### 2026-01-19 — Patch-size single-scale distillation
+- Architecture: StudentCNN simplified to a single stride-4 embedding path (input-size invariant) shared across patch sizes. Default patch schedule samples 256/512/1024 inputs; no fused multi-slice heads remain.
+- Losses: per-patch-size feature + affinity distill (teacher resized to stride-4 grid), soft k-means pseudo labels, edge-aware TV. Each patch size maintains its own EMA normalizer; the per-step loss optimizes the normalized total for the sampled size. A virtual geometric-mean metric combines normalized per-scale losses to stay scale-neutral.
+- Knobs: `data.patch_sizes`, `data.patch_size_sampling`, and `train.multi_scale_mode` (sample one size per step vs sum all sizes) plus `student.*` (embed_dim/depth/norm/dropout) and `distill.*` (cluster iters, EMA decay/eps, loss weights). CLI keeps `--patch-sizes`, `--patch-size-sampling`, `--multi-scale-mode`, `--ema-decay`, and student overrides.
+- Runtime: unchanged; distillation remains training-only. Tests updated to assert stride-4 outputs for 256/512/1024 inputs and scale-neutral EMA/geometric-mean merge behavior.

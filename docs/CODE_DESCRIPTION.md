@@ -67,15 +67,13 @@ Copyright (c) 2026 Quant Civil
 - Validation-only pass: python -m compileall . (pass) and ./.venv/bin/python -m pytest -q (44 passed, 1 skipped); no runtime changes.
 - System python lacks pytest; use the repo venv for default test invocation to keep offline checks green.
 
-## Ops (Phase 11 — NAIP AWS dry-run hardening)
-- `prepare_naip_aws_3dep_dataset.py` now skips GDAL tool checks in `--dry-run` and uses an embedded NAIP index + DEM stub to avoid network failures; real runs unchanged.
-- `scripts/data/_naip_aws_provider.py` gains GeoJSON-first querying, bbox overlap filtering, and stub index emission for dry-run.
-- Added offline tests: `tests/test_prepare_naip_aws_3dep_dry_run.py` plus fixture `tests/fixtures/naip_index_min.geojson` to ensure dry-run succeeds without GDAL/network.
+## Ops (Historical Phase 11 — NAIP AWS dry-run hardening; removed)
+- Historical branch added a `prepare_naip_aws_3dep_dataset.py` dry-run path and provider helpers; those files are no longer present after the reset and are kept here only as lineage notes.
+- No current module implements this behavior; NAIP AWS ingest remains out of scope for the restored tree.
 
-## Ops (Phase 12 — NAIP AWS real-run fallback)
-- Added `--sample-data` smoke mode to `prepare_naip_aws_3dep_dataset.py` that downloads tiny public GitHub rasters (rgbsmall.tif + byte.tif) and executes the full warp/tile/manifest path without AWS/TNM credentials.
-- Introduced explicit DEM override flags (`--dem-url`, `--dem-id`, `--dem-native-gsd`) and requester-pays headers for NAIP index downloads to avoid silent 403s.
-- New offline tests cover DEM override short-circuit and NAIP requester-pays header propagation.
+## Ops (Historical Phase 12 — NAIP AWS real-run fallback; removed)
+- Historical sample-data and DEM override flags for `prepare_naip_aws_3dep_dataset.py` were removed with the same reset; the script no longer exists in the repository.
+- Documentation is retained for provenance only and should not be treated as an active module description.
 
 ## Training (Phase 13 — RGB-only reset)
 - Intent: remove elevation/DEM inputs while dataset ingestion is rewritten; keep runtime numpy path intact.
@@ -139,3 +137,13 @@ Copyright (c) 2026 Quant Civil
 - `smoke_export_runtime` now writes numpy runtime artifacts (meta/model) alongside the TorchScript export so runtime loaders and backend selectors find `meta.json`/`model.npz` in smoke outputs ([training/export.py](training/export.py)).
 - Added GeoTIFF patch dataset coverage for RGB/target loading and rotation validation ([training/tests/test_geo_patch_dataset.py](training/tests/test_geo_patch_dataset.py)).
 - Validation: `.venv/bin/python -m pytest -q` (97 passed, 5 skipped) and `.venv/bin/python -m compileall .`.
+
+## Training (Historical Phase 27 — multires student distillation)
+- `StudentEmbeddingNet` emitted three resolution slices (stride 16/8/4) with coarse→mid→fine fusion and per-slice VGG-style 3×3 deep stacks (GroupNorm default). Config knobs lived under `student.*` and `distill.*` for dims/depths/norm, clustering iters, EMA merge decay/eps, and loss weights.
+- `train_distill.py` applied per-slice feature+affinity distill, soft k-means pseudo labels, edge-aware TV, cross-resolution consistency, and a scale-neutral EMA-normalized geometric-mean merge; CLI overrides included `--disable-multires`, `--student-dims`, `--student-depths`, `--student-norm`, `--consistency-weight`, `--ema-decay`, `--cluster-iters`.
+- Tests covered multires shape/stride + deep-block invariants ([training/tests/test_student_embed.py](../training/tests/test_student_embed.py)) and merge/consistency behavior ([training/tests/test_multires_losses.py](../training/tests/test_multires_losses.py)). Superseded by Phase 28.
+
+## Training (Phase 28 — patch-size single-scale distillation)
+- StudentEmbeddingNet is now a single stride-4 embedding path shared across patch sizes (default 256/512/1024). Patch size is sampled per step (uniform) or summed across scales; losses per patch size (feature/affinity distill, clustering, edge-aware TV) are normalized by per-scale EMA, and a virtual geometric-mean metric enforces scale neutrality. CLI keeps `--patch-sizes`, `--patch-size-sampling`, `--multi-scale-mode`, `--ema-decay`, and student knobs (embed dim/depth/norm/dropout).
+- `train_distill.py` builds per-size loaders once, samples the size each step, and logs normalized per-scale losses plus the virtual geometric mean. Runtime remains unchanged (legacy TorchScript path).
+- Tests exercise stride-4 outputs for 256/512/1024 inputs ([training/tests/test_student_embed.py](../training/tests/test_student_embed.py)) and per-scale EMA/geometric-mean merge invariants ([training/tests/test_multires_losses.py](../training/tests/test_multires_losses.py)).

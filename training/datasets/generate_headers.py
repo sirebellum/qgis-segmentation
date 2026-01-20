@@ -11,7 +11,7 @@ import numpy as np
 import rasterio
 import yaml
 
-from .header_schema import DatasetHeader, ModalitySpec, PairingSpec, ShardingSpec, SplitSpec, ValidationSpec
+from .header_schema import DatasetHeader, ModalitySpec, PairingSpec, ShardingSpec, SplitSpec, ValidationSpec, SlicSpec
 
 
 def _scan_sample(path: Path) -> Dict[str, object]:
@@ -89,6 +89,10 @@ def _ms_buildings_header(source_root: Path) -> Tuple[DatasetHeader, Dict[str, ob
         ),
         sharding=ShardingSpec(shard_size=512, layout_version=1, copy_mode="copy", force_uncompressed_tiff=True),
         validation=ValidationSpec(iou_ignore_label_leq=0, iou_average="macro_over_present_labels"),
+        has_target_maps=True,
+        target_path_pattern="{split}/map/*.tif",
+        target_description="Binary building footprint mask; labels>0 treated as building.",
+        slic=SlicSpec(region_size=32, ruler=10.0, iterations=10, algorithm="slico"),
         header_path=None,
     )
 
@@ -143,6 +147,10 @@ def _whu_building_header(source_root: Path) -> Tuple[DatasetHeader, Dict[str, ob
         ),
         sharding=ShardingSpec(shard_size=512, layout_version=1, copy_mode="copy", force_uncompressed_tiff=True),
         validation=ValidationSpec(iou_ignore_label_leq=0, iou_average="macro_over_present_labels"),
+        has_target_maps=False,
+        target_path_pattern=None,
+        target_description=None,
+        slic=SlicSpec(region_size=32, ruler=10.0, iterations=10, algorithm="slico"),
         header_path=None,
     )
 
@@ -216,6 +224,10 @@ def _openearth_header(source_root: Path) -> Tuple[DatasetHeader, Dict[str, objec
         ),
         sharding=ShardingSpec(shard_size=512, layout_version=1, copy_mode="copy", force_uncompressed_tiff=True),
         validation=ValidationSpec(iou_ignore_label_leq=0, iou_average="macro_over_present_labels"),
+        has_target_maps=True,
+        target_path_pattern="{split}/labels/*.tif",
+        target_description="Per-pixel label rasters aligned to imagery manifests; labels>0 considered foreground for IoU.",
+        slic=SlicSpec(region_size=32, ruler=10.0, iterations=10, algorithm="slico"),
         header_path=None,
     )
 
@@ -284,6 +296,10 @@ def _inria_header(source_root: Path) -> Tuple[DatasetHeader, Dict[str, object]]:
         ),
         sharding=ShardingSpec(shard_size=1, layout_version=1, copy_mode="copy", force_uncompressed_tiff=True),
         validation=ValidationSpec(iou_ignore_label_leq=0, iou_average="macro_over_present_labels"),
+        has_target_maps=True,
+        target_path_pattern="{split}/gt/*.tif",
+        target_description="Building footprint labels; values>0 treated as building for metrics.",
+        slic=SlicSpec(region_size=32, ruler=10.0, iterations=10, algorithm="slico"),
         header_path=None,
     )
 

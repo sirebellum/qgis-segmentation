@@ -164,6 +164,58 @@ def test_processed_dataset_integrity(tmp_path: Path) -> None:
         assert ds.read().shape[1:] == (2, 2)
 
 
+def test_white_border_tiles_are_skipped(tmp_path: Path) -> None:
+    extracted = tmp_path / "extracted"
+    processed = tmp_path / "processed"
+    dataset_root = extracted / "edgecase"
+    sat_dir = dataset_root / "train" / "sat"
+    map_dir = dataset_root / "train" / "map"
+
+    # Valid tile
+    _write_tiff(sat_dir / "ok.tif", np.ones((3, 4, 4), dtype=np.uint8) * 10)
+    _write_tiff(map_dir / "ok.tif", np.ones((1, 4, 4), dtype=np.uint8))
+
+    # Tile with white border
+    arr = np.ones((3, 4, 4), dtype=np.uint8) * 10
+    arr[:, 0, :] = 255
+    _write_tiff(sat_dir / "bad.tif", arr)
+    _write_tiff(map_dir / "bad.tif", np.ones((1, 4, 4), dtype=np.uint8))
+
+    header = DatasetHeader(
+        dataset_id="edgecase",
+        version="0.0.1",
+        description="",
+        source_root="edgecase",
+        modalities=[
+            ModalitySpec(name="sat", role="input", kind="raster", pattern="{split}/sat/*.tif", channels=3, dtype="uint8"),
+            ModalitySpec(name="map", role="target", kind="raster", pattern="{split}/map/*.tif", channels=1, dtype="uint8"),
+        ],
+        pairing=PairingSpec(strategy="by_stem", input_modality="sat", target_modality="map"),
+        splits=SplitSpec(raw_splits=["train"], seed=1, labeled_policy="validation_only_with_metrics_subset", train_metric_fraction_of_labeled=0.0, ratios=None, manifest_files=None),
+        sharding=ShardingSpec(shard_size=4, layout_version=1, copy_mode="copy", force_uncompressed_tiff=True),
+        validation=ValidationSpec(iou_ignore_label_leq=0, iou_average="macro_over_present_labels"),
+        header_path=None,
+    )
+
+    summary = _build_for_header(
+        header,
+        extracted_root=extracted,
+        output_root=processed,
+        shard_size=None,
+        seed_override=1,
+        max_items=None,
+        overwrite=True,
+        dry_run=False,
+    )
+
+    assert summary["train"]["items"] == 1
+    shard_root = processed / "train" / "edgecase"
+    index_path = next(shard_root.glob("**/index.jsonl"))
+    entries = index_path.read_text().splitlines()
+    assert len(entries) == 1
+    assert "bad" not in entries[0]
+
+
 def test_inria_preserves_raw_split(tmp_path: Path) -> None:
     extracted = tmp_path / "extracted"
     processed = tmp_path / "processed"

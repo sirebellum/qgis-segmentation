@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: BSD-3-Clause
-"""Lightweight CNN student producing stride-4 embeddings for variable-K clustering."""
+"""CNN student that is input-size invariant (stride-4 embeddings)."""
 from __future__ import annotations
 
 import torch
@@ -7,50 +7,99 @@ from torch import nn
 from torch.nn import functional as F
 
 
-class _Residual(nn.Module):
-    def __init__(self, channels: int):
+def _norm_layer(channels: int, norm: str, groups: int) -> nn.Module:
+    norm = (norm or "none").lower()
+    if norm == "group":
+        groups_eff = max(1, min(groups, channels))
+        while channels % groups_eff != 0 and groups_eff > 1:
+            groups_eff -= 1
+        return nn.GroupNorm(groups_eff, channels)
+    if norm == "batch":
+        return nn.BatchNorm2d(channels)
+    if norm == "instance":
+        return nn.InstanceNorm2d(channels, affine=True)
+    return nn.Identity()
+
+
+class VGGBlock3x3(nn.Module):
+    """Resolution-preserving stack of 3x3 convs with norm/activation."""
+
+    def __init__(self, channels: int, depth: int, norm: str = "group", groups: int = 8, dropout: float = 0.0):
         super().__init__()
-        self.conv1 = nn.Conv2d(channels, channels, 3, padding=1)
-        self.bn1 = nn.BatchNorm2d(channels)
-        self.conv2 = nn.Conv2d(channels, channels, 3, padding=1)
-        self.bn2 = nn.BatchNorm2d(channels)
-        self.act = nn.ReLU(inplace=True)
+        layers = []
+        for _ in range(max(1, depth)):
+            layers.append(nn.Conv2d(channels, channels, kernel_size=3, stride=1, padding=1))
+            layers.append(_norm_layer(channels, norm, groups))
+            layers.append(nn.ReLU(inplace=True))
+            if dropout and dropout > 0:
+                layers.append(nn.Dropout2d(dropout))
+        self.net = nn.Sequential(*layers)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        out = self.act(self.bn1(self.conv1(x)))
-        out = self.bn2(self.conv2(out))
-        return self.act(out + x)
+        return self.net(x)
 
 
 class StudentEmbeddingNet(nn.Module):
-    """CNN-only student embedding model.
+    """CNN-only student producing a single stride-4 embedding map.
 
-    Constraints: stride=4, <=10M params for embed_dim<=192.
+    The network is fully convolutional and accepts any H/W divisible by 4.
+    Patch-size differences (e.g., 256/512/1024) only change the output grid
+    shape; the weights are shared across all scales.
     """
 
-    def __init__(self, embed_dim: int = 128):
+    def __init__(
+        self,
+        *,
+        embed_dim: int = 96,
+        depth: int = 3,
+        norm: str = "group",
+        groups: int = 8,
+        dropout: float = 0.0,
+    ) -> None:
         super().__init__()
-        width = max(32, min(256, embed_dim))
+        if embed_dim <= 0:
+            raise ValueError("embed_dim must be positive")
+        self.embed_dim = embed_dim
+        self.depth = max(1, depth)
+        self.norm = norm
+        self.groups = groups
+        self.dropout = dropout
+        base = max(64, embed_dim)
+
+        # Two stride-2 stems to reach stride 4.
         self.stem = nn.Sequential(
-            nn.Conv2d(3, width // 2, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(width // 2),
+            nn.Conv2d(3, base // 2, kernel_size=3, stride=2, padding=1),
+            _norm_layer(base // 2, norm, groups),
             nn.ReLU(inplace=True),
-            nn.Conv2d(width // 2, width, kernel_size=3, stride=2, padding=1),
-            nn.BatchNorm2d(width),
+            nn.Conv2d(base // 2, base, kernel_size=3, stride=2, padding=1),
+            _norm_layer(base, norm, groups),
             nn.ReLU(inplace=True),
         )
-        self.block1 = _Residual(width)
-        self.block2 = _Residual(width)
-        self.proj = nn.Conv2d(width, embed_dim, kernel_size=1)
+
+        # Depth-wise VGG blocks at stride 4.
+        self.body = VGGBlock3x3(base, depth=self.depth, norm=norm, groups=groups, dropout=dropout)
+
+        # Projection + optional refinement.
+        self.head = nn.Sequential(
+            nn.Conv2d(base, base, kernel_size=3, stride=1, padding=1),
+            _norm_layer(base, norm, groups),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(base, embed_dim, kernel_size=1),
+        )
+        self.refine = VGGBlock3x3(embed_dim, depth=1, norm=norm, groups=groups, dropout=dropout)
+        self.output_stride = 4
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if x.dim() != 4 or x.shape[1] != 3:
             raise ValueError("Expected rgb BCHW with 3 channels")
+        if x.shape[-1] % self.output_stride != 0 or x.shape[-2] % self.output_stride != 0:
+            raise ValueError(f"H and W must be divisible by {self.output_stride} for the student")
+
         feat = self.stem(x)
-        feat = self.block1(feat)
-        feat = self.block2(feat)
-        emb = self.proj(feat)
-        return emb  # [B, D, H/4, W/4]
+        feat = self.body(feat)
+        emb = self.head(feat)
+        emb = self.refine(emb)
+        return emb
 
     @staticmethod
     def param_count(model: "StudentEmbeddingNet") -> int:
@@ -67,12 +116,11 @@ def batched_kmeans(emb: torch.Tensor, k: int, iters: int = 5, temperature: float
     flat = emb.view(b, c, -1)
     n = flat.shape[-1]
     k_eff = max(1, min(k, n))
-    # init by slicing evenly spaced points
     step = max(1, n // k_eff)
     proto = flat[:, :, ::step][:, :, :k_eff].clone().permute(0, 2, 1)  # [B, K, C]
     for _ in range(max(1, iters)):
-        diff = flat.unsqueeze(1) - proto.unsqueeze(-1)  # [B, K, C, N]
-        dist = (diff * diff).sum(dim=2)  # [B, K, N]
+        diff = flat.unsqueeze(1) - proto.unsqueeze(-1)
+        dist = (diff * diff).sum(dim=2)
         logits = -dist / max(temperature, 1e-6)
         assign = torch.softmax(logits, dim=1)
         denom = assign.sum(dim=2, keepdim=True) + 1e-6

@@ -81,10 +81,16 @@ def _collate(batch: list[Dict]) -> Dict:
     view1_rgb = torch.cat([item["view1"]["rgb"] for item in batch], dim=0)
     view2_rgb = torch.cat([item["view2"]["rgb"] for item in batch], dim=0)
     grid = torch.cat([item["warp_grid"] for item in batch], dim=0)
+    view1_slic_items = [item["view1"].get("slic") for item in batch if item["view1"].get("slic") is not None]
+    view2_slic_items = [item["view2"].get("slic") for item in batch if item["view2"].get("slic") is not None]
+    view1_slic = torch.cat(view1_slic_items, dim=0) if view1_slic_items else None
+    view2_slic = torch.cat(view2_slic_items, dim=0) if view2_slic_items else None
     return {
         "view1_rgb": view1_rgb,
         "view2_rgb": view2_rgb,
         "grid": grid,
+        "view1_slic": view1_slic,
+        "view2_slic": view2_slic,
     }
 
 
@@ -556,6 +562,10 @@ def main():
         v1_rgb = batch["view1_rgb"].to(device)
         v2_rgb = batch["view2_rgb"].to(device)
         grid = batch["grid"].to(device)
+        v1_slic = batch.get("view1_slic")
+        v2_slic = batch.get("view2_slic")
+        v1_slic = v1_slic.to(device) if v1_slic is not None else None
+        v2_slic = v2_slic.to(device) if v2_slic is not None else None
 
         with torch.cuda.amp.autocast(enabled=scaler.is_enabled()):
             out1 = model(
@@ -581,6 +591,10 @@ def main():
                 v1_rgb,
                 v2_rgb,
                 grid,
+                slic1=v1_slic,
+                slic2=v2_slic,
+                emb1=out1.get("embeddings"),
+                emb2=out2.get("embeddings"),
             )
             total_loss_value = losses["loss"]
             if teacher is not None and teacher_losses is not None:
@@ -613,6 +627,9 @@ def main():
                 "entropy_pixel": float(losses["entropy_pixel"].cpu()),
                 "entropy_marginal": float(losses["entropy_marginal"].cpu()),
                 "smoothness": float(losses["smoothness"].cpu()),
+                "boundary": float(losses["boundary"].cpu()),
+                "antimerge": float(losses["antimerge"].cpu()),
+                "smooth_within": float(losses["smooth_within"].cpu()),
                 "k": k,
                 "cluster_iters": cluster_iters,
                 "smooth_iters": smooth_iters,
@@ -633,6 +650,9 @@ def main():
             writer.add_scalar("loss/entropy_pixel", losses["entropy_pixel"], step)
             writer.add_scalar("loss/entropy_marginal", losses["entropy_marginal"], step)
             writer.add_scalar("loss/smoothness", losses["smoothness"], step)
+            writer.add_scalar("loss/boundary", losses["boundary"], step)
+            writer.add_scalar("loss/antimerge", losses["antimerge"], step)
+            writer.add_scalar("loss/smooth_within", losses["smooth_within"], step)
             if "teacher_feature" in losses:
                 writer.add_scalar("loss/teacher_feature", losses["teacher_feature"], step)
             if "teacher_affinity" in losses:

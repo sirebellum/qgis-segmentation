@@ -14,9 +14,11 @@ Defines a compact, extensible YAML schema describing extracted datasets before s
 - `modalities` (list): one entry per modality.
   - `name` (str), `role` (`input`|`target`), `kind` (`raster`), `pattern` (glob; `{split}` placeholder allowed).
   - Optional: `channels` (int), `dtype` (str), `nodata` (num), `georef_required` (bool), `label_values` (list[int]).
+  - Inputs must be 3-band RGB; headers with other channel counts are rejected, and shard loading enforces the same.
 - `pairing`: how to align modalities.
   - `strategy`: `by_stem` (v0) pairs on filename stem.
   - `input_modality` (str), `target_modality` (str|null).
+  - `has_target_maps` (bool) must match reality: set `true` when a target modality exists, otherwise validation fails (and vice versa).
 - `splits`:
   - `raw` (list[str]): raw split folders to scan.
   - `seed` (int): RNG seed for deterministic split assignment.
@@ -85,9 +87,21 @@ validation_metrics:
   - Single dataset: `python -m training.datasets.generate_headers --dataset ms_buildings` (or `whu_building`).
   Defaults expect `training/datasets/extracted`; tools fall back to `training/datasets/data/extracted` if the top-level path is absent.
 2. Build shards:
-  - All headers: `python -m training.datasets.build_shards --overwrite --seed 123 --shard-size 512` (clears `processed` first unless `--dry-run`).
+    - All headers: `python -m training.datasets.build_shards --overwrite --seed 123 --shard-size 512 --threads 4` (clears `processed` first unless `--dry-run`; `--threads` defaults to 4).
   - Single dataset: add `--dataset-id ms_buildings`.
 3. Outputs land in `training/datasets/processed/{split}/{dataset_id}/shard-xxxxx/` with uncompressed `.tif` tiles and `index.jsonl`; summaries live in `training/datasets/processed/metadata/*_summary.json`.
+
+## Superpixel precompute (deterministic, scale-invariant)
+- Superpixels are computed during sharding (never at training time) with OpenCV SLICO in Lab space and an edge-density heuristic that scales with patch size.
+- Region size is chosen per patch via `edge_density` (Sobel p90 on the L channel) and clamped to `[min_size, max_size]` (defaults 8–64 for 512px patches, scaled by patch size). Defaults: factors `[0.75, 1.0, 1.35]` for fine/medium/coarse.
+- Stored per patch in `slic/*.npz`:
+  - `labels` (medium), `labels_fine`, `labels_coarse`, plus boundary masks `edges*`; optional `labels_seeds`/`edges_seeds` if SEEDS is available.
+  - `slic_meta` in `index.jsonl` records edge stats, chosen sizes, algorithm, iterations, whether SEEDS ran, and whether a fallback was used.
+- Previews (`--viz-interval`) now show RGB, mean-color-per-superpixel, random seeded colors, and boundary overlays (fine=green, medium=red, coarse=blue). Previews are skipped if a fallback (grid) SLIC is used.
+- If `cv2.ximgproc` is unavailable, the builder writes a deterministic grid-based fallback (records `fallback_used=true`, `fallback_reason`) so training can proceed. Real SLIC is still preferred when OpenCV contrib is installed.
+
+## Training loader requirements
+- Shard indices must carry `slic` entries by default; `DataConfig.require_slic=True` raises if a shard is missing SLIC. Set `require_slic=false` only for legacy shards (they load zero-valued superpixel maps and skip boundary priors).
 
 Supported generators:
 - `ms_buildings` — paired sat/map tiles with ratios 0.6/0.3/0.1.

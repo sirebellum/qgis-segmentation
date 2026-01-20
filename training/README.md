@@ -41,3 +41,9 @@ Copyright (c) 2026 Quant Civil
 ## Notes
 - Training code is isolated from the QGIS runtime; no TorchScript export required in this phase.
 - See [../docs/training/MODEL_HISTORY.md](../docs/training/MODEL_HISTORY.md) for experiment logging and [../docs/plugin/MODEL_NOTES.md](../docs/plugin/MODEL_NOTES.md) for the high-level contract.
+
+## Student distillation (training-only)
+- StudentCNN now emits three embeddings (coarse/mid/fine at strides 16/8/4) with coarse→mid→fine fusion and per-slice VGG-style 3×3 deep blocks. Defaults: dims 192/128/96, depths 3/2/1, GroupNorm.
+- Losses per slice: feature + affinity distill against the teacher (resized per slice), soft k-means pseudo labels, edge-aware TV; optional cross-resolution consistency on assignments. Losses are merged scale-neutrally via EMA-normalized geometric mean with a separate EMA-normalized consistency term.
+- Knobs: `student.*` (dims/depths/norm/dropout, enable/disable), `distill.*` (cluster iters/temperature, affinity sample, EMA decay/eps, weights). CLI overrides: `--disable-multires`, `--student-dims`, `--student-depths`, `--student-norm`, `--consistency-weight`, `--ema-decay`, `--cluster-iters`.
+- Runtime: untouched; distillation remains training-only.

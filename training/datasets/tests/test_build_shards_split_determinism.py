@@ -61,6 +61,7 @@ def test_overwrite_flag_prevents_clobbering(tmp_path: Path) -> None:
     _write_tiff(dataset_root / "train" / "map" / "item.tif", np.ones((1, 2, 2), dtype=np.uint8))
 
     header = _make_header("guard", ["train"])
+
     _build_for_header(header, extracted_root=extracted, output_root=processed, shard_size=None, seed_override=1, max_items=None, overwrite=True, dry_run=False)
 
     with pytest.raises(FileExistsError):

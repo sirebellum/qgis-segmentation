@@ -7,6 +7,8 @@ from __future__ import annotations
 import torch
 from torch.nn import functional as F
 
+from .losses_distill import boundary_prior_losses
+
 from .config import LossConfig
 from .utils.gradients import image_gradients
 from .utils.warp import apply_warp
@@ -43,6 +45,10 @@ def total_loss(
     rgb1: torch.Tensor,
     rgb2: torch.Tensor,
     grid: torch.Tensor,
+    slic1: torch.Tensor | None = None,
+    slic2: torch.Tensor | None = None,
+    emb1: torch.Tensor | None = None,
+    emb2: torch.Tensor | None = None,
 ) -> dict:
     cons = two_view_consistency(probs1, probs2, grid)
     ent_pixel1, ent_marg1 = entropy_terms(probs1)
@@ -60,10 +66,44 @@ def total_loss(
         - cfg.entropy_marginal_weight * ent_marg
         + cfg.smoothness_weight * smooth
     )
+    boundary = torch.tensor(0.0, device=loss.device)
+    antimerge = torch.tensor(0.0, device=loss.device)
+    smooth_within = torch.tensor(0.0, device=loss.device)
+    if (
+        slic1 is not None
+        and slic2 is not None
+        and emb1 is not None
+        and emb2 is not None
+        and (cfg.slic_boundary_weight > 0 or cfg.slic_antimerge_weight > 0 or cfg.slic_within_weight > 0)
+    ):
+        priors1 = boundary_prior_losses(
+            emb1,
+            slic1,
+            rgb1,
+            lambda_boundary=cfg.slic_boundary_weight,
+            lambda_antimerge=cfg.slic_antimerge_weight,
+            lambda_within=cfg.slic_within_weight,
+        )
+        priors2 = boundary_prior_losses(
+            emb2,
+            slic2,
+            rgb2,
+            lambda_boundary=cfg.slic_boundary_weight,
+            lambda_antimerge=cfg.slic_antimerge_weight,
+            lambda_within=cfg.slic_within_weight,
+        )
+        boundary = 0.5 * (priors1["boundary"] + priors2["boundary"])
+        antimerge = 0.5 * (priors1["antimerge"] + priors2["antimerge"])
+        smooth_within = 0.5 * (priors1["smooth_within"] + priors2["smooth_within"])
+        loss = loss + boundary + antimerge + smooth_within
+
     return {
         "loss": loss,
         "consistency": cons.detach(),
         "entropy_pixel": ent_pixel.detach(),
         "entropy_marginal": ent_marg.detach(),
         "smoothness": smooth.detach(),
+        "boundary": boundary.detach(),
+        "antimerge": antimerge.detach(),
+        "smooth_within": smooth_within.detach(),
     }
