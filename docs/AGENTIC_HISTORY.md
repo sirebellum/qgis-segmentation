@@ -54,3 +54,10 @@ Copyright (c) 2026 Quant Civil
 - Commands: `/Users/josh/gits/qgis-segmentation/.venv/bin/python -m pytest` (full suite green, 106 passed, 5 skipped).
 - Validation: Full pytest green; existing rasterio/Tracer warnings persist.
 - Risks/Notes: Fallback SLIC is degenerate (single segment) and should be replaced with real SLIC when cv2 is available; previews still depend on cv2 being present.
+
+## Phase 6 — Inria pairing tolerance + sharding tests (2026-01-20)
+- Summary: Extended pairing schema with missing-input/target policies and optional regex stems; shard builder now logs/drops target-only tiles instead of raising; inria header generation emits pairing metadata and target-only summaries; docs and headers updated; added pairing/sharding pytest coverage.
+- Files Touched: training/datasets/header_schema.py, training/datasets/build_shards.py, training/datasets/generate_headers.py, training/datasets/headers/inria.yaml, training/datasets/tests/test_pairing_policy.py, docs/dataset/DATASETS.md, docs/dataset/HEADERS.md, docs/CODE_DESCRIPTION.md, docs/AGENTIC_HISTORY.md.
+- Commands: `python -m pytest -q training/datasets/tests` (fails: pytest not installed in system Python; no project venv present).
+- Validation: Tests not executed (pytest missing in available interpreter); rerun with a provisioned venv when available.
+- Risks/Notes: Default pairing drops logged target-only tiles; strict mode remains via `on_missing_input=error` / `on_missing_target=error` for datasets that require symmetry. Ensure pytest is installed before rerunning the suite.

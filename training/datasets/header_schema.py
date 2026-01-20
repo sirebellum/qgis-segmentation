@@ -8,7 +8,9 @@ from typing import Any, Dict, List, Optional
 import yaml
 
 _ALLOWED_ROLES = {"input", "target"}
-_ALLOWED_PAIRING = {"by_stem", "none"}
+_ALLOWED_PAIRING = {"by_stem", "regex", "none"}
+_ALLOWED_ON_MISSING_INPUT = {"drop_item", "error"}
+_ALLOWED_ON_MISSING_TARGET = {"allow", "drop_item", "error"}
 
 
 def _require(condition: bool, message: str) -> None:
@@ -34,6 +36,9 @@ class PairingSpec:
     strategy: str
     input_modality: Optional[str]
     target_modality: Optional[str]
+    stem_regex: Optional[str] = None
+    on_missing_input: str = "drop_item"
+    on_missing_target: str = "allow"
 
 
 @dataclass(frozen=True)
@@ -140,13 +145,29 @@ def _parse_pairing(raw: Dict[str, Any], modalities: List[ModalitySpec]) -> Pairi
     _require(strategy in _ALLOWED_PAIRING, f"pairing.strategy must be one of {_ALLOWED_PAIRING}")
     input_modality = raw.get("input_modality") or raw.get("input")
     target_modality = raw.get("target_modality") or raw.get("target")
+    stem_regex = raw.get("stem_regex")
+    if stem_regex is not None:
+        stem_regex = str(stem_regex).strip() or None
+    on_missing_input = str(raw.get("on_missing_input", "drop_item") or "drop_item").strip().lower()
+    on_missing_target = str(raw.get("on_missing_target", "allow") or "allow").strip().lower()
+    _require(on_missing_input in _ALLOWED_ON_MISSING_INPUT, f"pairing.on_missing_input must be one of {_ALLOWED_ON_MISSING_INPUT}")
+    _require(on_missing_target in _ALLOWED_ON_MISSING_TARGET, f"pairing.on_missing_target must be one of {_ALLOWED_ON_MISSING_TARGET}")
     if input_modality:
         _require(input_modality in names, f"pairing.input_modality '{input_modality}' not found in modalities")
     if target_modality:
         _require(target_modality in names, f"pairing.target_modality '{target_modality}' not found in modalities")
-    if strategy == "by_stem":
+    if strategy in {"by_stem", "regex"}:
         _require(input_modality, "pairing.input_modality is required for by_stem")
-    return PairingSpec(strategy=strategy, input_modality=input_modality, target_modality=target_modality)
+        if strategy == "regex":
+            _require(stem_regex, "pairing.stem_regex is required for regex strategy")
+    return PairingSpec(
+        strategy=strategy,
+        input_modality=input_modality,
+        target_modality=target_modality,
+        stem_regex=stem_regex,
+        on_missing_input=on_missing_input,
+        on_missing_target=on_missing_target,
+    )
 
 
 def _parse_splits(raw: Dict[str, Any]) -> SplitSpec:

@@ -10,6 +10,7 @@ Copyright (c) 2026 Quant Civil
 	- Generate headers from extracted data: `python -m training.datasets.generate_headers --dataset ms_buildings --dry-run` (inspect) then rerun without `--dry-run`.
 	- Build uncompressed GeoTIFF shards + `index.jsonl`: `python -m training.datasets.build_shards --dataset-id ms_buildings --overwrite --seed 123 --shard-size 512` (outputs under `training/datasets/processed/<dataset>/<split>/shard-xxxxx`).
 	- Labeled items are held out for validation; 25% of labeled tiles feed `metrics_train` (metrics-only) and the rest go to `val`. Unlabeled tiles go to `train`.
+	- Pairing policy: headers accept `pairing.on_missing_input` (`drop_item`|`error`) and `pairing.on_missing_target` (`allow`|`drop_item`|`error`) with defaults `drop_item` + `allow`; target-only tiles are logged and skipped, while inputs lacking targets stay in the shard unless `drop_item`/`error` is set. `pairing.strategy=regex` supports `pairing.stem_regex` for custom stem extraction.
 - Shard contract consumed by the trainer:
 	- Layout: `training/datasets/processed/<dataset_id>/<split>/shard-xxxxx/` containing `inputs/*.tif`, optional `targets/*.tif`, and `index.jsonl`.
 	- `index.jsonl` fields: `dataset_id`, `item_id`, `raw_split`, normalized `split`, `input` (relative path), `has_target`, and optional `target` (relative path). Paths must be relative to the shard directory.

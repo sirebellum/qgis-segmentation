@@ -5,19 +5,20 @@ import argparse
 import hashlib
 import json
 import random
+import re
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 
 import rasterio
 import shutil
 
-from .header_schema import DatasetHeader, ModalitySpec, load_header, load_headers, SlicSpec
+from .header_schema import DatasetHeader, ModalitySpec, PairingSpec, load_header, load_headers, SlicSpec
 
 
 def _try_get_ximgproc():
@@ -42,6 +43,13 @@ def _ensure_ximgproc():
 def _stable_int_hash(value: str) -> int:
     digest = hashlib.sha256(value.encode("utf-8")).hexdigest()
     return int(digest[:8], 16)
+
+
+def _summarize_stems(stems: List[str], *, limit: int = 20) -> str:
+    if not stems:
+        return ""
+    suffix = " ..." if len(stems) > limit else ""
+    return ", ".join(stems[:limit]) + suffix
 
 
 def _fallback_edge_stats(rgb: np.ndarray) -> Dict[str, float]:
@@ -483,25 +491,52 @@ def _normalize_split_name(name: str) -> str:
     return "train"
 
 
-def _glob_for_modality(modality: ModalitySpec, source_root: Path, raw_split: str) -> Dict[str, Path]:
+def _make_stem_extractor(pairing: PairingSpec) -> Callable[[Path], Optional[str]]:
+    if pairing.strategy == "regex" and pairing.stem_regex:
+        regex = re.compile(pairing.stem_regex)
+
+        def _extract(path: Path) -> Optional[str]:
+            match = regex.match(path.name)
+            if not match:
+                return None
+            if "stem" in match.groupdict():
+                return match.group("stem") or None
+            if match.groups():
+                return match.group(1) or None
+            return None
+
+        return _extract
+
+    return lambda path: path.stem
+
+
+def _glob_for_modality(modality: ModalitySpec, source_root: Path, raw_split: str, *, stem_extractor: Optional[Callable[[Path], Optional[str]]] = None) -> Dict[str, Path]:
     pattern = modality.pattern.format(split=raw_split)
     matches: Dict[str, Path] = {}
+    extractor = stem_extractor or (lambda path: path.stem)
     for path in sorted(source_root.glob(pattern)):
         if not path.is_file():
             continue
-        matches[path.stem] = path
+        stem = extractor(path)
+        if not stem:
+            continue
+        matches[stem] = path
     return matches
 
 
-def _glob_all_for_modality(modality: ModalitySpec, source_root: Path) -> Dict[str, Path]:
+def _glob_all_for_modality(modality: ModalitySpec, source_root: Path, *, stem_extractor: Optional[Callable[[Path], Optional[str]]] = None) -> Dict[str, Path]:
     wildcard = "**" if "**" in modality.pattern else "*"
     pattern = modality.pattern
     if "{split}" in pattern:
         pattern = pattern.format(split=wildcard)
     matches: Dict[str, Path] = {}
+    extractor = stem_extractor or (lambda path: path.stem)
     for path in sorted(source_root.glob(pattern)):
         if path.is_file():
-            matches[path.stem] = path
+            stem = extractor(path)
+            if not stem:
+                continue
+            matches[stem] = path
     return matches
 
 
@@ -517,7 +552,7 @@ def _load_manifest_stems(manifest_path: Path) -> List[str]:
 
 
 def _collect_items(header: DatasetHeader, source_root: Path) -> List[DatasetItem]:
-    if header.pairing.strategy != "by_stem":
+    if header.pairing.strategy not in {"by_stem", "regex"}:
         raise ValueError(f"Unsupported pairing strategy: {header.pairing.strategy}")
 
     modalities = {m.name: m for m in header.modalities}
@@ -526,10 +561,18 @@ def _collect_items(header: DatasetHeader, source_root: Path) -> List[DatasetItem
     if input_mod is None:
         raise ValueError("Input modality required for pairing")
 
+    stem_extractor = _make_stem_extractor(header.pairing)
+    policy_missing_input = header.pairing.on_missing_input or "drop_item"
+    policy_missing_target = header.pairing.on_missing_target or "allow"
+
+    def _log_drop(prefix: str, stems: List[str]) -> None:
+        if stems:
+            print(f"{prefix}{len(stems)} item(s): {_summarize_stems(stems)}")
+
     items: List[DatasetItem] = []
     if header.splits.manifest_files:
-        input_matches = _glob_all_for_modality(input_mod, source_root)
-        target_matches = _glob_all_for_modality(target_mod, source_root) if target_mod else {}
+        input_matches = _glob_all_for_modality(input_mod, source_root, stem_extractor=stem_extractor)
+        target_matches = _glob_all_for_modality(target_mod, source_root, stem_extractor=stem_extractor) if target_mod else {}
         for split_name, manifest_rel in header.splits.manifest_files.items():
             manifest_path = Path(manifest_rel)
             if not manifest_path.is_absolute():
@@ -537,31 +580,63 @@ def _collect_items(header: DatasetHeader, source_root: Path) -> List[DatasetItem
             if not manifest_path.exists():
                 raise FileNotFoundError(f"Manifest not found for split '{split_name}': {manifest_path}")
             stems = _load_manifest_stems(manifest_path)
+            missing_inputs: List[str] = []
+            missing_targets: List[str] = []
+            paired = 0
             for stem in stems:
                 input_path = input_matches.get(stem)
                 if input_path is None:
-                    print(f"[build_shards] Skipping missing input for stem '{stem}' from manifest {manifest_path}")
+                    if policy_missing_input == "error":
+                        raise ValueError(f"Missing input for stem '{stem}' from manifest {manifest_path}")
+                    missing_inputs.append(stem)
                     continue
+                target_path = target_matches.get(stem)
+                if target_path is None:
+                    if policy_missing_target == "error":
+                        raise ValueError(f"Missing target for stem '{stem}' from manifest {manifest_path}")
+                    if policy_missing_target == "drop_item":
+                        missing_targets.append(stem)
+                        continue
                 items.append(
                     DatasetItem(
                         dataset_id=header.dataset_id,
                         item_id=stem,
                         raw_split=split_name,
                         input_path=input_path,
-                        target_path=target_matches.get(stem),
+                        target_path=target_path,
                     )
                 )
+                paired += 1
+            _log_drop(f"[build_shards] Dropping missing inputs from manifest split '{split_name}' – ", missing_inputs)
+            _log_drop(f"[build_shards] Dropping manifest items without targets in split '{split_name}' – ", missing_targets)
+            print(
+                f"[build_shards] Split '{split_name}' (manifest): inputs={len(stems)}, targets={len(target_matches)}, "
+                f"paired={paired}, missing_inputs={len(missing_inputs)}, missing_targets={len(missing_targets)}"
+            )
         return items
 
     for raw_split in header.splits.raw_splits:
-        input_matches = _glob_for_modality(input_mod, source_root, raw_split)
-        target_matches = _glob_for_modality(target_mod, source_root, raw_split) if target_mod else {}
-        all_stems = sorted(set(input_matches) | set(target_matches))
-        for stem in all_stems:
+        input_matches = _glob_for_modality(input_mod, source_root, raw_split, stem_extractor=stem_extractor)
+        target_matches = _glob_for_modality(target_mod, source_root, raw_split, stem_extractor=stem_extractor) if target_mod else {}
+        target_only = sorted(set(target_matches) - set(input_matches))
+        if target_only:
+            if policy_missing_input == "error":
+                raise ValueError(
+                    f"Missing input for {len(target_only)} target item(s) in split '{raw_split}': {_summarize_stems(target_only)}"
+                )
+            _log_drop(f"[build_shards] Dropping target-only items in split '{raw_split}' – ", target_only)
+
+        missing_targets: List[str] = []
+        paired = 0
+        for stem in sorted(input_matches):
             input_path = input_matches.get(stem)
             target_path = target_matches.get(stem)
-            if input_path is None:
-                raise ValueError(f"Missing input for stem '{stem}' in split '{raw_split}'")
+            if target_path is None:
+                if policy_missing_target == "error":
+                    raise ValueError(f"Missing target for stem '{stem}' in split '{raw_split}'")
+                if policy_missing_target == "drop_item":
+                    missing_targets.append(stem)
+                    continue
             items.append(
                 DatasetItem(
                     dataset_id=header.dataset_id,
@@ -571,6 +646,15 @@ def _collect_items(header: DatasetHeader, source_root: Path) -> List[DatasetItem
                     target_path=target_path,
                 )
             )
+            paired += 1
+
+        if missing_targets and policy_missing_target == "drop_item":
+            _log_drop(f"[build_shards] Dropping inputs without targets in split '{raw_split}' – ", missing_targets)
+
+        print(
+            f"[build_shards] Split '{raw_split}': inputs={len(input_matches)}, targets={len(target_matches)}, "
+            f"paired={paired}, missing_targets={len(missing_targets)}, target_only={len(target_only)}"
+        )
     return items
 
 

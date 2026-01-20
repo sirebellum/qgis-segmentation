@@ -258,6 +258,17 @@ def _inria_header(source_root: Path) -> Tuple[DatasetHeader, Dict[str, object]]:
     sat_sample = _scan_sample(sample_img)
     map_sample = _scan_sample(sample_map) if sample_map is not None else None
 
+    pairing_summary = {}
+    for split in split_names:
+        sat_stems = {p.stem for p in (source_root / split / "images").glob("*.tif")}
+        map_stems = {p.stem for p in (source_root / split / "gt").glob("*.tif")}
+        pairing_summary[split] = {
+            "inputs": len(sat_stems),
+            "targets": len(map_stems),
+            "target_only": sorted(map_stems - sat_stems),
+            "input_only": sorted(sat_stems - map_stems),
+        }
+
     header = DatasetHeader(
         dataset_id="inria",
         version="0.1.0",
@@ -284,7 +295,13 @@ def _inria_header(source_root: Path) -> Tuple[DatasetHeader, Dict[str, object]]:
                 label_values=map_sample.get("unique_values") if isinstance(map_sample, dict) else None,
             ),
         ],
-        pairing=PairingSpec(strategy="by_stem", input_modality="sat", target_modality="map"),
+        pairing=PairingSpec(
+            strategy="by_stem",
+            input_modality="sat",
+            target_modality="map",
+            on_missing_input="drop_item",
+            on_missing_target="allow",
+        ),
         splits=SplitSpec(
             raw_splits=split_names,
             seed=123,
@@ -304,15 +321,10 @@ def _inria_header(source_root: Path) -> Tuple[DatasetHeader, Dict[str, object]]:
     )
 
     stats = {
-        "splits": {
-            split: {
-                "sat": len(list((source_root / split / "images").glob("*.tif"))),
-                "map": len(list((source_root / split / "gt").glob("*.tif"))),
-            }
-            for split in split_names
-        },
+        "splits": {split: {"sat": summary["inputs"], "map": summary["targets"]} for split, summary in pairing_summary.items()},
         "sat_sample": sat_sample,
         "map_sample": map_sample,
+        "pairing": pairing_summary,
     }
     return header, stats
 

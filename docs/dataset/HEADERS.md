@@ -16,8 +16,9 @@ Defines a compact, extensible YAML schema describing extracted datasets before s
   - Optional: `channels` (int), `dtype` (str), `nodata` (num), `georef_required` (bool), `label_values` (list[int]).
   - Inputs must be 3-band RGB; headers with other channel counts are rejected, and shard loading enforces the same.
 - `pairing`: how to align modalities.
-  - `strategy`: `by_stem` (v0) pairs on filename stem.
+  - `strategy`: `by_stem` (v0) pairs on filename stem; `regex` allows `stem_regex` (must yield a group or named `stem`).
   - `input_modality` (str), `target_modality` (str|null).
+  - Optional: `on_missing_input` (`drop_item`|`error`, default `drop_item`) and `on_missing_target` (`allow`|`drop_item`|`error`, default `allow`) to control how the sharder handles unpaired tiles; target-only tiles are logged + skipped by default.
   - `has_target_maps` (bool) must match reality: set `true` when a target modality exists, otherwise validation fails (and vice versa).
 - `splits`:
   - `raw` (list[str]): raw split folders to scan.

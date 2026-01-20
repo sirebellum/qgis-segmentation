@@ -26,9 +26,9 @@ Copyright (c) 2026 Quant Civil
 - training/tests/: pytest coverage (shapes, losses, synthetic smoke).
 
 ## Dataset prep (headers + shards)
-- training/datasets/header_schema.py: YAML schema + validator for dataset headers (modalities, pairing, splits, sharding, validation rules).
-- training/datasets/generate_headers.py: scanner to emit headers from extracted data; ms_buildings auto-detection covers sat/map patterns and label values.
-- training/datasets/build_shards.py: monolithic shard builder producing uncompressed GeoTIFF shards with `index.jsonl`, deterministic split assignment, and summary manifest.
+- training/datasets/header_schema.py: YAML schema + validator for dataset headers (modalities, pairing, splits, sharding, validation rules); pairing now supports regex stems and explicit missing-input/target policies (default: drop target-only tiles, allow input-only tiles).
+- training/datasets/generate_headers.py: scanner to emit headers from extracted data; ms_buildings auto-detection covers sat/map patterns and label values; inria header now writes pairing policy + target-only summary metadata.
+- training/datasets/build_shards.py: monolithic shard builder producing uncompressed GeoTIFF shards with `index.jsonl`, deterministic split assignment, and summary manifest; pairing policy drives how missing inputs/targets are logged or dropped.
 - training/datasets/metrics.py: IoU helper that ignores labels ≤ threshold; exercised via training/datasets/tests.
 
 ## Training (Phase 4, hardening)
