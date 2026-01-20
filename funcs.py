@@ -69,6 +69,22 @@ def _quantization_device(device_hint=None):
     return None
 
 
+def _runtime_float_dtype(device_hint=None):
+    """Prefer float16 tensors on GPU backends while retaining float32 on CPU."""
+    device = _coerce_torch_device(device_hint)
+    if device is not None and device.type in {"cuda", "mps"}:
+        return torch.float16
+    if device is None:
+        try:
+            if torch.cuda.is_available():
+                return torch.float16
+            if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                return torch.float16
+        except Exception:
+            pass
+    return torch.float32
+
+
 def _quant_chunk_size(device, num_clusters):
     base = 262144 if device.type == "cuda" else 131072
     scale = max(1, num_clusters // 8)
@@ -78,10 +94,11 @@ def _quant_chunk_size(device, num_clusters):
 def _gpu_cluster_assignments(data, centers, device, status_callback=None):
     if data.size == 0 or centers.size == 0:
         return None
+    dtype = _runtime_float_dtype(device)
     try:
-        centers_tensor = torch.as_tensor(centers, dtype=torch.float32, device=device)
+        centers_tensor = torch.as_tensor(centers, dtype=dtype, device=device)
         centers_norm = centers_tensor.pow(2).sum(dim=1)
-        data_tensor = torch.as_tensor(data, dtype=torch.float32)
+        data_tensor = torch.as_tensor(data, dtype=dtype)
     except Exception:
         return None
 
@@ -194,8 +211,9 @@ def blur_segmentation_map(
     if num_segments <= 0:
         return labels
     _maybe_raise_cancel(cancel_token)
+    dtype = _runtime_float_dtype(None)
     tensor = torch.from_numpy(labels_src.astype(np.int64, copy=False))
-    one_hot = F.one_hot(tensor, num_classes=num_segments).permute(2, 0, 1).unsqueeze(0).to(dtype=torch.float32)
+    one_hot = F.one_hot(tensor, num_classes=num_segments).permute(2, 0, 1).unsqueeze(0).to(dtype=dtype)
     weight = torch.ones(num_segments, 1, kernel, kernel, dtype=one_hot.dtype) / float(kernel * kernel)
     result = one_hot
     for idx in range(iterations):
@@ -670,13 +688,15 @@ class _ChunkAggregator:
 
 
 def _resize_latent_map(latent_map, size):
-    tensor = torch.from_numpy(latent_map).unsqueeze(0)
+    dtype = _runtime_float_dtype(None)
+    tensor = torch.from_numpy(latent_map).unsqueeze(0).to(dtype=dtype)
     resized = F.interpolate(tensor, size=size, mode="bilinear", align_corners=False)
     return resized.squeeze(0).cpu().numpy()
 
 
 def _resize_label_map(label_map, size):
-    tensor = torch.from_numpy(label_map.astype(np.float32, copy=False)).unsqueeze(0).unsqueeze(0)
+    dtype = _runtime_float_dtype(None)
+    tensor = torch.from_numpy(label_map.astype(np.float32, copy=False)).unsqueeze(0).unsqueeze(0).to(dtype=dtype)
     resized = F.interpolate(tensor, size=size, mode="nearest")
     return resized.squeeze().cpu().numpy().astype(np.int32, copy=False)
 
@@ -873,7 +893,8 @@ def _chunked_gaussian_blur(
     channels, height, width = array.shape
     radius = int(max(1, round(3 * sigma)))
     device = _smoothing_device()
-    use_fp16 = device.type in {"cuda", "mps"} and LATENT_KNN_DEFAULTS.get("mixed_precision_smoothing", True)
+    preferred_dtype = _runtime_float_dtype(device)
+    use_fp16 = preferred_dtype == torch.float16 and LATENT_KNN_DEFAULTS.get("mixed_precision_smoothing", True)
     dtype = torch.float16 if use_fp16 else torch.float32
     kernel = _build_gaussian_kernel(radius, sigma, channels, device, dtype=dtype)
     result = np.zeros_like(array, dtype=np.float32)
@@ -894,7 +915,7 @@ def _chunked_gaussian_blur(
         tensor = torch.from_numpy(chunk).unsqueeze(0).to(device=device, dtype=dtype)
         padded = F.pad(tensor, (radius, radius, radius, radius), mode="reflect")
         smoothed = F.conv2d(padded, kernel, groups=channels).squeeze(0)
-        usable = smoothed[:, pad_top : pad_top + (end - start), :].to(torch.float32)
+        usable = smoothed[:, pad_top : pad_top + (end - start), :].to(dtype)
         result[:, start:end, :] = usable.detach().cpu().numpy()
         start = end
         chunk_index += 1
@@ -1208,6 +1229,7 @@ def predict_cnn(
 ):
     _maybe_raise_cancel(cancel_token)
     device_obj = cast(torch.device, _coerce_torch_device(device) or torch.device("cpu"))
+    compute_dtype = _runtime_float_dtype(device_obj)
     effective_budget = memory_budget or DEFAULT_MEMORY_BUDGET
     settings = get_adaptive_settings(effective_budget, tier=profile_tier)
     prefetch_depth = prefetch_depth or settings.prefetch_depth
@@ -1230,15 +1252,30 @@ def predict_cnn(
     )
     coverage_map = []
     last_report = -1
-    amp_enabled = bool(device_obj.type == "cuda" and torch.cuda.is_available())
-    amp_context = torch.cuda.amp.autocast if amp_enabled else nullcontext
+
+    def _autocast_ctx():
+        if compute_dtype != torch.float16:
+            return nullcontext()
+        if device_obj.type == "cuda" and torch.cuda.is_available():
+            return torch.cuda.amp.autocast(dtype=compute_dtype)
+        if device_obj.type == "mps":
+            try:
+                return torch.autocast(device_type="mps", dtype=compute_dtype)
+            except Exception:
+                return nullcontext()
+        return nullcontext()
 
     for tensor_batch, start, end, total in _prefetch_batches(
-        tiles, batch_size, device_obj, depth=prefetch_depth, cancel_token=cancel_token
+        tiles,
+        batch_size,
+        device_obj,
+        depth=prefetch_depth,
+        cancel_token=cancel_token,
+        dtype=compute_dtype,
     ):
         _maybe_raise_cancel(cancel_token)
         with torch.no_grad():
-            with amp_context():
+            with _autocast_ctx():
                 result = cnn_model.forward(tensor_batch)
         vectors = result[1].detach().cpu().numpy()
         coverage_map.append(vectors)
@@ -1506,17 +1543,18 @@ def _recommended_batch_size(channels, height, width, memory_budget, settings):
     return max(1, effective_budget // denom)
 
 
-def _prefetch_batches(tiles, batch_size, device, depth=2, cancel_token=None):
+def _prefetch_batches(tiles, batch_size, device, depth=2, cancel_token=None, dtype=None):
     total = tiles.shape[0]
     if total == 0:
         return
+    target_dtype = dtype or _runtime_float_dtype(device)
     if device.type == "cuda" and torch.cuda.is_available():
-        yield from _prefetch_batches_cuda(tiles, batch_size, device, cancel_token)
+        yield from _prefetch_batches_cuda(tiles, batch_size, device, cancel_token, dtype=target_dtype)
         return
-    yield from _prefetch_batches_threaded(tiles, batch_size, device, depth, cancel_token)
+    yield from _prefetch_batches_threaded(tiles, batch_size, device, depth, cancel_token, dtype=target_dtype)
 
 
-def _prefetch_batches_threaded(tiles, batch_size, device, depth=2, cancel_token=None):
+def _prefetch_batches_threaded(tiles, batch_size, device, depth=2, cancel_token=None, dtype=None):
     total = tiles.shape[0]
     depth = max(1, depth or 1)
     executor = ThreadPoolExecutor(max_workers=depth)
@@ -1530,7 +1568,7 @@ def _prefetch_batches_threaded(tiles, batch_size, device, depth=2, cancel_token=
                 start = index
                 end = min(start + batch_size, total)
                 batch = tiles[start:end]
-                future = executor.submit(_batch_to_tensor, batch, device)
+                future = executor.submit(_batch_to_tensor, batch, device, dtype)
                 futures.append((future, start, end))
                 index = end
             future, start, end = futures.popleft()
@@ -1549,7 +1587,7 @@ def _prefetch_batches_threaded(tiles, batch_size, device, depth=2, cancel_token=
         executor.shutdown(wait=True)
 
 
-def _prefetch_batches_cuda(tiles, batch_size, device, cancel_token=None):
+def _prefetch_batches_cuda(tiles, batch_size, device, cancel_token=None, dtype=None):
     total = tiles.shape[0]
     if total == 0:
         return
@@ -1562,7 +1600,11 @@ def _prefetch_batches_cuda(tiles, batch_size, device, cancel_token=None):
         _maybe_raise_cancel(cancel_token)
         batch = torch.from_numpy(tiles[start:end])
         if not batch.is_floating_point():
-            batch = batch.float()
+            batch = batch.float().div_(255.0)
+        else:
+            batch = batch / 255.0
+        if dtype is not None and batch.dtype != dtype:
+            batch = batch.to(dtype)
         pinned = batch.pin_memory()
         with torch.cuda.stream(stream):
             gpu_tensor = pinned.to(device, non_blocking=True)
@@ -1593,10 +1635,12 @@ def _prefetch_batches_cuda(tiles, batch_size, device, cancel_token=None):
         yield tensor, start, end, total
 
 
-def _batch_to_tensor(batch, device):
+def _batch_to_tensor(batch, device, dtype):
     tensor = torch.from_numpy(batch)
     if not tensor.is_floating_point():
         tensor = tensor.float().div_(255.0)
     else:
         tensor = tensor / 255.0
+    if dtype is not None and tensor.dtype != dtype:
+        tensor = tensor.to(dtype)
     return tensor.to(device)

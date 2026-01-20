@@ -8,3 +8,4 @@ PyYAML
 rasterio
 opencv-contrib-python-headless>=4.9.0
 GDAL
+pb_tool
