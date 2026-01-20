@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import json
-import random
 from collections import OrderedDict
 from pathlib import Path
 from typing import Dict, Iterator, List, Optional
@@ -16,6 +15,7 @@ import torch
 from torch.utils.data import IterableDataset, get_worker_info
 
 from ..config import AugConfig, DataConfig
+from ..augmentations import apply_augmentations, make_rng
 from ..utils.warp import identity_grid
 
 
@@ -120,24 +120,16 @@ class ShardedTifDataset(IterableDataset):
             tensor = tensor / 255.0
         return tensor.unsqueeze(0) if add_batch else tensor
 
-    def _augment_pair(self, rgb: torch.Tensor, slic: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        out_rgb = rgb
-        out_slic = slic
-        if random.random() < self.aug_cfg.flip_prob:
-            out_rgb = torch.flip(out_rgb, dims=[3])
-            out_slic = torch.flip(out_slic, dims=[3])
-        if self.aug_cfg.rotate_choices:
-            k = random.choice(self.aug_cfg.rotate_choices)
-            if k % 90 != 0:
-                raise ValueError("rotate_choices must be multiples of 90 degrees")
-            turns = (k // 90) % 4
-            if turns:
-                out_rgb = torch.rot90(out_rgb, turns, dims=(2, 3))
-                out_slic = torch.rot90(out_slic, turns, dims=(2, 3))
-        if self.aug_cfg.gaussian_noise_std > 0:
-            noise = torch.randn_like(out_rgb) * float(self.aug_cfg.gaussian_noise_std)
-            out_rgb = (out_rgb + noise).clamp(0.0, 1.0)
-        return out_rgb, out_slic
+    def _augment_view(
+        self,
+        rgb: torch.Tensor,
+        slic: torch.Tensor,
+        *,
+        rng: Optional[torch.Generator],
+        target: Optional[torch.Tensor] = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
+        augmented = apply_augmentations(rgb, slic=slic, target=target, aug_cfg=self.aug_cfg, rng=rng)
+        return augmented["rgb"], augmented["slic"], augmented.get("target")
 
     @staticmethod
     def _normalize_target(array: np.ndarray) -> torch.Tensor:
@@ -204,17 +196,27 @@ class ShardedTifDataset(IterableDataset):
 
                 if self.with_augmentations:
                     rgb_tensor = self._to_tensor(rgb_array, add_batch=True)
-                    slic_tensor = slic_tensor.unsqueeze(0).unsqueeze(0).float()
-                    view1_rgb, view1_slic = self._augment_pair(rgb_tensor.clone(), slic_tensor.clone())
-                    view2_rgb, view2_slic = self._augment_pair(rgb_tensor.clone(), slic_tensor.clone())
-                    view1_slic = view1_slic.long().squeeze(0)
-                    view2_slic = view2_slic.long().squeeze(0)
+                    slic_tensor = slic_tensor.unsqueeze(0).unsqueeze(0)
+                    rng_base = self.aug_cfg.seed
+                    worker_id = worker.id if worker is not None else 0
+                    item_id = entry.get("item_id")
+                    view1_rng = make_rng(rng_base, worker_id=worker_id, sample_index=produced, item_id=item_id, view_id=0)
+                    view2_rng = make_rng(rng_base, worker_id=worker_id, sample_index=produced, item_id=item_id, view_id=1)
+                    view1_rgb, view1_slic, view1_target = self._augment_view(
+                        rgb_tensor.clone(), slic_tensor.clone(), rng=view1_rng, target=target_tensor
+                    )
+                    view2_rgb, view2_slic, view2_target = self._augment_view(
+                        rgb_tensor.clone(), slic_tensor.clone(), rng=view2_rng, target=target_tensor
+                    )
+                    view1_slic = view1_slic.long().squeeze(0) if view1_slic is not None else None
+                    view2_slic = view2_slic.long().squeeze(0) if view2_slic is not None else None
+                    target_out = view1_target if view1_target is not None else target_tensor
                     grid = identity_grid(view1_rgb.shape[-2], view1_rgb.shape[-1], device=view1_rgb.device, batch=1)
                     yield {
                         "view1": {"rgb": view1_rgb, "slic": view1_slic},
                         "view2": {"rgb": view2_rgb, "slic": view2_slic},
                         "warp_grid": grid,
-                        "target": target_tensor,
+                        "target": target_out,
                         "meta": {
                             "item_id": entry.get("item_id"),
                             "split": entry.get("split"),

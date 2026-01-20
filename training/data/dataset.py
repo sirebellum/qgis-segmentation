@@ -4,13 +4,13 @@
 """Augmented two-view wrapper for RGB-only samples."""
 from __future__ import annotations
 
-import random
 from typing import Dict, List
 
 import torch
 from torch.utils.data import Dataset
 
 from ..config import AugConfig, DataConfig
+from ..augmentations import apply_augmentations, make_rng
 from ..utils.warp import identity_grid
 
 
@@ -38,27 +38,16 @@ class UnsupervisedRasterDataset(Dataset):
             raise ValueError("rgb sample must be [3,H,W]")
         return tensor.unsqueeze(0) / 255.0 if tensor.max() > 1.0 else tensor.unsqueeze(0)
 
-    def _augment(self, rgb: torch.Tensor) -> torch.Tensor:
-        out = rgb
-        if random.random() < self.aug_cfg.flip_prob:
-            out = torch.flip(out, dims=[3])
-        if self.aug_cfg.rotate_choices:
-            k = random.choice(self.aug_cfg.rotate_choices)
-            if k % 90 != 0:
-                raise ValueError("rotate_choices must be multiples of 90 degrees")
-            turns = (k // 90) % 4
-            if turns:
-                out = torch.rot90(out, turns, dims=(2, 3))
-        if self.aug_cfg.gaussian_noise_std > 0:
-            noise = torch.randn_like(out) * float(self.aug_cfg.gaussian_noise_std)
-            out = (out + noise).clamp(0.0, 1.0)
-        return out
+    def _augment(self, rgb: torch.Tensor, *, view_id: int, sample_idx: int) -> torch.Tensor:
+        rng = make_rng(self.aug_cfg.seed, sample_index=sample_idx, view_id=view_id)
+        augmented = apply_augmentations(rgb, aug_cfg=self.aug_cfg, rng=rng)["rgb"]
+        return augmented
 
     def __getitem__(self, idx: int) -> Dict[str, Dict]:
         sample = self.samples[idx % len(self.samples)]
         rgb = self._to_tensor(sample["rgb"])
-        view1_rgb = self._augment(rgb.clone())
-        view2_rgb = self._augment(rgb.clone())
+        view1_rgb = self._augment(rgb.clone(), view_id=0, sample_idx=idx)
+        view2_rgb = self._augment(rgb.clone(), view_id=1, sample_idx=idx)
         grid = identity_grid(view1_rgb.shape[-2], view1_rgb.shape[-1], device=view1_rgb.device, batch=1)
         return {
             "view1": {"rgb": view1_rgb},

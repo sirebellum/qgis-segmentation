@@ -50,11 +50,19 @@ class DataConfig:
 
 @dataclass
 class AugConfig:
-    flip_prob: float = 0.5
+    enabled: bool = True
+    seed: Optional[int] = None
+    flip_prob: float = 0.5  # legacy alias for horizontal flips
+    flip_h_prob: float = 0.5
+    flip_v_prob: float = 0.0
     rotate_choices: Sequence[int] = (0, 90, 180, 270)
-    color_jitter: Tuple[float, float, float, float] = (0.1, 0.1, 0.1, 0.05)
-    gaussian_noise_std: float = 0.01
-    max_affine_deg: float = 10.0
+    photometric_prob: float = 1.0
+    noise_std_range: Tuple[float, float] = (0.0, 0.01)
+    contrast_range: Tuple[float, float] = (0.9, 1.1)
+    saturation_range: Tuple[float, float] = (0.9, 1.1)
+    color_jitter: Tuple[float, float, float, float] = (0.1, 0.1, 0.1, 0.05)  # deprecated
+    gaussian_noise_std: float = 0.01  # deprecated; superseded by noise_std_range
+    max_affine_deg: float = 10.0  # placeholder for future affine aug
 
 
 @dataclass

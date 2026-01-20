@@ -43,6 +43,15 @@ def _default_run_id() -> str:
     return f"{ts}-{_short_git_sha()}"
 
 
+def _parse_int_list(raw: Optional[str]) -> Optional[List[int]]:
+    if raw is None:
+        return None
+    parts = [p.strip() for p in str(raw).split(",") if p.strip()]
+    if not parts:
+        return None
+    return [int(p) for p in parts]
+
+
 def _device(preference: Optional[str]) -> torch.device:
     device = select_device(preference)
     apply_memory_policy(device)
@@ -343,6 +352,18 @@ def main():
     parser.add_argument("--export-best-to", type=str, default=None, help="Directory to write best-model numpy artifacts (default: <run>/artifacts)")
     parser.add_argument("--export-training-mirror", type=str, default=None, help="Mirror directory for training-ledger copy (default: <run>/artifacts_mirror)")
     parser.add_argument("--log-image-every", type=int, default=None, help="Image logging stride (steps), default 1")
+    parser.add_argument("--no-aug", action="store_true", help="Disable training-time augmentations")
+    parser.add_argument("--aug-seed", type=int, default=None, help="Deterministic augmentation seed (defaults to training seed)")
+    parser.add_argument("--aug-flip-h", type=float, default=None, help="Horizontal flip probability")
+    parser.add_argument("--aug-flip-v", type=float, default=None, help="Vertical flip probability")
+    parser.add_argument("--aug-photometric-prob", type=float, default=None, help="Probability of applying photometric augs (noise/contrast/saturation)")
+    parser.add_argument("--aug-noise-min", type=float, default=None, help="Minimum Gaussian noise stddev")
+    parser.add_argument("--aug-noise-max", type=float, default=None, help="Maximum Gaussian noise stddev")
+    parser.add_argument("--aug-contrast-min", type=float, default=None, help="Minimum contrast factor")
+    parser.add_argument("--aug-contrast-max", type=float, default=None, help="Maximum contrast factor")
+    parser.add_argument("--aug-saturation-min", type=float, default=None, help="Minimum saturation factor")
+    parser.add_argument("--aug-saturation-max", type=float, default=None, help="Maximum saturation factor")
+    parser.add_argument("--aug-rotate-choices", type=str, default=None, help="Comma-separated rotation angles (multiples of 90)")
     parser.add_argument("--use-teacher", action="store_true", help="Enable teacher distillation (disabled by default)")
     parser.add_argument("--teacher-name", type=str, default=None, help="Teacher backbone name (fake|dinov2_vitl14|...)")
     parser.add_argument("--teacher-proj-dim", type=int, default=None, help="Teacher projection dim")
@@ -375,6 +396,37 @@ def main():
         cfg.data.num_workers = max(0, args.num_workers)
     if args.log_image_every is not None:
         cfg.train.log_image_interval = max(1, args.log_image_every)
+
+    if args.no_aug:
+        cfg.aug.enabled = False
+    cfg.aug.seed = args.aug_seed if args.aug_seed is not None else (cfg.aug.seed if cfg.aug.seed is not None else args.seed)
+
+    def _clamp01(value: float) -> float:
+        return float(max(0.0, min(1.0, value)))
+
+    if args.aug_flip_h is not None:
+        cfg.aug.flip_h_prob = _clamp01(args.aug_flip_h)
+        cfg.aug.flip_prob = cfg.aug.flip_h_prob
+    if args.aug_flip_v is not None:
+        cfg.aug.flip_v_prob = _clamp01(args.aug_flip_v)
+    if args.aug_photometric_prob is not None:
+        cfg.aug.photometric_prob = _clamp01(args.aug_photometric_prob)
+
+    def _update_range(current: tuple[float, float], lo: Optional[float], hi: Optional[float]) -> tuple[float, float]:
+        new_lo, new_hi = current
+        if lo is not None:
+            new_lo = float(lo)
+        if hi is not None:
+            new_hi = float(hi)
+        return (new_lo, new_hi)
+
+    cfg.aug.noise_std_range = _update_range(cfg.aug.noise_std_range, args.aug_noise_min, args.aug_noise_max)
+    cfg.aug.contrast_range = _update_range(cfg.aug.contrast_range, args.aug_contrast_min, args.aug_contrast_max)
+    cfg.aug.saturation_range = _update_range(cfg.aug.saturation_range, args.aug_saturation_min, args.aug_saturation_max)
+
+    rotate_override = _parse_int_list(args.aug_rotate_choices)
+    if rotate_override:
+        cfg.aug.rotate_choices = tuple(rotate_override)
 
     cfg.teacher.enabled = bool(args.use_teacher)
     if args.teacher_name:

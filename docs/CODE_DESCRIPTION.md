@@ -18,6 +18,7 @@ Copyright (c) 2026 Quant Civil
 ## Training (Phase 3, scaffolding)
 - training/config.py, config_loader.py: dataclass configs + python-loader overrides.
 - training/data/: synthetic dataset placeholder with paired-view augmentations.
+- training/augmentations.py: deterministic geometry (90° rotations, H/V flips) + photometric (noise/contrast/saturation) transforms synchronized across RGB/SLIC/targets for shard, geo, and synthetic loaders.
 - training/models/: encoder stride/4, soft k-means head, refinement lanes, monolithic wrapper (later iterations removed elevation FiLM).
 - training/losses.py, metrics.py: unsupervised objectives + proxy metrics.
 - training/utils/: warp/gradients/resample/seed helpers.
