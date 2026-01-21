@@ -1,7 +1,7 @@
 numpy
 requests
-scikit-learn
 torch
+tensorboard
 pytest
 flake8
 PyYAML
