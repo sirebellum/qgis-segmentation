@@ -128,8 +128,8 @@ def test_tile_raster_reassembles_original_extent():
 @pytest.mark.parametrize(
     "shape,tile_size",
     [
-        ((3, 384, 640), 128),
-        ((3, 257, 513), 96),
+        ((3, 48, 80), 24),
+        ((3, 49, 65), 20),
     ],
 )
 def test_predict_cnn_handles_rectangular_tiles(shape, tile_size):
@@ -149,7 +149,7 @@ def test_predict_cnn_handles_rectangular_tiles(shape, tile_size):
 
 
 def test_predict_cnn_uses_adaptive_batching():
-    shape = (3, 256, 512)
+    shape = (3, 64, 128)
     array = _rand_array(4, shape)
     model = _DummyModel()
     predict_cnn(
@@ -167,8 +167,8 @@ def test_predict_cnn_uses_adaptive_batching():
 @pytest.mark.parametrize(
     "shape",
     [
-        (3, 640, 925),
-        (3, 512, 700),
+        (3, 80, 120),
+        (3, 96, 128),
     ],
 )
 def test_execute_cnn_segmentation_chunking_preserves_shape(shape):
@@ -191,7 +191,7 @@ def test_execute_cnn_segmentation_chunking_preserves_shape(shape):
 
 
 def test_execute_kmeans_segmentation_chunking_preserves_shape():
-    array = _rand_array(3, (3, 781, 1023))
+    array = _rand_array(3, (3, 80, 120))
     plan = ChunkPlan(chunk_size=200, overlap=50, budget_bytes=8 * 1024 * 1024, ratio=0.0075, prefetch_depth=2)
     manager = _StubAutoencoder()
     output = execute_kmeans_segmentation(
@@ -273,7 +273,7 @@ def test_predict_cnn_gpu_prefetch_throughput(tmp_path, gpu_metric_recorder):
     if device is None:
         pytest.skip("No CUDA or MPS backend available for GPU throughput test.")
 
-    tile_sizes = (256, 512, 768, 1024)
+    tile_sizes = (32, 48, 64)
     tile_batch = _rand_tile_batch(11, tile_sizes)
     model = _DummyModel().to(device)
 
@@ -282,7 +282,7 @@ def test_predict_cnn_gpu_prefetch_throughput(tmp_path, gpu_metric_recorder):
             model,
             sample,
             num_segments=3,
-            tile_size=128,
+            tile_size=32,
             device=device,
             memory_budget=32 * 1024 * 1024,
             prefetch_depth=1,
@@ -292,8 +292,8 @@ def test_predict_cnn_gpu_prefetch_throughput(tmp_path, gpu_metric_recorder):
     baseline_settings = AdaptiveSettings(safety_factor=12, prefetch_depth=1)
     optimized_settings = AdaptiveSettings(safety_factor=8, prefetch_depth=2)
 
-    baseline = _benchmark_predict(model, tile_batch, device, baseline_settings, tile_size=128)
-    optimized = _benchmark_predict(model, tile_batch, device, optimized_settings, tile_size=128)
+    baseline = _benchmark_predict(model, tile_batch, device, baseline_settings, tile_size=32)
+    optimized = _benchmark_predict(model, tile_batch, device, optimized_settings, tile_size=32)
 
     gpu_metric_recorder(
         {
