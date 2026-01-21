@@ -805,12 +805,23 @@ def _process_item(
     targets_dir = shard_dir / "targets"
     slic_dir = shard_dir / "slic"
 
-    rgb = _load_rgb_array(item.input_path)
+    try:
+        rgb = _load_rgb_array(item.input_path)
+    except Exception as exc:  # pragma: no cover - defensive guard for malformed rasters
+        print(f"[skip] {item.dataset_id}/{item.item_id}: unable to read input {item.input_path}: {exc}")
+        return None
+
     if _has_white_border(rgb):
         return None
 
     input_dst = inputs_dir / f"{item.item_id}.tif"
-    _copy_uncompressed(item.input_path, input_dst, force_uncompressed=header.sharding.force_uncompressed_tiff)
+    try:
+        _copy_uncompressed(item.input_path, input_dst, force_uncompressed=header.sharding.force_uncompressed_tiff)
+    except Exception as exc:  # pragma: no cover - skip corrupted inputs without halting the build
+        print(
+            f"[skip] {item.dataset_id}/{item.item_id}: failed copying input {item.input_path} -> {input_dst}: {exc}"
+        )
+        return None
 
     slic_result = _compute_and_write_slic(
         input_dst,
@@ -823,7 +834,17 @@ def _process_item(
     target_dst: Optional[Path] = None
     if item.target_path is not None:
         target_dst = targets_dir / f"{item.item_id}.tif"
-        _copy_uncompressed(item.target_path, target_dst, force_uncompressed=header.sharding.force_uncompressed_tiff)
+        try:
+            _copy_uncompressed(
+                item.target_path,
+                target_dst,
+                force_uncompressed=header.sharding.force_uncompressed_tiff,
+            )
+        except Exception as exc:  # pragma: no cover - skip items whose targets cannot be read
+            print(
+                f"[skip] {item.dataset_id}/{item.item_id}: failed copying target {item.target_path} -> {target_dst}: {exc}"
+            )
+            return None
 
     entry: Dict[str, object] = {
         "dataset_id": item.dataset_id,
@@ -1081,7 +1102,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             extracted_root = fallback
             print(f"Using fallback extracted root: {extracted_root}")
     output_root = Path(args.output_root).expanduser().resolve()
-    if not output_root.exists() and args.output_root == "training/datasets/processed":
+    if not output_root.exists() and args.output_root == "training/datasets/data/processed":
         fallback_out = Path(__file__).resolve().parent / "data" / "processed"
         if fallback_out.exists():
             output_root = fallback_out
