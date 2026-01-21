@@ -5,7 +5,7 @@ Copyright (c) 2026 Quant Civil
 # CODESTATE
 
 ## Overview
-- Repo provides a QGIS plugin for map segmentation plus an isolated PyTorch training/export stack and dataset prep scaffold. Runtime code currently uses legacy TorchScript CNN + scikit-learn K-Means paths despite the intended numpy-only invariant; next-gen numpy runtime modules exist but are not wired into the plugin. Training focuses on RGB-only unsupervised segmentation with shard ingestion; dataset ingestion rewrite is mid-scaffold.
+- Repo provides a QGIS plugin for map segmentation plus an isolated PyTorch training/export stack and dataset prep scaffold. Runtime code uses the execute_* pipeline (TorchScript CNN + torch K-Means with chunk aggregation); next-gen numpy runtime modules exist but are not wired into the plugin. Training focuses on RGB-only unsupervised segmentation with shard ingestion; dataset ingestion rewrite is mid-scaffold.
 
 ## Path Map
 - Plugin runtime: [segmenter.py](../segmenter.py), [segmenter_dialog.py](../segmenter_dialog.py), [segmenter_dialog_base.ui](../segmenter_dialog_base.ui), [qgis_funcs.py](../qgis_funcs.py), [dependency_manager.py](../dependency_manager.py), [funcs.py](../funcs.py).
@@ -37,19 +37,19 @@ Copyright (c) 2026 Quant Civil
 - Ingestion scaffold: [scripts/datasets_ingest](../scripts/datasets_ingest) defines `BaseProvider`/`IngestConfig` and stub providers (placeholder, NAIP AWS stub) returning manifest entries only—no IO/network. CLI validates manifest structure and lists providers; serves as rewrite placeholder.
 
 ## Runtime (Plugin): Interfaces and Contracts
-- UI/task flow in [segmenter.py](../segmenter.py): validates GDAL layer (.tif/.tiff, provider gdal, 3 bands), parses segment count/resolution, builds blur/heuristic overrides, dispatches QgsTask to `legacy_cnn_segmentation` (TorchScript) or `legacy_kmeans_segmentation` [funcs.py](../funcs.py). Device preference CUDA→MPS→CPU; sliders tune tile size (192–768px), blur kernel, sampling scale.
-- Numerical engine [funcs.py](../funcs.py): GDAL materialization, tiling, CNN inference via TorchScript model_provider, scikit-learn KMeans with optional torch GPU assignment, latent KNN refine, legacy blur smoothing, cancellation token checks. Rendering writes GeoTIFF via [qgis_funcs.py](../qgis_funcs.py) preserving CRS/extent.
-- Dependency bootstrap: [dependency_manager.py](../dependency_manager.py) installs torch/numpy/scikit-learn into vendor unless `SEGMENTER_SKIP_AUTO_INSTALL`; torch index/spec overridable. Despite numpy-only intent, plugin imports torch on load for the current legacy path.
+- UI/task flow in [segmenter.py](../segmenter.py): validates GDAL layer (.tif/.tiff, provider gdal, 3 bands), parses segment count/resolution, builds post-smoothing/heuristic overrides, dispatches QgsTask to `execute_cnn_segmentation` (TorchScript) or `execute_kmeans_segmentation` [funcs.py](../funcs.py). Device preference CUDA→MPS→CPU; sliders tune tile size (192–768px), blur kernel, sampling scale.
+- Numerical engine [funcs.py](../funcs.py): GDAL materialization, tiling, CNN inference via TorchScript model_provider, torch-only K-Means, latent KNN refine, chunked smoothing, optional post-smoothing, cancellation token checks. Rendering writes GeoTIFF via [qgis_funcs.py](../qgis_funcs.py) preserving CRS/extent.
+- Dependency bootstrap: [dependency_manager.py](../dependency_manager.py) installs torch/numpy into vendor unless `SEGMENTER_SKIP_AUTO_INSTALL`; torch index/spec overridable. Plugin imports torch on load for the current execute_* path.
 
 ## Artifacts and File Layouts
-- Legacy runtime weights: TorchScript models `models/model_4/8/16.pth` loaded by UI resolution choice.
+- Runtime weights: TorchScript models `models/model_4/8/16.pth` loaded by UI resolution choice.
 - Next-gen runtime artifacts (numpy) in [model/best](../model/best) (`model.npz`, `meta.json`, `metrics.json`) produced by training/export; not consumed by plugin.
 - Processed shards: `training/datasets/processed/<split>/<dataset>/shard-xxxxx/{inputs,targets}/`, `index.jsonl`, summary JSON under `metadata/` [training/datasets/build_shards.py](../training/datasets/build_shards.py).
 - Headers under [training/datasets/headers](../training/datasets/headers); fallback extracted/processed sample data under [training/datasets/data](../training/datasets/data).
 - Logs/exports: training writes TensorBoard to `checkpoint_dir/tb`; best numpy export to `model/best` plus mirror `training/best_model` if configured.
 
 ## Dependency/Tooling Surface
-- Plugin deps: torch, numpy, scikit-learn auto-installed via [dependency_manager.py](../dependency_manager.py); GDAL required for raster IO/render.
+- Plugin deps: torch, numpy auto-installed via [dependency_manager.py](../dependency_manager.py); GDAL required for raster IO/render.
 - Training deps: PyTorch (CUDA/MPS aware), tensorboard, numpy; rasterio for shard/patch loading; yaml for header generation (optional), json/rasterio in build_shards; tests assume rasterio and torch available.
 - Ingestion scaffold is pure-Python, no network/GDAL invoked; GDAL helpers in [scripts/data/_gdal_utils.py](../scripts/data/_gdal_utils.py) rely on osgeo.
 
@@ -59,14 +59,14 @@ Copyright (c) 2026 Quant Civil
 - Stochastic elements: data aug flips/rotations/noise, per-step knob sampling, DataLoader worker partitioning, torch nondeterminism on GPU; shard caching order depends on worker sharding; teacher loading may vary (DINO download fallback to FakeTeacher).
 
 ## Current Test Inventory
-- Runtime/export: [tests/test_export_to_numpy_runtime.py](../tests/test_export_to_numpy_runtime.py), [tests/test_numpy_runtime_tiling.py](../tests/test_numpy_runtime_tiling.py), [tests/test_funcs_runtime.py](../tests/test_funcs_runtime.py), [tests/test_runtime_invariants.py](../tests/test_runtime_invariants.py) (legacy runtime expectations), [tests/test_runtime_backend_selection.py](../tests/test_runtime_backend_selection.py), [tests/test_runtime_torch_gpu.py](../tests/test_runtime_torch_gpu.py), [tests/test_runtime_smoke_export.py](../tests/test_runtime_smoke_export.py), [tests/test_plugin_imports.py](../tests/test_plugin_imports.py), optional QGIS smoke [tests/test_qgis_runtime_smoke.py](../tests/test_qgis_runtime_smoke.py) (skip unless QGIS available).
+- Runtime/export: [tests/test_export_to_numpy_runtime.py](../tests/test_export_to_numpy_runtime.py), [tests/test_numpy_runtime_tiling.py](../tests/test_numpy_runtime_tiling.py), [tests/test_funcs_runtime.py](../tests/test_funcs_runtime.py), [tests/test_runtime_invariants.py](../tests/test_runtime_invariants.py) (runtime expectations), [tests/test_runtime_backend_selection.py](../tests/test_runtime_backend_selection.py), [tests/test_runtime_torch_gpu.py](../tests/test_runtime_torch_gpu.py), [tests/test_runtime_smoke_export.py](../tests/test_runtime_smoke_export.py), [tests/test_plugin_imports.py](../tests/test_plugin_imports.py), optional QGIS smoke [tests/test_qgis_runtime_smoke.py](../tests/test_qgis_runtime_smoke.py) (skip unless QGIS available).
 - Training: [training/tests/test_model_shapes.py](../training/tests/test_model_shapes.py), [training/tests/test_losses.py](../training/tests/test_losses.py), [training/tests/test_smoke_train.py](../training/tests/test_smoke_train.py), [training/tests/test_synthetic.py](../training/tests/test_synthetic.py), distillation tests [training/tests/test_student_embed.py](../training/tests/test_student_embed.py), [training/tests/test_teacher_fallback.py](../training/tests/test_teacher_fallback.py), shard loader/caching/IoU tests [training/tests/test_sharded_dataset_loader.py](../training/tests/test_sharded_dataset_loader.py), [training/tests/test_metrics_iou_ignore_zero.py](../training/tests/test_metrics_iou_ignore_zero.py).
 - Dataset headers/shards: [training/datasets/tests/test_pipeline.py](../training/datasets/tests/test_pipeline.py), [training/datasets/tests/test_dataset_generators.py](../training/datasets/tests/test_dataset_generators.py).
 - Ingestion scaffold stub: [tests/test_datasets_ingest_stub.py](../tests/test_datasets_ingest_stub.py).
 - Alignment/GDAL helpers: [tests/test_alignment_invariants.py](../tests/test_alignment_invariants.py).
 
 ## Coverage Risk Register
-- Plugin runtime depends on QGIS/GDAL/PyQt; default pytest suite must avoid importing QGIS (some tests optional). Legacy TorchScript path conflicts with stated numpy-only invariant; risk of regressions when switching runtimes.
+- Plugin runtime depends on QGIS/GDAL/PyQt; default pytest suite must avoid importing QGIS (some tests optional). TorchScript execute_* path still differs from the deferred numpy runtime; switching runtimes remains a regression risk.
 - GDAL/rasterio IO in shard/patch loaders and build_shards requires sample data; hard to exercise without fixtures. Large file copies in shard builder not unit-tested beyond dry-run.
 - Distillation path depends on optional DINOv2 download; fallback mitigates but coverage limited to fake teacher.
 - Latent KNN, GPU paths, and torch-accelerated KMeans assignments in [funcs.py](../funcs.py) are complex and lightly covered.
@@ -80,6 +80,6 @@ Copyright (c) 2026 Quant Civil
 - Optional QGIS integration (skip-gated): plugin layer validation, task cancellation/progress parsing, render_raster CRS/extent preservation, UI wiring.
 
 ## Spec Gaps / Ambiguities
-- Declared invariant says plugin runtime should be numpy-only, but current code/doc flow uses TorchScript CNN + scikit-learn; future migration path and timing are unclear.
+- Declared invariant says plugin runtime should be numpy-only, but current code/doc flow uses TorchScript CNN + torch K-Means; future migration path and timing are unclear.
 - `DataConfig.manifest_path` is unused; ingestion scaffold does not realize manifests into shards yet.
 - Distillation path produces training checkpoints only; export/runtime expectations for student model are not defined.

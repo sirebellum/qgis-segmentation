@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: BSD-3-Clause
+# Copyright (c) 2026 Quant Civil
+
 """Utilities for on-demand dependency installation inside QGIS."""
 from __future__ import annotations
 
@@ -22,12 +25,17 @@ except Exception:  # pragma: no cover - PyQt unavailable in tests
     QMessageBox = None
     QThread = None
 
-_VENDOR_DIR = Path(__file__).resolve().parent / "vendor"
+_PLUGIN_DIR = Path(__file__).resolve().parent
+_VENDOR_DIR = _PLUGIN_DIR / "vendor"
 _VENDOR_DIR.mkdir(exist_ok=True)
 _vendor_str = str(_VENDOR_DIR)
 while _vendor_str in sys.path:
     sys.path.remove(_vendor_str)
 sys.path.append(_vendor_str)
+
+_plugin_str = str(_PLUGIN_DIR)
+if _plugin_str not in sys.path:
+    sys.path.append(_plugin_str)
 
 _PIP_BOOTSTRAP_DIR = _VENDOR_DIR / "_pip_bootstrap"
 _PIP_BOOTSTRAP_DIR.mkdir(exist_ok=True)
@@ -82,11 +90,6 @@ def _package_specs() -> Iterable[Dict[str, object]]:
             "import": "numpy",
             "pip": "numpy>=1.23,<2.0",
             "label": "NumPy",
-        },
-        {
-            "import": "sklearn",
-            "pip": "scikit-learn>=1.1,<2.0",
-            "label": "scikit-learn",
         },
     ]
     return specs

@@ -59,8 +59,8 @@ ensure_dependencies()
 import torch
 import numpy as np
 from .funcs import (
-    legacy_kmeans_segmentation,
-    legacy_cnn_segmentation,
+    execute_kmeans_segmentation,
+    execute_cnn_segmentation,
     SegmentationCanceled,
 )
 from .qgis_funcs import render_raster
@@ -592,7 +592,7 @@ class Segmenter:
             "latent_knn": latent_cfg,
         }
 
-    def _legacy_blur_config(self, resolution_label: Optional[str] = None) -> dict:
+    def _blur_config(self, resolution_label: Optional[str] = None) -> dict:
         heuristics = self._collect_heuristics(resolution_label)
         smooth = heuristics["smoothness"]
         kernel = int(np.round(np.interp(smooth, [0.0, 1.0], [1, 7])))
@@ -808,7 +808,7 @@ class Segmenter:
         resolution_label = str(resolution_label).strip().lower()
         resolution = RESOLUTION_VALUE_MAP.get(resolution_label, RESOLUTION_VALUE_MAP[DEFAULT_RESOLUTION_LABEL])
 
-        blur_config = self._legacy_blur_config(resolution_label)
+        blur_config = self._blur_config(resolution_label)
         heuristics = self._collect_heuristics(resolution_label)
         heuristic_overrides = self._build_heuristic_overrides(resolution_label)
         self.log_status(
@@ -817,7 +817,7 @@ class Segmenter:
             )
         )
         self.log_status(
-            f"Legacy blur configured: {blur_config['kernel_size']}px kernel, {blur_config['iterations']} pass(es)."
+            f"Post-smoothing configured: {blur_config['kernel_size']}px kernel, {blur_config['iterations']} pass(es)."
         )
         tile_override = heuristic_overrides.get("tile_size") if heuristic_overrides else None
         if isinstance(tile_override, (int, float)):
@@ -854,36 +854,39 @@ class Segmenter:
         func = None
         args = ()
         if self.model == "kmeans":
-            func = legacy_kmeans_segmentation
+            func = execute_kmeans_segmentation
             args = (
                 raster_source,
                 num_segments,
                 effective_resolution,
+                None,
                 self.worker_status,
-                blur_config,
+                None,
                 sample_scale,
                 self.device,
             )
         elif self.model == "cnn":
-            func = legacy_cnn_segmentation
+            func = execute_cnn_segmentation
             model_provider = lambda: self.load_model(resolution)
             args = (
                 model_provider,
                 raster_source,
                 num_segments,
+                None,
                 TILE_SIZE,
                 self.device,
                 self.worker_status,
-                blur_config,
-                heuristic_overrides,
                 resolution_label,
+                heuristic_overrides,
+                None,
+                blur_config,
             )
         else:
             self.log_status(f"Unsupported model selection: {self.model}")
             self._reset_progress_bar()
             return
 
-        self._update_overall_progress("queue", 90, "Dispatching legacy segmentation task...")
+        self._update_overall_progress("queue", 90, "Dispatching segmentation task...")
         self.log_status(
             f"Queued {self.model.upper()} segmentation with {num_segments} segments at {self.dlg.inputRes.currentText()} resolution."
         )
@@ -1026,7 +1029,7 @@ class Segmenter:
             self.dlg.inputBox.clear()
             self._flush_status_buffer()
             self.log_status(gpu_msg)
-            self.log_status("Legacy segmentation mode active with blur post-processing.")
+            self.log_status("Segmentation runtime active with optional post-smoothing.")
 
             # Attach inputs
             self.dlg.inputBox.textChanged.connect(self.submit)

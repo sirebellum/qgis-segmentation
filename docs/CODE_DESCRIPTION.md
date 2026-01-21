@@ -6,12 +6,13 @@ Copyright (c) 2026 Quant Civil
 
 - Purpose: concise registry of modules and their current phase of stewardship (replaces CODE_SCRIPTURE.md).
 
-## Runtime (current — legacy TorchScript + K-Means)
-- segmenter.py / segmenter_dialog.py / segmenter_dialog_base.ui: QGIS UI + task dispatch for the legacy runtime; validates 3-band GDAL GeoTIFFs and segment count; builds heuristic/blur overrides and queues `legacy_cnn_segmentation` or `legacy_kmeans_segmentation` via `QgsTask`.
-- funcs.py: numerical engine for legacy flows (materialize/tiling/stitching, cancellation/status helpers); TorchScript CNN path via `predict_cnn`, scikit-learn K-Means via `predict_kmeans`, optional torch-accelerated cluster assignment, and optional blur smoothing. Next-gen helpers remain but are not invoked by the plugin.
+## Runtime (current — execute_* pipeline)
+- segmenter.py / segmenter_dialog.py / segmenter_dialog_base.ui: QGIS UI + task dispatch for the active runtime; validates 3-band GDAL GeoTIFFs and segment count; builds heuristic/post-smoothing overrides and queues `execute_cnn_segmentation` or `execute_kmeans_segmentation` via `QgsTask`.
+- funcs.py: backward-compatibility facade that re-exports the numerical engine from the `runtime/` package for the `execute_*` pipelines.
+- runtime/: split numerical engine (materialize/tiling/stitching, cancellation/status, adaptive settings, chunking, smoothing, latent KNN, CNN tiling/prefetch, torch K-Means, pipeline glue).
 - models/: packaged TorchScript CNN weights (`model_4/8/16.pth`) loaded by `segmenter.load_model`. Next-gen numpy artifacts under model/best exist for future work but are unused.
 - qgis_funcs.py: GDAL render to GeoTIFF + layer registration.
-- dependency_manager.py / raster_utils.py: dependency bootstrap (torch, NumPy, scikit-learn) with env overrides and array utilities; adaptive batching uses static defaults (no profiling shim).
+- dependency_manager.py / raster_utils.py: dependency bootstrap (torch, NumPy) with env overrides and array utilities; adaptive batching uses static defaults (no profiling shim).
 - model/runtime_backend.py / model/runtime_numpy.py / model/runtime_torch.py: future runtime selector + numpy/torch implementations for the new model type — present but not wired into the current plugin; update deferred until the new model is trained.
 - model/README.md: artifact contract for the deferred next-gen runtime.
 
@@ -61,7 +62,7 @@ Copyright (c) 2026 Quant Civil
 - [tests/test_qgis_runtime_smoke.py](../../tests/test_qgis_runtime_smoke.py): optional QGIS import smoke (skips unless `QGIS_TESTS=1`).
 
 ## Notes
-- Current runtime uses the legacy TorchScript CNN + K-Means path; next-gen numpy runtime artifacts/selectors remain present but are deferred until the new model is trained.
+- Current runtime uses the execute_* pipeline (TorchScript CNN + torch K-Means with chunked aggregation); next-gen numpy runtime artifacts/selectors remain present but are deferred until the new model is trained.
 - Real raster IO in training is stubbed behind optional rasterio/gdal; synthetic paths remain the CI-safe default.
 
 ## Ops (Phase 10)

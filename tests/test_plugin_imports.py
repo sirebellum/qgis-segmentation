@@ -37,6 +37,8 @@ def test_runtime_uses_relative_imports_only():
 
     offenders = []
     for path in runtime_files:
+        if not path.exists():
+            continue
         text = path.read_text()
         for pattern in patterns:
             if pattern in text:

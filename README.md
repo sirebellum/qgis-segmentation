@@ -10,11 +10,11 @@ Not anymore! Introducing the machine learning powered qgis plugin that will chan
 
 ## Dependencies
 
-Segmenter now ships with a lightweight dependency bootstrapper. When the plugin loads it checks for `torch`, `scikit-learn`, and `numpy` and, if they are missing, installs them into `<plugin>/vendor` using the Python interpreter that ships with QGIS. This keeps the QGIS installation untouched while ensuring the models can run.
+Segmenter now ships with a lightweight dependency bootstrapper. When the plugin loads it checks for `torch` and `numpy` and, if they are missing, installs them into `<plugin>/vendor` using the Python interpreter that ships with QGIS. This keeps the QGIS installation untouched while ensuring the models can run.
 
 The default PyTorch spec is chosen automatically based on the Python runtime that QGIS embeds (Python 3.13 gets a `torch>=2.5.1,<3.0` constraint, Python 3.12 uses `torch>=2.3.1,<3.0`, and older versions stay on `torch==2.2.2`). Override this behaviour anytime with `SEGMENTER_TORCH_SPEC="torch==<version>"` if you need to pin a particular wheel.
 
-On macOS we also set `KMP_DUPLICATE_LIB_OK=TRUE` and `OMP_NUM_THREADS=1` before loading PyTorch/scikit-learn to avoid the `libomp` duplication crash that can occur when the plugin spins up OpenMP workloads inside the QGIS process.
+On macOS we also set `KMP_DUPLICATE_LIB_OK=TRUE` and `OMP_NUM_THREADS=1` before loading PyTorch to avoid the `libomp` duplication crash that can occur when the plugin spins up OpenMP workloads inside the QGIS process.
 
 On macOS the installer defaults to the CPU build of PyTorch. Windows and Linux systems default to the CUDA 12.1 build so that GPU acceleration remains available; set `SEGMENTER_TORCH_INDEX_URL` or `SEGMENTER_TORCH_SPEC` in the environment before starting QGIS to pin a different wheel. Set `SEGMENTER_SKIP_AUTO_INSTALL=1` if you prefer to manage dependencies yourself.
 
@@ -37,7 +37,6 @@ subprocess.check_call([
 	"pip",
 	"install",
 	"torch>=2.5.1,<3.0",
-	"scikit-learn>=1.1,<2.0",
 	"numpy>=1.23,<2.0",
 	"--target",
 	r"/path/to/segmenter/vendor",

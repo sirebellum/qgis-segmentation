@@ -14,6 +14,9 @@
  This script initializes the plugin, making it known to QGIS.
 """
 
+from pathlib import Path
+import sys
+
 
 # noinspection PyPep8Naming
 def classFactory(iface):  # pylint: disable=invalid-name
@@ -22,6 +25,8 @@ def classFactory(iface):  # pylint: disable=invalid-name
     :param iface: A QGIS interface instance.
     :type iface: QgsInterface
     """
-    #
+    plugin_root = str(Path(__file__).resolve().parent)
+    if plugin_root not in sys.path:
+        sys.path.append(plugin_root)
     from .segmenter import Segmenter
     return Segmenter(iface)
