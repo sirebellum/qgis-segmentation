@@ -5,6 +5,7 @@
 - Supports shard-backed GeoTIFF patches with precomputed SLIC labels (required).
 - Losses: feature/affinity distill (optional), clustering shaping, SLIC boundary priors,
   edge-aware TV, and scale-neutral EMA normalization across patch sizes.
+- Autoencoder reconstruction loss (optional): low-pass RGB + gradient consistency.
 """
 from __future__ import annotations
 
@@ -30,6 +31,13 @@ from .losses_distill import (
     feature_distillation,
     geometric_mean_normalized,
     normalize_with_ema,
+)
+from .losses_recon import (
+    TinyReconDecoder,
+    build_recon_targets,
+    reconstruction_loss,
+    update_recon_ema,
+    apply_recon_loss,
 )
 from .models.student_cnn import StudentEmbeddingNet, batched_kmeans
 from .teachers.teacher_base import FakeTeacher, TeacherBase
@@ -205,6 +213,13 @@ def main():
     parser.add_argument("--lambda-boundary", type=float, default=None, help="Weight for boundary encouragement across SLIC edges")
     parser.add_argument("--lambda-antimerge", type=float, default=None, help="Weight for edge-strength anti-merge term")
     parser.add_argument("--lambda-within", type=float, default=None, help="Weight for within-superpixel smoothness")
+    # Autoencoder reconstruction loss (training-only, enabled by default)
+    parser.add_argument("--disable-autoencoder", action="store_true", help="Disable training-only autoencoder reconstruction loss")
+    parser.add_argument("--ae-lambda", type=float, default=None, help="Autoencoder loss coefficient (default 0.01)")
+    parser.add_argument("--ae-ema-decay", type=float, default=None, help="EMA decay for autoencoder loss normalization")
+    parser.add_argument("--ae-blur-sigma", type=float, default=None, help="Gaussian blur sigma for low-pass target")
+    parser.add_argument("--ae-grad-weight", type=float, default=None, help="Relative weight for gradient vs blur loss")
+    parser.add_argument("--ae-detach-backbone", action="store_true", help="Detach backbone features from autoencoder grad")
     args = parser.parse_args()
 
     cfg = default_config() if args.config is None else default_config()  # future: load overrides
@@ -250,6 +265,19 @@ def main():
         cfg.distill.antimerge_weight = args.lambda_antimerge
     if args.lambda_within is not None:
         cfg.distill.within_weight = args.lambda_within
+    # Autoencoder config overrides (enabled by default, --disable-autoencoder turns it off)
+    if args.disable_autoencoder:
+        cfg.autoencoder.enabled = False
+    if args.ae_lambda is not None:
+        cfg.autoencoder.lambda_recon = args.ae_lambda
+    if args.ae_ema_decay is not None:
+        cfg.autoencoder.ema_decay = args.ae_ema_decay
+    if args.ae_blur_sigma is not None:
+        cfg.autoencoder.blur_sigma = args.ae_blur_sigma
+    if args.ae_grad_weight is not None:
+        cfg.autoencoder.grad_weight = args.ae_grad_weight
+    if args.ae_detach_backbone:
+        cfg.autoencoder.detach_backbone = True
     set_seed(cfg.train.seed)
 
     teacher: Optional[TeacherBase] = None
@@ -265,6 +293,15 @@ def main():
         dropout=cfg.student.dropout,
     ).to(student_device)
 
+    # Create decoder only if autoencoder is enabled (training-only)
+    decoder: Optional[TinyReconDecoder] = None
+    if cfg.autoencoder.enabled:
+        decoder = TinyReconDecoder(
+            in_channels=student.pre_proj_channels,
+            hidden_channels=cfg.autoencoder.hidden_channels,
+            num_blocks=cfg.autoencoder.num_blocks,
+        ).to(student_device)
+
     patch_sizes = _resolve_patch_sizes(cfg, patch_sizes_override)
     loaders = {size: _build_loader(cfg, size, student_device, split=cfg.data.train_split, include_targets=False) for size in patch_sizes}
     iters = {size: iter(loader) for size, loader in loaders.items()}
@@ -276,7 +313,11 @@ def main():
         except Exception:
             val_loader = None
 
-    opt = torch.optim.Adam(student.parameters(), lr=cfg.train.lr, weight_decay=cfg.train.weight_decay)
+    # Include decoder params in optimizer if enabled
+    params_to_optimize = list(student.parameters())
+    if decoder is not None:
+        params_to_optimize.extend(decoder.parameters())
+    opt = torch.optim.Adam(params_to_optimize, lr=cfg.train.lr, weight_decay=cfg.train.weight_decay)
     scaler = torch.cuda.amp.GradScaler(enabled=(student_device.type == "cuda"))
 
     logdir = Path(args.logdir)
@@ -302,7 +343,13 @@ def main():
                 rgb = batch["rgb"].to(student_device)
                 slic = batch["slic"].to(student_device)
 
-                emb = student(rgb)
+                # Forward with optional feature return for autoencoder
+                if decoder is not None:
+                    emb, pre_proj_feat = student(rgb, return_features=True)
+                else:
+                    emb = student(rgb)
+                    pre_proj_feat = None
+                    
                 fd = torch.tensor(0.0, device=student_device)
                 ad = torch.tensor(0.0, device=student_device)
                 if teacher is not None:
@@ -339,6 +386,40 @@ def main():
                 )
                 raw_total = fd + ad + cl + tv + priors["boundary"] + priors["antimerge"] + priors["smooth_within"]
 
+                # Autoencoder reconstruction loss (training-only)
+                ae_loss_raw = torch.tensor(0.0, device=student_device)
+                ae_loss_norm = torch.tensor(0.0, device=student_device)
+                ae_loss_blur = torch.tensor(0.0, device=student_device)
+                ae_loss_grad = torch.tensor(0.0, device=student_device)
+                if decoder is not None and pre_proj_feat is not None:
+                    # Optionally detach backbone features
+                    feat_for_decoder = pre_proj_feat.detach() if cfg.autoencoder.detach_backbone else pre_proj_feat
+                    pred_rgb = decoder(feat_for_decoder)
+                    # Build targets from augmented RGB
+                    recon_targets = build_recon_targets(
+                        rgb,
+                        stride=student.output_stride,
+                        blur_sigma=cfg.autoencoder.blur_sigma,
+                        blur_kernel=cfg.autoencoder.blur_kernel,
+                    )
+                    recon_losses = reconstruction_loss(
+                        pred_rgb,
+                        recon_targets,
+                        grad_weight=cfg.autoencoder.grad_weight,
+                    )
+                    ae_loss_raw = recon_losses["recon_raw"]
+                    ae_loss_blur = recon_losses["recon_blur"]
+                    ae_loss_grad = recon_losses["recon_grad"]
+                    ae_loss_norm, ema_state = update_recon_ema(
+                        ema_state,
+                        ae_loss_raw,
+                        key="recon_ema",
+                        decay=cfg.autoencoder.ema_decay,
+                        eps=1e-8,
+                    )
+                    ae_contrib = apply_recon_loss(ae_loss_norm, cfg.autoencoder.lambda_recon)
+                    raw_total = raw_total + ae_contrib
+
                 scale_key = f"patch_{size}"
                 norm_total, ema_state = normalize_with_ema(
                     raw_total, ema_state, scale_key, cfg.distill.ema_decay, cfg.distill.merge_eps
@@ -355,6 +436,10 @@ def main():
                     "boundary": priors["boundary"].detach(),
                     "antimerge": priors["antimerge"].detach(),
                     "within": priors["smooth_within"].detach(),
+                    "ae_raw": ae_loss_raw.detach(),
+                    "ae_norm": ae_loss_norm.detach(),
+                    "ae_blur": ae_loss_blur.detach(),
+                    "ae_grad": ae_loss_grad.detach(),
                 }
 
             loss = sum(norm_losses) / float(max(1, len(norm_losses)))
@@ -382,6 +467,11 @@ def main():
             msg[f"patch{size}_boundary"] = float(parts["boundary"].cpu())
             msg[f"patch{size}_antimerge"] = float(parts["antimerge"].cpu())
             msg[f"patch{size}_within"] = float(parts["within"].cpu())
+            # Autoencoder metrics (logged regardless of enabled for consistent schema)
+            msg[f"patch{size}_ae_raw"] = float(parts["ae_raw"].cpu())
+            msg[f"patch{size}_ae_norm"] = float(parts["ae_norm"].cpu())
+            msg[f"patch{size}_ae_blur"] = float(parts["ae_blur"].cpu())
+            msg[f"patch{size}_ae_grad"] = float(parts["ae_grad"].cpu())
         with log_path.open("a") as f:
             f.write(json.dumps(msg) + "\n")
         if step % 10 == 0:
@@ -409,7 +499,15 @@ def main():
             with (logdir / "val_metrics.json").open("w") as handle:
                 json.dump(summary, handle)
 
+    # Save student weights only (decoder excluded from deployment artifact)
     torch.save({"student": student.state_dict()}, logdir / "student.pt")
+    
+    # Optionally save decoder separately for debugging (training-only, clearly marked)
+    if decoder is not None:
+        torch.save(
+            {"decoder": decoder.state_dict(), "_training_only": True},
+            logdir / "decoder_training_only.pt",
+        )
 
 
 if __name__ == "__main__":  # pragma: no cover - CLI entry

@@ -65,6 +65,7 @@ class StudentEmbeddingNet(nn.Module):
         self.groups = groups
         self.dropout = dropout
         base = max(64, embed_dim)
+        self.pre_proj_channels = base  # exposed for decoder
 
         # Two stride-2 stems to reach stride 4.
         self.stem = nn.Sequential(
@@ -89,7 +90,18 @@ class StudentEmbeddingNet(nn.Module):
         self.refine = VGGBlock3x3(embed_dim, depth=1, norm=norm, groups=groups, dropout=dropout)
         self.output_stride = 4
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, *, return_features: bool = False):
+        """Forward pass with optional pre-projection feature return.
+        
+        Args:
+            x: RGB input [B,3,H,W]
+            return_features: if True, return (embeddings, pre_proj_features)
+                for use by training-only reconstruction decoder
+                
+        Returns:
+            embeddings [B,embed_dim,H/4,W/4] if return_features=False
+            (embeddings, features) tuple if return_features=True
+        """
         if x.dim() != 4 or x.shape[1] != 3:
             raise ValueError("Expected rgb BCHW with 3 channels")
         if x.shape[-1] % self.output_stride != 0 or x.shape[-2] % self.output_stride != 0:
@@ -97,8 +109,12 @@ class StudentEmbeddingNet(nn.Module):
 
         feat = self.stem(x)
         feat = self.body(feat)
+        # feat is now the pre-projection feature map at stride-4
         emb = self.head(feat)
         emb = self.refine(emb)
+        
+        if return_features:
+            return emb, feat
         return emb
 
     @staticmethod

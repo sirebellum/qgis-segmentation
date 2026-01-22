@@ -103,3 +103,10 @@ Copyright (c) 2026 Quant Civil
 - Commands: `python -m compileall .`; `python -m pytest -q`.
 - Validation: compileall succeeded; pytest failed in system Python (`No module named pytest`).
 - Risks/Notes: Re-run pytest under the repo venv to validate the updated test.
+
+## Phase 13 — Training-only autoencoder reconstruction loss (2026-01-21)
+- Summary: Added training-only auxiliary reconstruction loss (Option C + D) with tiny decoder, low-pass RGB + gradient consistency targets, EMA-normalized weighting, and decoder excluded from deployment artifacts; updated student model to optionally return pre-projection features; added comprehensive tests (27 new tests covering targets, gradients, decoder shape, training-step integration, and training-only separation); updated training README and docs.
+- Files Touched: training/losses_recon.py (new), training/models/student_cnn.py, training/config.py, training/train_distill.py, training/tests/test_autoencoder_losses.py (new), training/README.md, docs/CODE_DESCRIPTION.md, docs/AGENTIC_HISTORY.md.
+- Commands: `python -m compileall .`; `.venv/bin/python -m pytest -q`.
+- Validation: compileall succeeded; pytest green (140 passed, 10 skipped); autoencoder tests all pass (27 tests).
+- Risks/Notes: Autoencoder is disabled by default (`autoencoder.enabled=false`); decoder is explicitly excluded from student.pt artifact and saved separately as `decoder_training_only.pt`; lambda_recon=0.01 keeps it from dominating clustering/distillation losses.

@@ -87,6 +87,15 @@ Copyright (c) 2026 Quant Civil
 - Introduced training-only teacher adapters (`training/teachers/teacher_base.py`, `training/teachers/dinov2.py`) with a fake fallback for offline tests; teachers stay out of runtime code.
 - Added lightweight student embedding model (`training/models/student_cnn.py`) and distillation/clustering losses (`training/losses_distill.py`), plus CLI trainer (`training/train_distill.py`). Runtime remains the legacy TorchScript path until the student is production-ready.
 
+## Training (Phase 29 — Autoencoder reconstruction loss)
+- Purpose: training-only auxiliary loss encouraging blob/shape fidelity via low-pass RGB reconstruction and gradient/edge consistency at stride-4.
+- Added `training/losses_recon.py`: `TinyReconDecoder` (2-block conv decoder producing stride-4 RGB), `sobel_gradients()` (fixed Sobel kernels for edge detection), `gaussian_blur_2d()`, `build_recon_targets()`, `reconstruction_loss()` (L1 on blurred RGB + gradient magnitude), and `update_recon_ema()`/`apply_recon_loss()` for EMA-normalized weighting.
+- Modified `training/models/student_cnn.py`: added `return_features=True` option and `pre_proj_channels` attribute for decoder compatibility.
+- Added `training/config.py`: `AutoencoderLossConfig` dataclass with knobs (enabled, lambda_recon, ema_decay, blur_sigma, blur_kernel, grad_weight, detach_backbone, hidden_channels, num_blocks).
+- Updated `training/train_distill.py`: CLI overrides (`--enable-autoencoder`, `--ae-lambda`, etc.), decoder instantiation when enabled, reconstruction loss computation with EMA normalization, logging, and separate decoder checkpoint (`decoder_training_only.pt`).
+- Tests: `training/tests/test_autoencoder_losses.py` (27 tests covering targets, gradients, decoder shape, EMA, training-step integration, and training-only separation).
+- Runtime: untouched; decoder is training-only and excluded from student.pt deployment artifact.
+
 ## Ops (Phase 14 — history reset + ingest scaffold)
 - Re-wrote [docs/AGENTIC_HISTORY.md](AGENTIC_HISTORY.md) to phase 0 for current code state.
 - Seeded dataset ingestion scaffold under [scripts/datasets_ingest](../scripts/datasets_ingest) (config, interfaces, manifest validation, provider stubs, CLI); scaffold is offline-only and performs no network/GDAL work.

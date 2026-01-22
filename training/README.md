@@ -47,3 +47,21 @@ Copyright (c) 2026 Quant Civil
 - Losses per slice: feature + affinity distill against the teacher (resized per slice), soft k-means pseudo labels, edge-aware TV; optional cross-resolution consistency on assignments. Losses are merged scale-neutrally via EMA-normalized geometric mean with a separate EMA-normalized consistency term.
 - Knobs: `student.*` (dims/depths/norm/dropout, enable/disable), `distill.*` (cluster iters/temperature, affinity sample, EMA decay/eps, weights). CLI overrides: `--disable-multires`, `--student-dims`, `--student-depths`, `--student-norm`, `--consistency-weight`, `--ema-decay`, `--cluster-iters`.
 - Runtime: untouched; distillation remains training-only.
+
+## Autoencoder reconstruction loss (training-only)
+- Purpose: auxiliary loss encouraging blob/shape fidelity via low-pass RGB reconstruction and gradient/edge consistency at stride-4.
+- Architecture: tiny training-only decoder (`TinyReconDecoder`) takes pre-projection features from student backbone and produces stride-4 RGB predictions. Decoder is excluded from deployment artifacts.
+- Targets: computed from the augmented RGB input (the view the model sees), downsampled and blurred with configurable sigma.
+- Loss components (Option C + D):
+  - Low-pass reconstruction: L1 loss between predicted and blurred stride-4 RGB.
+  - Gradient/edge consistency: L1 loss between Sobel gradient magnitudes of predicted and target RGB.
+  - Combined: `L_ae = L_blur + grad_weight * L_grad`, then EMA-normalized.
+- Weighting: small coefficient (`lambda_recon=0.01` default) with EMA-normalized normalization to avoid dominating other losses.
+- Enabled by default: autoencoder reconstruction is now enabled by default. Use `--disable-autoencoder` to turn it off.
+- Knobs: `autoencoder.*` (enabled, lambda_recon, ema_decay, blur_sigma, blur_kernel, grad_weight, detach_backbone, hidden_channels, num_blocks).
+- CLI overrides: `--disable-autoencoder`, `--ae-lambda`, `--ae-ema-decay`, `--ae-blur-sigma`, `--ae-grad-weight`, `--ae-detach-backbone`.
+- Saved artifacts: decoder saved separately as `decoder_training_only.pt` (clearly marked, not required for deployment).
+
+## Training entrypoints
+- **Unified entrypoint**: `python -m training.train_distill` is the primary training path.
+- **Legacy passthrough**: `python -m training.train` forwards all arguments to `train_distill.py` for backwards compatibility.

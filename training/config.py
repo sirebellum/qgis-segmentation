@@ -78,6 +78,27 @@ class LossConfig:
 
 
 @dataclass
+class AutoencoderLossConfig:
+    """Training-only autoencoder reconstruction loss (Option C + D).
+    
+    This loss encourages structure/blob fidelity via:
+    - Low-pass RGB reconstruction at stride-4 (Option C)
+    - Gradient/edge consistency at stride-4 (Option D)
+    
+    The decoder is training-only and excluded from deployment artifacts.
+    """
+    enabled: bool = True  # on by default
+    lambda_recon: float = 0.01  # small coefficient to avoid dominating
+    ema_decay: float = 0.99  # EMA decay for normalization
+    blur_sigma: float = 1.0  # Gaussian blur sigma for low-pass target
+    blur_kernel: int = 5  # Gaussian kernel size
+    grad_weight: float = 0.2  # relative weight for gradient vs blur loss
+    detach_backbone: bool = False  # if True, detach features from backbone grad
+    hidden_channels: int = 64  # decoder hidden channels
+    num_blocks: int = 2  # number of decoder conv blocks
+
+
+@dataclass
 class TrainConfig:
     lr: float = 3e-4
     weight_decay: float = 1e-4
@@ -150,6 +171,7 @@ class Config:
     data: DataConfig = field(default_factory=DataConfig)
     aug: AugConfig = field(default_factory=AugConfig)
     loss: LossConfig = field(default_factory=LossConfig)
+    autoencoder: AutoencoderLossConfig = field(default_factory=AutoencoderLossConfig)
     train: TrainConfig = field(default_factory=TrainConfig)
     knobs: KnobConfig = field(default_factory=KnobConfig)
     teacher: TeacherConfig = field(default_factory=TeacherConfig)
