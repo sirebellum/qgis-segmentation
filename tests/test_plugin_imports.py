@@ -20,17 +20,15 @@ def test_runtime_uses_relative_imports_only():
         root / "qgis_funcs.py",
         root / "dependency_manager.py",
         root / "raster_utils.py",
-        root / "model" / "__init__.py",
-        root / "model" / "runtime_backend.py",
-        root / "model" / "runtime_numpy.py",
-        root / "model" / "runtime_torch.py",
+        root / "runtime" / "__init__.py",
+        root / "runtime" / "pipeline.py",
+        root / "runtime" / "kmeans.py",
+        root / "runtime" / "cnn.py",
     ]
 
     patterns = [
         "import funcs",
         "from funcs import",
-        "import model",
-        "from model import",
         "import qgis_funcs",
         "from qgis_funcs import",
     ]

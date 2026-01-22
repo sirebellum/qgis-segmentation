@@ -4,19 +4,72 @@ Copyright (c) 2026 Quant Civil
 -->
 # Model Notes
 
-## Inference pipeline (current runtime)
-- Inputs: 3-band GDAL raster layer validated in [segmenter.py](segmenter.py) `_is_supported_raster_layer` (RGB GeoTIFF, provider `gdal`, band count 3). Data materialized via [funcs.py](funcs.py) `_materialize_raster` (numpy array, file path, or loader callable) which loads through GDAL when given a path.
-- Runtime: user selects **CNN** (TorchScript) or **K-Means** in the UI. The plugin now routes to `execute_cnn_segmentation` / `execute_kmeans_segmentation`, which compute adaptive chunk plans, tile/aggregate inference, and apply optional post-smoothing. **CNN and K-Means both fit global centers once per run and stream assignment per chunk (no per-chunk relabeling)** to keep IDs consistent. Texture remap (autoencoder) is available but disabled in the plugin by default.
-- Output: segmentation labels as uint8 numpy array (class IDs start at 0). Rendering writes GeoTIFF via [qgis_funcs.py](qgis_funcs.py) preserving extent/CRS; opacity set to 1.0. No explicit nodata handling beyond padding trim.
+## Plugin Inference Pipeline
 
-## Controls, heuristics, and perf
-- User input: segment count, resolution choice, and sliders for smoothness/speed/accuracy. Sliders influence blur kernel/iterations, CNN tile size (192–768px), sampling scale, and latent KNN overrides.
-- Dependency bootstrap: [dependency_manager.py](dependency_manager.py) installs torch and NumPy into `vendor/` at import time unless `SEGMENTER_SKIP_AUTO_INSTALL` is set; interpreter override via `SEGMENTER_PYTHON`; torch index/spec knobs (`SEGMENTER_TORCH_SPEC`, `SEGMENTER_TORCH_INDEX_URL`).
-- Adaptive settings: static defaults (prefetch depth 2, safety factor 8) from `AdaptiveSettings`; no device profiling beyond the CUDA → MPS → CPU device pick in `segmenter.py`.
+### Inputs
+- 3-band GDAL raster layer validated in `segmenter._is_supported_raster_layer`
+- Must be RGB GeoTIFF (`.tif/.tiff`), provider `gdal`, band count 3
+- Data materialized via `runtime/io._materialize_raster` (GDAL loader)
 
-## Training (unsupervised — implemented, isolated)
-- Status: eager-PyTorch pipeline in [training/](training); exports numpy artifacts for a **future** runtime path, not consumed by the current plugin.
-- Model contract: monolithic model taking RGB only (B,3,512,512) and producing probabilities P ∈ [B,K,512,512] for K ∈ [2,16] plus stride/4 embeddings; differentiable soft k-means/EM head; fast vs learned refinement lanes.
-- Losses: two-view consistency (symmetric KL on warped probabilities), entropy shaping (pixel entropy minimization + marginal entropy maximization), edge-aware smoothness using RGB gradients.
-- Knobs: per-batch random K, downsample factor, cluster_iters, smooth_iters, smoothing lane; optional gradient accumulation.
-- Export/Packaging: `training/train.py` auto-exports best checkpoint (by loss) to numpy artifacts (`model/best` + `training/best_model`) via `training/export.py` (`model.npz`, `meta.json`, `metrics.json`). The plugin currently ships TorchScript models under `models/`; updating the runtime to consume the new artifacts is **deferred until training completes**.
+### Runtime Paths
+User selects **CNN** (TorchScript) or **K-Means** in the UI:
+
+**CNN Path** (`execute_cnn_segmentation`):
+1. Load TorchScript model from `models/model_{resolution}.pth`
+2. Fit global centers once using `fit_global_cnn_centers`
+3. Tile input (default 512px, configurable 192–768px)
+4. Stream assignment per chunk via `predict_cnn_with_centers`
+5. Aggregate chunk scores, apply optional post-smoothing
+6. Stitch and return labels
+
+**K-Means Path** (`execute_kmeans_segmentation`):
+1. Smooth and pool descriptors at resolution
+2. Fit global centers once using torch K-Means
+3. Stream assignment per chunk
+4. Upsample to original resolution
+5. Return labels
+
+Both paths use **global centers** to ensure consistent label IDs across chunks (no per-chunk relabeling).
+
+### Output
+- Segmentation labels as uint8 numpy array (class IDs start at 0)
+- Rendered as GeoTIFF via `qgis_funcs.render_raster` preserving extent/CRS
+- Layer opacity set to 1.0
+
+## Controls and Heuristics
+
+### User Inputs
+- **Segment count**: number of output classes (2–16 typical)
+- **Resolution**: low/medium/high → model_16/8/4.pth
+- **Sliders**: smoothness, speed, accuracy
+
+### Slider Effects
+- **Smoothness**: blur kernel size (1–9px), iterations (1–2)
+- **Speed**: CNN tile size (192–768px), sampling scale
+- **Accuracy**: sampling scale, latent KNN overrides
+
+### Latent KNN (optional)
+Configurable via heuristic overrides:
+- `mix`: soft assignment mixing weight
+- `temperature`: softmax temperature
+- `neighbors`: K for KNN
+- `iterations`: refinement passes
+
+## Dependencies
+- **torch**: required, vendor-installed via `dependency_manager.py`
+- **NumPy**: required, vendor-installed
+- **GDAL**: required for raster IO and rendering (system install)
+- **scikit-learn**: NOT required (removed; K-Means is torch-only)
+
+### Environment Overrides
+- `SEGMENTER_SKIP_AUTO_INSTALL`: skip vendor install
+- `SEGMENTER_PYTHON`: interpreter override
+- `SEGMENTER_TORCH_SPEC`, `SEGMENTER_TORCH_INDEX_URL`: torch wheel selection
+
+## Training (Isolated)
+Training produces artifacts not yet consumed by the plugin:
+- Student embeddings via distillation
+- Autoencoder reconstruction loss (training-only decoder)
+- Exports to numpy artifacts (`model.npz`, `meta.json`, `metrics.json`)
+
+See [training/README.md](../../training/README.md) for training pipeline details.

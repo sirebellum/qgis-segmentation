@@ -18,6 +18,7 @@ Purpose: minimal list of files to upload when generating agentic prompt iteratio
 - docs/training/MODEL_HISTORY.md
 - docs/training/TRAINING_BASELINE.md
 - docs/dataset/DATASETS.md
+- docs/dataset/HEADERS.md
 - training/README.md
 
 ## Regen rules
@@ -27,5 +28,18 @@ Purpose: minimal list of files to upload when generating agentic prompt iteratio
 
 ## Zip archive command
 ```bash
-cd docs && zip agent.zip CODE_DESCRIPTION.md CODESTATE.md AGENTIC_HISTORY.md AGENTIC_REQUIRED.md plugin/ARCHITECTURE.md plugin/MODEL_NOTES.md plugin/RUNTIME_STATUS.md training/TRAINING_PIPELINE.md training/MODEL_HISTORY.md training/TRAINING_BASELINE.md dataset/DATASETS.md ../training/README.md
+cd docs && zip agent.zip CODE_DESCRIPTION.md CODESTATE.md AGENTIC_HISTORY.md AGENTIC_REQUIRED.md plugin/ARCHITECTURE.md plugin/MODEL_NOTES.md plugin/RUNTIME_STATUS.md training/TRAINING_PIPELINE.md training/MODEL_HISTORY.md training/TRAINING_BASELINE.md dataset/DATASETS.md dataset/HEADERS.md ../training/README.md
 ```
+
+## Notes
+The following paths referenced in older docs do NOT exist in the repo:
+- `model/` directory (runtime_numpy.py, runtime_backend.py, runtime_torch.py, README.md)
+- `scripts/datasets_ingest/` (ingestion scaffold CLI and providers)
+- `configs/datasets/` (legacy NAIP/3DEP example configs)
+
+Tests that previously referenced these paths have been removed.
+
+## Test Coverage (current)
+- **Plugin tests** (tests/): 91 passing, 4 skipped (QGIS/GPU gated)
+- **Training tests** (training/tests/): 82 passing
+- **Total**: 173 tests

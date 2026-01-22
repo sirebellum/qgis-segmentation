@@ -2,20 +2,88 @@
 SPDX-License-Identifier: BSD-3-Clause
 Copyright (c) 2026 Quant Civil
 -->
-# Datasets (Rewrite In Progress)
+# Datasets
 
-- Status: Dataset ingestion was redesigned; historical NAIP/DEM loaders were removed. Training now supports shard-backed ingestion (`data.source=shards`) alongside the synthetic default.
-- New header + shard pipeline (v0):
-	- Headers live in [training/datasets/headers](../../training/datasets/headers) and follow the schema in [docs/dataset/HEADERS.md](HEADERS.md).
-	- Generate headers from extracted data: `python -m training.datasets.generate_headers --dataset ms_buildings --dry-run` (inspect) then rerun without `--dry-run`.
-	- Build uncompressed GeoTIFF shards + `index.jsonl`: `python -m training.datasets.build_shards --dataset-id ms_buildings --overwrite --seed 123 --shard-size 512` (outputs under `training/datasets/processed/<dataset>/<split>/shard-xxxxx`).
-	- Labeled items are held out for validation; 25% of labeled tiles feed `metrics_train` (metrics-only) and the rest go to `val`. Unlabeled tiles go to `train`.
-	- Pairing policy: headers accept `pairing.on_missing_input` (`drop_item`|`error`) and `pairing.on_missing_target` (`allow`|`drop_item`|`error`) with defaults `drop_item` + `allow`; target-only tiles are logged and skipped, while inputs lacking targets stay in the shard unless `drop_item`/`error` is set. `pairing.strategy=regex` supports `pairing.stem_regex` for custom stem extraction.
-- Shard contract consumed by the trainer:
-	- Layout: `training/datasets/processed/<dataset_id>/<split>/shard-xxxxx/` containing `inputs/*.tif`, optional `targets/*.tif`, and `index.jsonl`.
-	- `index.jsonl` fields: `dataset_id`, `item_id`, `raw_split`, normalized `split`, `input` (relative path), `has_target`, and optional `target` (relative path). Paths must be relative to the shard directory.
-	- Metrics: targets are ignored by the loss and used only for IoU evaluation; labels `<=0` are masked out so unlabeled/background pixels do not affect scores.
-- Prototype dataset (present in repo): `training/datasets/extracted/ms_buildings` with `sat/*.tiff` (RGB) paired to `map/*.tif` (binary building masks) across `training/val/test` splits. The generated header locks patterns, channel/dtype hints, and IoU ignore rules (`label<=0` ignored). GeoTIFF patches (512x512) are now the primary training input via `training/data/geo_patch_dataset.py`; synthetic data remains a smoke path.
-- Manifest scaffold (unchanged): [scripts/datasets_ingest/README.md](../../scripts/datasets_ingest/README.md) documents the offline-only manifest stubs and CLI; still stub-only and network/GDAL-free.
-- Legacy artifacts: sample configs under [configs/datasets](../../configs/datasets) remain for reference but are not currently wired into the training loaders. GDAL helpers persist in [scripts/data/_gdal_utils.py](../../scripts/data/_gdal_utils.py) for future reuse.
-- Tests: default pytest remains QGIS-free and offline; new dataset tests cover header parsing, shard layout, split determinism, and IoU masking.
+## Status
+Dataset ingestion uses a header + shard pipeline. Training supports shard-backed ingestion (`data.source=shards`) alongside the synthetic default.
+
+## Header + Shard Pipeline
+
+### Headers
+- Location: [training/datasets/headers/](../../training/datasets/headers)
+- Schema: [docs/dataset/HEADERS.md](HEADERS.md)
+- Available headers: `ms_buildings.yaml`, `whu_building.yaml`, `openearth.yaml`, `inria.yaml`
+
+### Generate Headers
+```bash
+# Inspect first
+python -m training.datasets.generate_headers --dataset ms_buildings --dry-run
+
+# Then write
+python -m training.datasets.generate_headers --dataset ms_buildings
+```
+
+### Build Shards
+```bash
+python -m training.datasets.build_shards --dataset-id ms_buildings --overwrite --seed 123 --shard-size 512
+```
+Outputs to `training/datasets/processed/<dataset>/<split>/shard-xxxxx/`.
+
+### Split Policy
+- Labeled items held out for validation
+- 25% of labeled tiles → `metrics_train` (metrics-only)
+- Remaining labeled → `val`
+- Unlabeled tiles → `train`
+
+### Pairing Policy
+Headers accept:
+- `pairing.on_missing_input`: `drop_item` | `error` (default: `drop_item`)
+- `pairing.on_missing_target`: `allow` | `drop_item` | `error` (default: `allow`)
+- `pairing.strategy=regex` with `pairing.stem_regex` for custom stem extraction
+
+## Shard Contract
+
+### Layout
+```
+training/datasets/processed/<dataset_id>/<split>/shard-xxxxx/
+├── inputs/*.tif
+├── targets/*.tif (optional)
+├── slic/*.npz
+└── index.jsonl
+```
+
+### index.jsonl Fields
+- `dataset_id`, `item_id`, `raw_split`, `split`
+- `input`: relative path to input tile
+- `has_target`: boolean
+- `target`: relative path (if present)
+- `slic`: relative path to SLIC labels
+
+### Metrics
+- Targets used only for IoU evaluation (not in loss)
+- Labels ≤0 masked during IoU computation
+
+## SLIC Precompute
+- Superpixels computed during shard build (not at training time)
+- `data.require_slic=true` by default in trainer
+- Fallback to grid if OpenCV contrib unavailable
+
+## Data Sources (Training)
+
+### Synthetic (default)
+```bash
+python -m training.train --synthetic --steps 3 --seed 123
+```
+Random RGB tensors for offline/CI testing.
+
+### Shard-backed
+Set `data.source=shards` in config or via CLI.
+
+### GeoTIFF Patches
+Random windows via `training/data/geo_patch_dataset.py`.
+
+## Tests
+```bash
+.venv/bin/python -m pytest training/tests/ -q
+```
+Covers header parsing, shard layout, split determinism, and IoU masking.
