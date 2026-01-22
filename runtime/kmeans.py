@@ -11,7 +11,15 @@ import torch
 import torch.nn.functional as F
 
 from .adaptive import _derive_chunk_size
-from .common import _distance_compute_dtype, _emit_status, _maybe_raise_cancel, _quantization_device, _runtime_float_dtype, _warn_distance_fallback
+from .chunking import _compute_chunk_starts
+from .common import (
+    _distance_compute_dtype,
+    _emit_status,
+    _maybe_raise_cancel,
+    _quantization_device,
+    _runtime_float_dtype,
+    _warn_distance_fallback,
+)
 from .distance import _argmin_distances_chunked, _assign_labels_tensor, _DISTANCE_CHUNK_ROWS
 from .io import _materialize_raster
 
@@ -20,6 +28,13 @@ def _compute_kmeans_padding(resolution: int, height: int, width: int):
     height_pad = (0, (resolution - (height % resolution)) % resolution)
     width_pad = (0, (resolution - (width % resolution)) % resolution)
     return height_pad, width_pad
+
+
+def _block_grid_shape(height: int, width: int, resolution: int):
+    height_pad, width_pad = _compute_kmeans_padding(resolution, height, width)
+    blocks_h = (height + height_pad[1]) // resolution
+    blocks_w = (width + width_pad[1]) // resolution
+    return blocks_h, blocks_w, height_pad, width_pad
 
 
 def _smooth_and_pool_descriptors(
@@ -86,6 +101,169 @@ def _assign_blocks_chunked(
         compute_dtype,
         chunk_rows=chunk_rows,
     )
+
+
+def _build_label_mapping(centers: np.ndarray) -> np.ndarray:
+    ordering = np.argsort(centers.mean(axis=1))
+    mapping = np.zeros_like(ordering)
+    mapping[ordering] = np.arange(ordering.size)
+    return mapping
+
+
+def _apply_label_mapping(labels_flat: np.ndarray, mapping: Optional[np.ndarray]) -> np.ndarray:
+    if mapping is None:
+        return labels_flat
+    return mapping[labels_flat]
+
+
+def _reorder_centers(centers: np.ndarray, mapping: Optional[np.ndarray]) -> np.ndarray:
+    if mapping is None:
+        return centers
+    ordering = np.argsort(mapping)
+    return centers[ordering]
+
+
+def _block_chunk_plan(height: int, width: int, resolution: int, chunk_plan):
+    blocks_h, blocks_w, height_pad, width_pad = _block_grid_shape(height, width, resolution)
+    if chunk_plan is None:
+        block_chunk = max(1, blocks_h)
+    else:
+        block_chunk = max(1, int(chunk_plan.chunk_size // resolution))
+    block_chunk = min(block_chunk, blocks_h) if blocks_h else block_chunk
+    block_chunk_w = min(block_chunk, blocks_w) if blocks_w else block_chunk
+    y_starts = _compute_chunk_starts(blocks_h, block_chunk, block_chunk)
+    x_starts = _compute_chunk_starts(blocks_w, block_chunk_w, block_chunk_w)
+    return blocks_h, blocks_w, height_pad, width_pad, block_chunk, block_chunk_w, y_starts, x_starts
+
+
+def _fit_global_centers(
+    array: np.ndarray,
+    num_segments: int,
+    resolution: int,
+    chunk_plan,
+    device: torch.device,
+    compute_dtype: torch.dtype,
+    sample_scale: float,
+    status_callback=None,
+    cancel_token=None,
+):
+    height, width = array.shape[1], array.shape[2]
+    blocks_h, blocks_w, height_pad, width_pad, block_chunk_h, block_chunk_w, y_starts, x_starts = _block_chunk_plan(
+        height, width, resolution, chunk_plan
+    )
+    total_blocks = max(1, blocks_h * blocks_w)
+    sample_scale = float(np.clip(sample_scale, 0.3, 2.0))
+    base_cap = 20000
+    max_samples = max(200, int(round(base_cap * sample_scale)))
+    rng = np.random.default_rng(0)
+
+    total_chunks = max(1, len(y_starts) * len(x_starts))
+    remaining = max_samples
+    sampled_chunks = []
+
+    if status_callback:
+        status_callback(
+            f"Global K-Means sampling {min(max_samples, total_blocks)} descriptors across {total_chunks} chunk(s)."
+        )
+
+    for yb in y_starts:
+        for xb in x_starts:
+            _maybe_raise_cancel(cancel_token)
+            yb_end = min(yb + block_chunk_h, blocks_h)
+            xb_end = min(xb + block_chunk_w, blocks_w)
+            y0 = yb * resolution
+            x0 = xb * resolution
+            y1 = min(yb_end * resolution, height)
+            x1 = min(xb_end * resolution, width)
+            chunk = array[:, y0:y1, x0:x1]
+            descriptors, block_shape, _, _ = _smooth_and_pool_descriptors(
+                chunk,
+                resolution,
+                device,
+                compute_dtype,
+                status_callback=None,
+                cancel_token=cancel_token,
+            )
+            chunk_blocks = max(1, block_shape[0] * block_shape[1])
+            target = int(round(max_samples * (chunk_blocks / total_blocks)))
+            target = max(1, target)
+            if remaining <= 0:
+                continue
+            sample_count = min(remaining, chunk_blocks, target)
+            sample_idx = _sample_block_indices(block_shape, sample_count, rng)
+            sampled_chunks.append(descriptors[sample_idx])
+            remaining -= sample_count
+            if remaining <= 0:
+                break
+        if remaining <= 0:
+            break
+
+    if not sampled_chunks:
+        raise RuntimeError("Unable to sample descriptors for global K-Means centers.")
+
+    sampled = np.concatenate(sampled_chunks, axis=0)
+    sampled = sampled[:max_samples]
+    _emit_status(
+        status_callback,
+        f"Fitting global K-Means centers on {sampled.shape[0]} descriptors (feature_dim={sampled.shape[1]}).",
+    )
+    _maybe_raise_cancel(cancel_token)
+    centers = _torch_kmeans(
+        sampled,
+        num_clusters=num_segments,
+        device=device,
+        compute_dtype=compute_dtype,
+        seed=0,
+    )
+    mapping = _build_label_mapping(centers)
+    return centers, mapping, (blocks_h, blocks_w), height_pad, width_pad
+
+
+def _assign_blocks_streaming(
+    array: np.ndarray,
+    num_segments: int,
+    resolution: int,
+    chunk_plan,
+    centers: np.ndarray,
+    mapping: Optional[np.ndarray],
+    device: torch.device,
+    compute_dtype: torch.dtype,
+    status_callback=None,
+    cancel_token=None,
+):
+    height, width = array.shape[1], array.shape[2]
+    blocks_h, blocks_w, height_pad, width_pad, block_chunk_h, block_chunk_w, y_starts, x_starts = _block_chunk_plan(
+        height, width, resolution, chunk_plan
+    )
+    labels_lowres = np.zeros((blocks_h, blocks_w), dtype=np.uint8)
+    total = max(1, len(y_starts) * len(x_starts))
+    idx = 0
+    for yb in y_starts:
+        for xb in x_starts:
+            idx += 1
+            _maybe_raise_cancel(cancel_token)
+            yb_end = min(yb + block_chunk_h, blocks_h)
+            xb_end = min(xb + block_chunk_w, blocks_w)
+            y0 = yb * resolution
+            x0 = xb * resolution
+            y1 = min(yb_end * resolution, height)
+            x1 = min(xb_end * resolution, width)
+            if status_callback:
+                status_callback(f"Assigning K-Means chunk {idx}/{total} (rows {y0}-{y1}, cols {x0}-{x1}).")
+            chunk = array[:, y0:y1, x0:x1]
+            descriptors, block_shape, _, _ = _smooth_and_pool_descriptors(
+                chunk,
+                resolution,
+                device,
+                compute_dtype,
+                status_callback=None,
+                cancel_token=cancel_token,
+            )
+            labels_flat = _assign_blocks_chunked(descriptors, centers, device, compute_dtype)
+            labels_flat = _apply_label_mapping(labels_flat, mapping)
+            labels_chunk = labels_flat.reshape(block_shape).astype(np.uint8, copy=False)
+            labels_lowres[yb:yb_end, xb:xb_end] = labels_chunk[: yb_end - yb, : xb_end - xb]
+    return labels_lowres, height_pad, width_pad
 
 
 def _torch_kmeans(
@@ -225,6 +403,70 @@ def predict_kmeans(
     return (result, *extras)
 
 
+def predict_kmeans_streaming(
+    array,
+    num_segments=8,
+    resolution=16,
+    chunk_plan=None,
+    status_callback=None,
+    sample_scale: float = 1.0,
+    return_lowres=False,
+    return_centers=False,
+    cancel_token=None,
+    device_hint=None,
+):
+    _maybe_raise_cancel(cancel_token)
+    array = _materialize_raster(array)
+    device = _quantization_device(device_hint) or torch.device("cpu")
+    compute_dtype = _distance_compute_dtype(device)
+    _emit_status(
+        status_callback,
+        f"K-Means global centers initialized on TORCH ({num_segments} clusters, resolution={resolution}).",
+    )
+
+    centers, mapping, block_shape, height_pad, width_pad = _fit_global_centers(
+        array,
+        num_segments,
+        resolution,
+        chunk_plan,
+        device,
+        compute_dtype,
+        sample_scale,
+        status_callback=status_callback,
+        cancel_token=cancel_token,
+    )
+
+    _emit_status(status_callback, "Assigning labels using global K-Means centers...")
+    labels_lowres, height_pad, width_pad = _assign_blocks_streaming(
+        array,
+        num_segments,
+        resolution,
+        chunk_plan,
+        centers,
+        mapping,
+        device,
+        compute_dtype,
+        status_callback=status_callback,
+        cancel_token=cancel_token,
+    )
+
+    _maybe_raise_cancel(cancel_token)
+    upsampled = np.repeat(np.repeat(labels_lowres, resolution, axis=0), resolution, axis=1)
+    result = upsampled[: array.shape[1], : array.shape[2]].astype(np.uint8, copy=False)
+    _emit_status(status_callback, "K-Means streaming output upsampled to raster resolution.")
+
+    if not (return_lowres or return_centers):
+        return result
+
+    extras = []
+    if return_lowres:
+        extras.append(labels_lowres)
+    if return_centers:
+        extras.append(_reorder_centers(centers, mapping).astype(np.float32, copy=False))
+
+    return (result, *extras)
+
+
 def _coerce_device(device_like):
     if isinstance(device_like, torch.device):
         return device_like
@@ -235,9 +477,11 @@ def _coerce_device(device_like):
 
 __all__ = [
     "predict_kmeans",
+    "predict_kmeans_streaming",
     "_smooth_and_pool_descriptors",
     "_assign_blocks_chunked",
     "_compute_kmeans_padding",
     "_sample_block_indices",
     "_normalize_cluster_labels",
+    "_build_label_mapping",
 ]

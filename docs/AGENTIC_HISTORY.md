@@ -82,3 +82,24 @@ Copyright (c) 2026 Quant Civil
 - Commands: `/Users/josh/gits/qgis-segmentation/.venv/bin/python -m pytest -q`.
 - Validation: pytest green (106 passed, 10 skipped).
 - Risks/Notes: Skipped tests require restoring `scripts/` and `model/` packages to exercise full coverage.
+
+## Phase 10 — Global K-Means centers + streaming assignment (2026-01-21)
+- Summary: Fit one global K-Means center set per run and stream assignment across chunks to eliminate label permutation seams; removed chunked per-fit/normalize path; added regression tests and doc updates.
+- Files Touched: runtime/kmeans.py, runtime/pipeline.py, funcs.py, tests/test_global_centers_assignment.py, tests/test_no_per_chunk_kmeans_fit.py, docs/plugin/ARCHITECTURE.md, docs/plugin/MODEL_NOTES.md, docs/plugin/RUNTIME_STATUS.md, docs/CODE_DESCRIPTION.md, docs/AGENTIC_HISTORY.md.
+- Commands: `python -m compileall .`; `python -m pytest -q`.
+- Validation: compileall succeeded; pytest failed in system Python (`No module named pytest`).
+- Risks/Notes: Re-run pytest under the repo venv once available (e.g., `.venv/bin/python -m pytest -q`).
+
+## Phase 11 — Enforce global CNN centers + disable per-chunk relabeling (2026-01-21)
+- Summary: CNN chunked path now fits global centers once and streams assignment across chunks, with per-chunk K-Means fit and label harmonization hard-disabled; added regression tests for global-center enforcement and chunk consistency; docs updated to make the global path canonical.
+- Files Touched: runtime/cnn.py, runtime/pipeline.py, runtime/chunking.py, tests/test_global_centers_canonical.py, tests/test_no_legacy_chunk_fit.py, tests/test_label_consistency_across_chunks.py, docs/plugin/ARCHITECTURE.md, docs/plugin/MODEL_NOTES.md, docs/plugin/RUNTIME_STATUS.md, docs/CODE_DESCRIPTION.md, docs/AGENTIC_HISTORY.md.
+- Commands: `python -m compileall .`; `python -m pytest -q`.
+- Validation: compileall succeeded; pytest failed in system Python (`No module named pytest`).
+- Risks/Notes: Re-run pytest under a venv (`.venv/bin/python -m pytest -q`) to confirm CNN path coverage without QGIS.
+
+## Phase 12 — Fix label consistency test centers (2026-01-21)
+- Summary: Adjusted the CNN seam regression test to generate centers that match the latent feature dimensionality, preventing shape mismatch errors in the distance kernel.
+- Files Touched: tests/test_label_consistency_across_chunks.py, docs/AGENTIC_HISTORY.md.
+- Commands: `python -m compileall .`; `python -m pytest -q`.
+- Validation: compileall succeeded; pytest failed in system Python (`No module named pytest`).
+- Risks/Notes: Re-run pytest under the repo venv to validate the updated test.

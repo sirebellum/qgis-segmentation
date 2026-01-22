@@ -12,7 +12,7 @@ For a current-state runtime snapshot, see [RUNTIME_STATUS.md](RUNTIME_STATUS.md)
 - User opens the dialog from the plugin action in [segmenter.py](segmenter.py); UI defined by [segmenter_dialog_base.ui](segmenter_dialog_base.ui) and loaded via [segmenter_dialog.py](segmenter_dialog.py) (layer selector, segment count, smoothness/speed/accuracy sliders, log/progress, buttons).
 - `Segmenter.run()` sets the device preference (CUDA → MPS → CPU) and initializes heuristics/progress state.
 - `Segmenter.predict()` validates the selected GDAL raster (provider `gdal`, source `.tif/.tiff`, exactly 3 bands), parses segment count and resolution, builds blur + heuristic overrides, and dispatches a `QgsTask` via `run_task()`.
-- Task executes `execute_kmeans_segmentation` or `execute_cnn_segmentation` from [funcs.py](funcs.py) (facade) into the `runtime/` engine with a cancellation token + status callbacks. The CNN path loads a TorchScript model from [models/](../../models) (`model_<resolution>.pth`), tiles, and blends via chunk aggregation; the K-Means path runs torch-based clustering and chunk-aware assignment. Optional post-smoothing is applied when configured; texture remap is available but disabled in the plugin by default.
+- Task executes `execute_kmeans_segmentation` or `execute_cnn_segmentation` from [funcs.py](funcs.py) (facade) into the `runtime/` engine with a cancellation token + status callbacks. The CNN path loads a TorchScript model from [models/](../../models) (`model_<resolution>.pth`), **fits global centers once**, and streams assignment per chunk (no per-chunk K-Means fit or relabeling). The K-Means path likewise fits global centers once and streams assignment only. Optional post-smoothing is applied when configured; texture remap is available but disabled in the plugin by default.
 - On completion, `Task.finished()` renders the uint8 label map to a temporary GeoTIFF with source extent/CRS through [qgis_funcs.py](qgis_funcs.py) `render_raster()` and adds it to the QGIS project; progress is finalized in the dialog.
 
 ## Module responsibilities
@@ -34,7 +34,7 @@ For a current-state runtime snapshot, see [RUNTIME_STATUS.md](RUNTIME_STATUS.md)
 - Rendering: `render_raster()` writes to tempdir GeoTIFF; layer name includes input layer, model choice, segment count, and resolution label.
 
 ## Runtime/perf notes (execute_* path)
-- Tiling: CNN path tiles to 512px by default with heuristic overrides (192–768px) and stitches back; K-Means uses block-based clustering and upsamples.
+- Tiling: CNN path tiles to 512px by default with heuristic overrides (192–768px) and stitches back; CNN and K-Means both use global centers with streaming assignment per chunk to keep labels consistent across chunk boundaries.
 - Post-smoothing: optional blur kernel/iteration applied to outputs for stability.
 - Cancellation: `CancellationToken` checked throughout loops; task cancel toggles token and UI state.
 - Logging/progress: worker status strings parsed by `_maybe_update_progress_from_message` keep the progress bar monotonic; log buffer shown in the dialog.

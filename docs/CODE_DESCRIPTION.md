@@ -9,7 +9,7 @@ Copyright (c) 2026 Quant Civil
 ## Runtime (current — execute_* pipeline)
 - segmenter.py / segmenter_dialog.py / segmenter_dialog_base.ui: QGIS UI + task dispatch for the active runtime; validates 3-band GDAL GeoTIFFs and segment count; builds heuristic/post-smoothing overrides and queues `execute_cnn_segmentation` or `execute_kmeans_segmentation` via `QgsTask`.
 - funcs.py: backward-compatibility facade that re-exports the numerical engine from the `runtime/` package for the `execute_*` pipelines.
-- runtime/: split numerical engine (materialize/tiling/stitching, cancellation/status, adaptive settings, chunking, smoothing, latent KNN, CNN tiling/prefetch, torch K-Means, pipeline glue).
+- runtime/: split numerical engine (materialize/tiling/stitching, cancellation/status, adaptive settings, chunking, smoothing, latent KNN, CNN tiling/prefetch, **global-center fit + streaming assignment for CNN and K-Means**, pipeline glue).
 - models/: packaged TorchScript CNN weights (`model_4/8/16.pth`) loaded by `segmenter.load_model`. Next-gen numpy artifacts under model/best exist for future work but are unused.
 - qgis_funcs.py: GDAL render to GeoTIFF + layer registration.
 - dependency_manager.py / raster_utils.py: dependency bootstrap (torch, NumPy) with env overrides and array utilities; adaptive batching uses static defaults (no profiling shim).

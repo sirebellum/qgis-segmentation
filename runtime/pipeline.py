@@ -12,8 +12,8 @@ from .adaptive import AdaptiveSettings, ChunkPlan, MIN_TILE_SIZE, MAX_TILE_SIZE,
 from .chunking import _process_in_chunks
 from .common import _coerce_torch_device, _emit_status, _maybe_raise_cancel
 from .io import _materialize_model, _materialize_raster
-from .kmeans import predict_kmeans
-from .cnn import predict_cnn
+from .kmeans import predict_kmeans, predict_kmeans_streaming
+from .cnn import fit_global_cnn_centers, predict_cnn, predict_cnn_with_centers
 from .latent import LATENT_KNN_DEFAULTS
 from .smoothing import _gaussian_blur_channels
 
@@ -121,22 +121,15 @@ def execute_kmeans_segmentation(
             set_device(device)
     height, width = array.shape[1], array.shape[2]
     if chunk_plan and chunk_plan.should_chunk(height, width):
-        labels = _process_in_chunks(
+        labels = predict_kmeans_streaming(
             array,
-            chunk_plan,
             num_segments,
-            lambda data: predict_kmeans(
-                data,
-                num_segments,
-                resolution,
-                status_callback=status_callback,
-                sample_scale=sample_scale,
-                cancel_token=cancel_token,
-                device_hint=device,
-            ),
-            status_callback,
-            smoothing_scale=1.0,
+            resolution,
+            chunk_plan=chunk_plan,
+            status_callback=status_callback,
+            sample_scale=sample_scale,
             cancel_token=cancel_token,
+            device_hint=device,
         )
     else:
         labels = predict_kmeans(
@@ -200,14 +193,28 @@ def execute_cnn_segmentation(
         return max(64, size)
 
     if chunk_plan and chunk_plan.should_chunk(height, width):
+        centers = fit_global_cnn_centers(
+            model,
+            array,
+            num_segments,
+            tile_size=_tile_for_data(array),
+            device_obj=device_obj,
+            chunk_plan=chunk_plan,
+            status_callback=status_callback,
+            memory_budget=chunk_plan.budget_bytes,
+            prefetch_depth=chunk_plan.prefetch_depth,
+            profile_tier=profile_tier,
+            cancel_token=cancel_token,
+        )
         result = _process_in_chunks(
             array,
             chunk_plan,
             num_segments,
-            lambda data: predict_cnn(
+            lambda data: predict_cnn_with_centers(
                 model,
                 data,
                 num_segments,
+                centers=centers,
                 tile_size=_tile_for_data(data),
                 device=device_obj,
                 status_callback=status_callback,
@@ -221,6 +228,7 @@ def execute_cnn_segmentation(
             status_callback,
             smoothing_scale=smoothing_scale,
             cancel_token=cancel_token,
+            harmonize_labels=False,
         )
     else:
         result = predict_cnn(

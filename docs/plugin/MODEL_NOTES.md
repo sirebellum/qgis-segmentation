@@ -6,7 +6,7 @@ Copyright (c) 2026 Quant Civil
 
 ## Inference pipeline (current runtime)
 - Inputs: 3-band GDAL raster layer validated in [segmenter.py](segmenter.py) `_is_supported_raster_layer` (RGB GeoTIFF, provider `gdal`, band count 3). Data materialized via [funcs.py](funcs.py) `_materialize_raster` (numpy array, file path, or loader callable) which loads through GDAL when given a path.
-- Runtime: user selects **CNN** (TorchScript) or **K-Means** in the UI. The plugin now routes to `execute_cnn_segmentation` / `execute_kmeans_segmentation`, which compute adaptive chunk plans, tile/aggregate inference, and apply optional post-smoothing. K-Means uses the torch-only clustering backend with chunk-aware assignment. Texture remap (autoencoder) is available but disabled in the plugin by default.
+- Runtime: user selects **CNN** (TorchScript) or **K-Means** in the UI. The plugin now routes to `execute_cnn_segmentation` / `execute_kmeans_segmentation`, which compute adaptive chunk plans, tile/aggregate inference, and apply optional post-smoothing. **CNN and K-Means both fit global centers once per run and stream assignment per chunk (no per-chunk relabeling)** to keep IDs consistent. Texture remap (autoencoder) is available but disabled in the plugin by default.
 - Output: segmentation labels as uint8 numpy array (class IDs start at 0). Rendering writes GeoTIFF via [qgis_funcs.py](qgis_funcs.py) preserving extent/CRS; opacity set to 1.0. No explicit nodata handling beyond padding trim.
 
 ## Controls, heuristics, and perf

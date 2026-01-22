@@ -49,6 +49,7 @@ def _process_in_chunks(
     status_callback,
     smoothing_scale=1.0,
     cancel_token=None,
+    harmonize_labels: bool = True,
 ):
     height, width = array.shape[1], array.shape[2]
     if not plan.should_chunk(height, width):
@@ -65,6 +66,7 @@ def _process_in_chunks(
         plan.chunk_size,
         status_callback=status_callback,
         smoothing_scale=smoothing_scale,
+        harmonize_labels=harmonize_labels,
     )
 
     for idx, (y, x) in enumerate(itertools.product(y_starts, x_starts), start=1):
@@ -96,6 +98,7 @@ class _ChunkAggregator:
         chunk_size,
         status_callback=None,
         smoothing_scale=1.0,
+        harmonize_labels: bool = True,
     ):
         self.height = height
         self.width = width
@@ -110,12 +113,16 @@ class _ChunkAggregator:
         self._feature_dim = None
         self._prototype_vectors = None
         self._prototype_counts = np.zeros(num_segments, dtype=np.int64)
+        self._harmonize_labels = bool(harmonize_labels)
 
     def add(self, labels, region, chunk_data=None, scores=None):
         y0, x0, y1, x1 = region
         h = y1 - y0
         w = x1 - x0
-        harmonized = self._harmonize_labels(labels[:h, :w], chunk_data)
+        if self._harmonize_labels:
+            harmonized = self._harmonize_labels(labels[:h, :w], chunk_data)
+        else:
+            harmonized = labels[:h, :w]
         chunk = harmonized.astype(np.int64, copy=False)
         mask = self.weight_template[:h, :w]
         if scores is not None:

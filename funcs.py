@@ -95,6 +95,7 @@ try:
 	from .runtime import kmeans as _runtime_kmeans
 	from .runtime.kmeans import (
 		predict_kmeans,
+		predict_kmeans_streaming,
 		_assign_blocks_chunked,
 		_compute_kmeans_padding,
 		_normalize_cluster_labels,
@@ -200,6 +201,7 @@ except ImportError:
 	import runtime.kmeans as _runtime_kmeans
 	from runtime.kmeans import (
 		predict_kmeans,
+		predict_kmeans_streaming,
 		_assign_blocks_chunked,
 		_compute_kmeans_padding,
 		_normalize_cluster_labels,
@@ -336,6 +338,7 @@ __all__ = [
 	"_stratified_sample_indices",
 	# kmeans
 	"predict_kmeans",
+	"predict_kmeans_streaming",
 	"_assign_blocks_chunked",
 	"_compute_kmeans_padding",
 	"_normalize_cluster_labels",
