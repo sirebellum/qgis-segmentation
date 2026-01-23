@@ -126,3 +126,36 @@ Use this format for future entries:
 - Risks/Notes:
   - Smoothing is optional (checkbox default off) so existing workflows are unaffected
   - Window height reduction may affect users with very low screen resolutions (420px should be safe for all modern displays)
+## Phase 4 — Map-to-Raster Assist for Web Service Layers (2026-01-23)
+- Intent: Auto-launch Convert map to raster dialog when user selects a web service or vector layer, prefilled with canvas extent + 1 map unit/pixel, without auto-running.
+- Summary:
+  - **New module**: `map_to_raster.py` with pure-python layer detection helpers:
+    - `is_file_backed_gdal_raster()`: detects valid 3-band GDAL GeoTIFFs
+    - `is_renderable_non_file_layer()`: detects WMS/WMTS/XYZ/ArcGIS/vector layers
+    - `build_convert_map_to_raster_params()`: builds algorithm parameters (extent, layer, MAP_UNITS_PER_PIXEL=1.0)
+    - `open_convert_map_to_raster_dialog()`: opens processing dialog without executing
+  - **segmenter.py changes**:
+    - `render_layers()` now shows all renderable layers (rasters + vectors + web services), not just file-backed rasters
+    - Added `_on_layer_selection_changed()` to detect non-file layers and trigger assist
+    - Added `_open_convert_map_to_raster_assist()` to build params and open dialog
+    - Added `_last_map_assist_layer_id` state to prevent dialog spam on repeated selection
+    - Updated `predict()` to show helpful message when non-raster is selected
+  - **README updated**: documented both raster input (direct) and map/web service input (assisted conversion) workflows
+  - **Tests**: `tests/test_map_to_raster.py` with 25+ QGIS-free tests for detection logic and parameter mapping
+- Files Touched:
+  - `map_to_raster.py`: new module
+  - `segmenter.py`: import new module, update `render_layers()`, add selection handler
+  - `tests/test_map_to_raster.py`: new test file
+  - `README.md`: added Input Types section
+  - `docs/plugin/ARCHITECTURE.md`: added map_to_raster.py to Support modules, documented map-to-raster assist contract
+  - `docs/plugin/RUNTIME_STATUS.md`: added Map-to-Raster Assist section
+  - `docs/CODE_DESCRIPTION.md`: documented map_to_raster.py and UI assist behavior
+  - `docs/AGENTIC_HISTORY.md`: this entry
+- Commands:
+  - `python -m compileall .`
+  - `python -m pytest tests/ -q`
+- Validation: All tests pass; selecting web service layer opens Convert map to raster dialog; selecting file raster proceeds normally
+- Risks/Notes:
+  - Dialog only opens once per layer selection (spam prevention via `_last_map_assist_layer_id`)
+  - Processing dialog does NOT auto-run; user must adjust settings and click Run
+  - If `native:rasterize` algorithm is unavailable, falls back to qgis:rasterize or gdal:rasterize_over_fixed_value

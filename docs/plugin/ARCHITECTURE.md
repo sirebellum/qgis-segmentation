@@ -43,9 +43,11 @@ QGIS 3 plugin "Map Segmenter" for unsupervised map segmentation using K-Means cl
 - [qgis_funcs.py](../../qgis_funcs.py): GDAL GeoTIFF render + QgsRasterLayer registration
 - [dependency_manager.py](../../dependency_manager.py): on-demand vendor install of torch/NumPy
 - [raster_utils.py](../../raster_utils.py): `ensure_channel_first` helper
+- [map_to_raster.py](../../map_to_raster.py): layer type detection + Convert map to raster dialog assist
 
 ## Key Contracts
 - **Input validation**: 3-band GDAL GeoTIFF, enforced in `segmenter._is_supported_raster_layer`
+- **Map-to-raster assist**: if user selects a web service or vector layer, `_on_layer_selection_changed` opens the Convert map to raster dialog prefilled with canvas extent + 1 map unit/pixel
 - **K-Means**: torch-only, global center fit once, streaming assignment per chunk (no scikit-learn, no per-chunk relabeling)
 - **Device**: CUDA → MPS → CPU preference set in `segmenter.run()`
 - **Cancellation**: `CancellationToken` checked throughout loops

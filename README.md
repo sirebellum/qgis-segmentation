@@ -39,9 +39,24 @@ subprocess.check_call([
 
 Replace the `--target` path with the plugin directory in your profile. Contact joshua.herrera227@gmail.com if you run into issues.
 
+## Input Types
+
+The segmenter requires a **3-band RGB GeoTIFF raster** as input. The plugin supports two input workflows:
+
+### Raster Input (Direct)
+Select a local 3-band GeoTIFF raster layer directly. The tool will process the entire raster using K-Means segmentation.
+
+### Map/Web Service Input (Assisted Conversion)
+If you select a map service layer (WMS, WMTS, XYZ tiles, ArcGIS services) or a vector layer, the plugin automatically opens the **Convert map to raster** processing dialog with:
+- **Extent**: current map canvas extent
+- **Layer**: the selected layer
+- **Resolution**: 1 map unit per pixel
+
+Adjust the settings as needed and run the conversion. The output GeoTIFF will be added to your project—select it as input for segmentation.
+
 ## Instructions
 Below are the steps for a basic segmentation:
-1. Choose a raster. Make sure the raster is in RGB format with 3 channels. The tool will process everything within the raster, so if you find your device running out of RAM, try using a smaller section of the raster or reducing the resolution. If you are using a web generated map (Google satelite), please convert the map to a raster first with the "Convert map to raster" tool available in QGIS.
+1. Choose a layer. If you select a 3-band GeoTIFF raster, segmentation can proceed directly. If you select a web map or vector layer, a conversion dialog will appear to help you create a compatible raster.
 2. Choose a resolution. Higher resolutions will result in a more detailed segmentation map. Lower resolutions will be less noisy.
 3. Choose number of coverage bins. This will determine how many segments are generated. You should choose the number based on how "complex" the raster is. That is, if there 4 different kinds of land cover on your map (trees, roads, buildings, water, etc.), you should set the number of segments to something slightly higher than 4, between 6 and 8.
 4. Segment! A raster layer will be produced overlaying the input with the different segments.

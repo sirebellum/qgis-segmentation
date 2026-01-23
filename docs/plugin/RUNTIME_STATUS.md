@@ -22,6 +22,13 @@ QGIS UI → Segmenter.predict() → QgsTask → runtime/pipeline.py → qgis_fun
 - Bands: exactly 3 (RGB)
 - Enforced in `segmenter._is_supported_raster_layer`
 
+## Map-to-Raster Assist
+When a web service layer (WMS, WMTS, XYZ, ArcGIS) or vector layer is selected:
+1. `_on_layer_selection_changed` detects non-file layer via `is_renderable_non_file_layer`
+2. Opens Convert map to raster dialog prefilled with canvas extent + 1 map unit/pixel
+3. Dialog does NOT auto-run; user adjusts settings and runs manually
+4. Generated GeoTIFF can then be selected as input
+
 ## Segmentation Backend
 - **K-Means**: torch-only clustering backend (no scikit-learn)
 - **Global centers**: fitted once per run for consistent labels across chunks

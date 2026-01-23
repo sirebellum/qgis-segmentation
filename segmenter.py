@@ -41,6 +41,7 @@ from qgis.core import (
     QgsMessageLog,
     QgsProject,
     QgsRasterLayer,
+    QgsMapLayer,
     Qgis,
 )
 
@@ -63,6 +64,14 @@ from .funcs import (  # noqa: E402
     _apply_optional_blur,
 )
 from .qgis_funcs import render_raster  # noqa: E402
+from .map_to_raster import (  # noqa: E402
+    is_file_backed_gdal_raster,
+    is_renderable_non_file_layer,
+    build_convert_map_to_raster_params,
+    extract_layer_metadata,
+    get_canvas_extent_tuple,
+    open_convert_map_to_raster_dialog,
+)
 
 SUPPORTED_RASTER_EXTENSIONS = {".tif", ".tiff"}
 GITHUB_ISSUES_URL = "https://github.com/sirebellum/qgis-segmentation/issues/new/choose"
@@ -351,6 +360,9 @@ class Segmenter:
         self._progress_last_value = 0.0
         self._progress_active = False
         self._progress_stage = "idle"
+        # Map-to-raster assist: track last triggered layer to avoid dialog spam
+        self._last_map_assist_layer_id = None
+        self._layer_selection_controller = None
 
     # noinspection PyMethodMayBeStatic
     def tr(self, message):
@@ -759,7 +771,20 @@ class Segmenter:
             return
         layer = layers[0]
         if not self._is_supported_raster_layer(layer):
-            self.log_status("Selected layer is not a supported 3-band GeoTIFF raster.")
+            # Check if this is a renderable layer that needs conversion
+            meta = extract_layer_metadata(layer)
+            if is_renderable_non_file_layer(
+                meta["layer_type"],
+                meta["provider_name"],
+                meta["source_path"],
+            ):
+                self.log_status(
+                    "Selected layer is a map service. Please use 'Convert map to raster' first "
+                    "(dialog should have opened when you selected this layer), then select the "
+                    "generated GeoTIFF as input."
+                )
+            else:
+                self.log_status("Selected layer is not a supported 3-band GeoTIFF raster.")
             self._reset_progress_bar()
             return
         if not layer.isValid():
@@ -846,24 +871,31 @@ class Segmenter:
     # Display layers in dropdown
     def render_layers(self):
         project_layers = QgsProject.instance().mapLayers().values()
-        raster_layers = [
-            layer
-            for layer in project_layers
-            if isinstance(layer, QgsRasterLayer) and self._is_supported_raster_layer(layer)
-        ]
-        raster_layers.sort(key=lambda lyr: lyr.name().lower())
+        # Include all renderable layers: rasters (file-backed and web services) plus vectors
+        all_layers = []
+        for layer in project_layers:
+            if not isinstance(layer, QgsMapLayer):
+                continue
+            # Include raster layers (GDAL-backed and WMS/XYZ/etc.)
+            if isinstance(layer, QgsRasterLayer):
+                all_layers.append(layer)
+            # Include vector layers (can be rendered to raster)
+            elif layer.type() == QgsMapLayer.VectorLayer:
+                all_layers.append(layer)
+        all_layers.sort(key=lambda lyr: lyr.name().lower())
 
         current = self.dlg.inputLayer.currentText()
         self.dlg.inputLayer.clear()
-        if not raster_layers:
+        if not all_layers:
             if not self._logged_missing_layers:
-                self.log_status("No supported 3-band GeoTIFF rasters detected in the project.")
+                self.log_status("No layers detected in the project.")
                 self._logged_missing_layers = True
             return
 
         self._logged_missing_layers = False
-        for layer in raster_layers:
-            self.dlg.inputLayer.addItem(layer.name())
+        for layer in all_layers:
+            # Store layer ID as item data for reliable lookup
+            self.dlg.inputLayer.addItem(layer.name(), layer.id())
 
         if current:
             index = self.dlg.inputLayer.findText(current)
@@ -945,6 +977,9 @@ class Segmenter:
             self.dlg.buttonStop.clicked.connect(self.stop_current_task)
             self._set_stop_enabled(False)
 
+            # Wire layer selection change for map-to-raster assist
+            self.dlg.inputLayer.currentIndexChanged.connect(self._on_layer_selection_changed)
+
             # Render logo
             img_path = os.path.join(self.plugin_dir, "logo.png")
             pix = QPixmap(img_path)
@@ -968,3 +1003,82 @@ class Segmenter:
         if self._layer_refresh_controller is None:
             self._layer_refresh_controller = _ComboRefreshController(combo, self.render_layers)
             combo.installEventFilter(self._layer_refresh_controller)
+    def _on_layer_selection_changed(self, index: int) -> None:
+        """Handle layer dropdown selection change for map-to-raster assist.
+
+        If the selected layer is not a file-backed GDAL raster, opens the
+        Convert map to raster processing dialog with prefilled parameters.
+        """
+        if index < 0:
+            return
+
+        dlg = getattr(self, "dlg", None)
+        if not dlg:
+            return
+
+        # Get layer ID from item data (set in render_layers)
+        layer_id = dlg.inputLayer.itemData(index)
+        if not layer_id:
+            return
+
+        # Avoid dialog spam: don't trigger if we already triggered for this layer
+        if layer_id == self._last_map_assist_layer_id:
+            return
+
+        # Lookup layer by ID
+        layer = QgsProject.instance().mapLayer(layer_id)
+        if not layer:
+            return
+
+        # Check if this is a supported raster (no assist needed)
+        if self._is_supported_raster_layer(layer):
+            # Clear the assist state for raster layers
+            self._last_map_assist_layer_id = None
+            return
+
+        # Extract metadata for detection
+        meta = extract_layer_metadata(layer)
+
+        # Check if this is a renderable non-file layer
+        if not is_renderable_non_file_layer(
+            meta["layer_type"],
+            meta["provider_name"],
+            meta["source_path"],
+        ):
+            # Not a recognized web service or vector - may be unsupported
+            self._last_map_assist_layer_id = None
+            return
+
+        # Trigger map-to-raster assist
+        self._last_map_assist_layer_id = layer_id
+        self._open_convert_map_to_raster_assist(layer)
+
+    def _open_convert_map_to_raster_assist(self, layer) -> None:
+        """Open the Convert map to raster dialog prefilled for the given layer."""
+        canvas = getattr(self, "canvas", None)
+        if not canvas:
+            self.log_status("Map canvas not available. Cannot determine extent.")
+            return
+
+        # Build parameters
+        extent_tuple = get_canvas_extent_tuple(canvas)
+        layer_id = layer.id() if hasattr(layer, "id") else layer.name()
+        params = build_convert_map_to_raster_params(extent_tuple, layer_id)
+
+        # Log the assist action
+        self.log_status(
+            "Selected layer is a map service. Opening Convert map to raster dialog "
+            "(prefilled: current extent, 1 map unit/pixel). Adjust settings and run "
+            "to create a GeoTIFF, then select it as input."
+        )
+
+        # Open the dialog
+        dlg = getattr(self, "dlg", None)
+        parent = dlg if dlg else None
+        opened = open_convert_map_to_raster_dialog(params, parent=parent)
+
+        if not opened:
+            self.log_status(
+                "Could not open Convert map to raster dialog. "
+                "You can find it in Processing > Toolbox > Rasterize (raster saving)."
+            )

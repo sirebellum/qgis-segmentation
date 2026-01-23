@@ -11,7 +11,9 @@ Purpose: concise registry of modules and their responsibilities in the current c
   - Smoothing toggle (checkbox, default off) gates post-process boundary smoothing
   - Smoothness slider (Low/Medium/High) with info hover icon — controls blur kernel size and iterations when smoothing is enabled
   - Post-smoothing applied via `_apply_optional_blur` in `Task.finished()` after K-Means completes
+  - Map-to-raster assist: selecting a web service or vector layer triggers `_on_layer_selection_changed` to open Convert map to raster dialog prefilled with canvas extent + 1 map unit/pixel
 - [funcs.py](../funcs.py): backward-compatibility facade that re-exports the numerical engine from the `runtime/` package.
+- [map_to_raster.py](../map_to_raster.py): layer type detection helpers (`is_file_backed_gdal_raster`, `is_renderable_non_file_layer`) and Convert map to raster dialog launcher (`open_convert_map_to_raster_dialog`).
 - [runtime/](../runtime): split numerical engine with modules for:
   - `common.py`: cancellation tokens, status callbacks, device coercion, dtype helpers
   - `io.py`: raster materialization from paths or callables
