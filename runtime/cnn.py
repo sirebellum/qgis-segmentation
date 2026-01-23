@@ -6,17 +6,16 @@ from __future__ import annotations
 import math
 from collections import deque
 from contextlib import nullcontext
-from typing import Iterable, Optional, Tuple, cast
+from typing import Optional, cast
 
 import numpy as np
 import torch
 import torch.nn.functional as F
 
-from .adaptive import AdaptiveSettings, DEFAULT_MEMORY_BUDGET, MIN_TILE_SIZE, MAX_TILE_SIZE, get_adaptive_settings
+from .adaptive import AdaptiveSettings, DEFAULT_MEMORY_BUDGET, get_adaptive_settings
 from .chunking import _compute_chunk_starts, _label_to_one_hot
 from .common import _emit_status, _maybe_raise_cancel, _quantization_device, _runtime_float_dtype
-from .distance import _DISTANCE_CHUNK_ROWS
-from .io import _materialize_model, _materialize_raster
+from .distance import _DISTANCE_CHUNK_ROWS  # noqa: F401 - exposed for test monkeypatching
 from .latent import _latent_knn_soft_refine
 from .kmeans import (
     _assign_blocks_chunked,
@@ -28,7 +27,9 @@ from .kmeans import (
 
 
 def tile_raster(array, tile_size):
-    padding = lambda shape: 0 if shape % tile_size == 0 else tile_size - shape % tile_size
+    def padding(shape):
+        return 0 if shape % tile_size == 0 else tile_size - shape % tile_size
+
     channel_pad = (0, 0)
     height_pad = (0, padding(array.shape[1]))
     width_pad = (0, padding(array.shape[2]))

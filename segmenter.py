@@ -45,7 +45,7 @@ from qgis.core import (
 )
 
 # Initialize Qt resources from file resources.py
-from .resources import *
+from .resources import *  # noqa: F401,F403 - Qt resource imports
 
 # Import the code for the dialog
 from .segmenter_dialog import SegmenterDialog
@@ -56,14 +56,14 @@ from .dependency_manager import ensure_dependencies
 
 ensure_dependencies()
 
-import torch
-import numpy as np
-from .funcs import (
+import torch  # noqa: E402 - must import after ensure_dependencies
+import numpy as np  # noqa: E402
+from .funcs import (  # noqa: E402
     execute_kmeans_segmentation,
     execute_cnn_segmentation,
     SegmentationCanceled,
 )
-from .qgis_funcs import render_raster
+from .qgis_funcs import render_raster  # noqa: E402
 
 TILE_SIZE = 512
 SUPPORTED_RASTER_EXTENSIONS = {".tif", ".tiff"}
@@ -777,7 +777,8 @@ class Segmenter:
             self.log_status("Selected layer is not a supported 3-band GeoTIFF raster.")
             self._reset_progress_bar()
             return
-        assert layer.isValid(), f"Invalid raster layer! \n{layer_name}"
+        if not layer.isValid():
+            raise ValueError(f"Invalid raster layer! \n{layer_name}")
         raster_source = layer.source().split("|")[0]
         self._update_overall_progress("prepare", 60, "Raster scheduled for background loading.")
         self.log_status("Raster IO deferred to the worker thread to keep QGIS responsive.")
@@ -867,7 +868,10 @@ class Segmenter:
             )
         elif self.model == "cnn":
             func = execute_cnn_segmentation
-            model_provider = lambda: self.load_model(resolution)
+
+            def model_provider():
+                return self.load_model(resolution)
+
             args = (
                 model_provider,
                 raster_source,
@@ -999,18 +1003,18 @@ class Segmenter:
 
         # Create the dialog with elements (after translation) and keep reference
         # Only create GUI ONCE in callback, so that it will only load when the plugin is started
-        if self.first_start == True:
+        if self.first_start:
             self.first_start = False
             self.dlg = SegmenterDialog()
             self.canvas = self.iface.mapCanvas()
             self._reset_progress_bar()
 
             # Set device (CUDA, CPU)
-            if torch.cuda.is_available(): # Cuda
+            if torch.cuda.is_available():  # Cuda
                 self.device = torch.device("cuda")
-            elif torch.backends.mps.is_available(): # Multi-Process Service
+            elif torch.backends.mps.is_available():  # Multi-Process Service
                 self.device = torch.device("mps")
-            else: # CPU
+            else:  # CPU
                 self.device = torch.device("cpu")
 
             # Populate drop down menus

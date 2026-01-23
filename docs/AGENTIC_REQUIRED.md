@@ -43,3 +43,16 @@ Tests that previously referenced these paths have been removed.
 - **Plugin tests** (tests/): 91 passing, 4 skipped (QGIS/GPU gated)
 - **Training tests** (training/tests/): 82 passing
 - **Total**: 173 tests
+
+## Security & Linting (QGIS recommended)
+Plugin runtime is validated with bandit, detect-secrets, and flake8 per QGIS guidelines.
+
+```bash
+# All three checks must pass before release
+.venv/bin/bandit -r __init__.py segmenter.py segmenter_dialog.py funcs.py qgis_funcs.py \
+  dependency_manager.py raster_utils.py autoencoder_utils.py runtime/ --format txt
+.venv/bin/detect-secrets scan *.py runtime/*.py
+.venv/bin/flake8 *.py runtime/ --max-line-length=120 --ignore=E501,W503
+```
+
+See [plugin/RUNTIME_STATUS.md](plugin/RUNTIME_STATUS.md#security--linting-qgis-recommended) for detailed expectations.

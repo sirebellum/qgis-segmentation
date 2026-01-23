@@ -5,13 +5,10 @@ from __future__ import annotations
 
 import math
 import os
-import platform
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
 import torch
-
-from .common import _coerce_torch_device
 
 try:  # Optional dependency for better memory stats
     import psutil  # type: ignore

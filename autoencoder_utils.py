@@ -135,9 +135,11 @@ class TextureAutoencoderManager:
         model = PatchAutoencoder(latent_dim=self.latent_dim, patch_size=self.patch_size)
         if self._weights_path.exists():
             try:
-                state_dict = torch.load(self._weights_path, map_location="cpu")
+                state_dict = torch.load(
+                    self._weights_path, map_location="cpu", weights_only=True
+                )
                 model.load_state_dict(state_dict)
-            except Exception:
+            except Exception:  # noqa: S110 - best effort weight load
                 pass
         model.to(self.device)
         self._model = model
@@ -246,7 +248,7 @@ class TextureAutoencoderManager:
         for idx in range(batch):
             y0 = 0 if height == ph else np.random.randint(0, height - ph + 1)
             x0 = 0 if width == pw else np.random.randint(0, width - pw + 1)
-            patch_view = raster[:, y0 : y0 + ph, x0 : x0 + pw]
+            patch_view = raster[:, y0:y0 + ph, x0:x0 + pw]
             patches[idx] = patch_view / 255.0
         chunk_estimate = self._estimate_tile_count(height, width, patch)
         copies = self._permutation_copies_for_chunks(chunk_estimate)

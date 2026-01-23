@@ -80,6 +80,22 @@ QGIS 3 plugin "Map Segmenter" for unsupervised map segmentation. Dependency boot
 - **Post-smoothing**: optional blur kernel/iterations on outputs
 - **Prefetch**: adaptive batch sizing based on memory budget
 
+## Security & Code Quality
+Per QGIS plugin guidelines, the plugin is checked with:
+- **bandit**: security vulnerability scanner
+- **detect-secrets**: hardcoded credential detection
+- **flake8**: Python linting
+
+Run all checks:
+```bash
+.venv/bin/bandit -r __init__.py segmenter.py segmenter_dialog.py funcs.py qgis_funcs.py \
+  dependency_manager.py raster_utils.py autoencoder_utils.py runtime/ --format txt
+.venv/bin/detect-secrets scan *.py runtime/*.py
+.venv/bin/flake8 *.py runtime/ --max-line-length=120 --ignore=E501,W503
+```
+
+See [RUNTIME_STATUS.md](RUNTIME_STATUS.md#security--linting-qgis-recommended) for detailed expectations.
+
 ## Training (Isolated)
 Training code in [training/](../../training) is isolated from the plugin runtime:
 - Produces student embeddings via distillation

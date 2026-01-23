@@ -3,15 +3,14 @@ from tempfile import gettempdir
 from qgis.core import QgsRasterLayer, QgsProject
 import os
 
-import numpy as np
-
 try:
     from .raster_utils import ensure_channel_first
 except ImportError:  # pragma: no cover
     from raster_utils import ensure_channel_first
 
-# Render raster from array
+
 def render_raster(array, bounding_box, layer_name, epsg):
+    """Render raster from array."""
     driver = gdal.GetDriverByName("GTiff")
     array = ensure_channel_first(array)
     channels, height, width = array.shape

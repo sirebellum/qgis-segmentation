@@ -55,7 +55,7 @@ def _chunked_gaussian_blur(
         tensor = torch.from_numpy(chunk).unsqueeze(0).to(device=device, dtype=dtype)
         padded = F.pad(tensor, (radius, radius, radius, radius), mode="reflect")
         smoothed = F.conv2d(padded, kernel, groups=channels).squeeze(0)
-        usable = smoothed[:, pad_top : pad_top + (end - start), :].to(dtype)
+        usable = smoothed[:, pad_top:pad_top + (end - start), :].to(dtype)
         result[:, start:end, :] = usable.detach().cpu().numpy()
         start = end
         chunk_index += 1
@@ -95,7 +95,10 @@ def _build_weight_mask(size):
     if size <= 1:
         return np.ones((1, 1), dtype=np.float32)
     window = np.hanning(size)
-    assert np.max(window) != 0, "np.hanning(size) returned all zeros, which should never happen for size > 1"
+    if np.max(window) == 0:
+        raise ValueError(
+            "np.hanning(size) returned all zeros, which should never happen for size > 1"
+        )
     mask = np.outer(window, window)
     mask = mask / np.max(mask)
     return mask.astype(np.float32)

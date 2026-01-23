@@ -8,14 +8,12 @@ from typing import Optional
 import numpy as np
 import torch
 
-from .adaptive import AdaptiveSettings, ChunkPlan, MIN_TILE_SIZE, MAX_TILE_SIZE, recommended_chunk_plan
+from .adaptive import MIN_TILE_SIZE, MAX_TILE_SIZE, recommended_chunk_plan
 from .chunking import _process_in_chunks
 from .common import _coerce_torch_device, _emit_status, _maybe_raise_cancel
 from .io import _materialize_model, _materialize_raster
 from .kmeans import predict_kmeans, predict_kmeans_streaming
 from .cnn import fit_global_cnn_centers, predict_cnn, predict_cnn_with_centers
-from .latent import LATENT_KNN_DEFAULTS
-from .smoothing import _gaussian_blur_channels
 
 try:
     from ..autoencoder_utils import TextureAutoencoderManager

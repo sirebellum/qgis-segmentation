@@ -4,6 +4,8 @@ torch
 tensorboard
 pytest
 flake8
+bandit
+detect-secrets
 PyYAML
 rasterio
 opencv-contrib-python-headless>=4.9.0

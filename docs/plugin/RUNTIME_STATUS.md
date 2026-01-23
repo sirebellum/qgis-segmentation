@@ -78,6 +78,40 @@ Key test files:
 - **Chunks**: test_global_centers_*.py, test_label_consistency_across_chunks.py
 - **Runtime modules**: test_runtime_adaptive.py, test_runtime_common.py, test_runtime_io.py, test_runtime_latent.py, test_runtime_chunking.py
 
+## Security & Linting (QGIS recommended)
+Per QGIS plugin guidelines, the plugin runtime is checked with bandit, detect-secrets, and flake8.
+
+### Commands
+```bash
+# Security scan (bandit) - check for vulnerabilities
+.venv/bin/bandit -r __init__.py segmenter.py segmenter_dialog.py funcs.py qgis_funcs.py \
+  dependency_manager.py raster_utils.py autoencoder_utils.py runtime/ --format txt
+
+# Secret detection - ensure no hardcoded credentials
+.venv/bin/detect-secrets scan __init__.py segmenter.py segmenter_dialog.py funcs.py \
+  qgis_funcs.py dependency_manager.py raster_utils.py autoencoder_utils.py runtime/*.py
+
+# Linting (flake8)
+.venv/bin/flake8 __init__.py segmenter.py segmenter_dialog.py funcs.py qgis_funcs.py \
+  dependency_manager.py raster_utils.py autoencoder_utils.py runtime/ \
+  --max-line-length=120 --ignore=E501,W503
+```
+
+### Expectations
+- **flake8**: 0 issues (all warnings addressed or suppressed with `# noqa` for intentional patterns)
+- **detect-secrets**: No secrets found (`"results": {}`)
+- **bandit**: Only low-severity acceptable issues:
+  - B110 (try/except/pass) — best-effort error handling for logging/callbacks
+  - B404/B603 (subprocess) — required for pip bootstrap in dependency_manager.py
+  - B310 (urlopen) — hardcoded https URL for get-pip.py
+
+### Suppressed Warnings
+| Code | Location | Reason |
+|------|----------|--------|
+| F401/F403 | segmenter.py:48 | Qt resource imports via pyrcc5 |
+| E402 | segmenter.py:59-66 | Imports after `ensure_dependencies()` intentional |
+| F401 | runtime/cnn.py:18 | `_DISTANCE_CHUNK_ROWS` exposed for test monkeypatching |
+
 ## Output
 - uint8 label map rendered as GeoTIFF
 - Preserves source extent/CRS

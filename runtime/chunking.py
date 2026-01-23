@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import itertools
-from typing import Callable, Optional, Tuple
+from typing import Callable
 
 import numpy as np
 

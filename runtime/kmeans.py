@@ -10,14 +10,12 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from .adaptive import _derive_chunk_size
 from .chunking import _compute_chunk_starts
 from .common import (
     _distance_compute_dtype,
     _emit_status,
     _maybe_raise_cancel,
     _quantization_device,
-    _runtime_float_dtype,
     _warn_distance_fallback,
 )
 from .distance import _argmin_distances_chunked, _assign_labels_tensor, _DISTANCE_CHUNK_ROWS
@@ -320,7 +318,7 @@ def _normalize_cluster_labels(labels, centers):
     flat = labels.reshape(-1)
     if not np.all((flat >= 0) & (flat < n_centers)):
         raise ValueError(
-            f"All label indices must be in [0, {n_centers-1}]. Found out-of-bounds values: {flat[(flat < 0) | (flat >= n_centers)]}"
+            f"All label indices must be in [0, {n_centers - 1}]. Found out-of-bounds values: {flat[(flat < 0) | (flat >= n_centers)]}"
         )
     ordering = np.argsort(centers.mean(axis=1))
     mapping = np.zeros_like(ordering)

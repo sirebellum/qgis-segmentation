@@ -134,6 +134,7 @@ def _ensure_package(spec: Dict[str, object]) -> None:
         extra_args = list(raw_args)  # type: ignore[arg-type]
 
     pip_command, pip_env = _pip_command()
+
     def _build_command(args: List[str]) -> List[str]:
         cmd = pip_command + [
             "install",
