@@ -31,7 +31,7 @@ try:
     )
 
     # IO helpers
-    from .runtime.io import _materialize_model, _materialize_raster
+    from .runtime.io import _materialize_raster
 
     # Distance utilities
     from .runtime.distance import (
@@ -103,23 +103,9 @@ try:
         _torch_kmeans,
     )
 
-    # CNN path
-    from .runtime.cnn import (
-        predict_cnn,
-        tile_raster,
-        _apply_rotation_plan_to_volume,
-        _auto_orient_tile_grid,
-        _batch_to_tensor,
-        _prefetch_batches,
-        _prefetch_batches_cuda,
-        _prefetch_batches_threaded,
-        _recommended_batch_size,
-    )
-
     # Pipeline helpers
     from .runtime.pipeline import (
         blur_segmentation_map,
-        execute_cnn_segmentation,
         execute_kmeans_segmentation,
         _apply_optional_blur,
     )
@@ -136,7 +122,7 @@ except ImportError:
     )
 
     # IO helpers
-    from runtime.io import _materialize_model, _materialize_raster
+    from runtime.io import _materialize_raster
 
     # Distance utilities
     from runtime.distance import (
@@ -208,23 +194,9 @@ except ImportError:
         _torch_kmeans,
     )
 
-    # CNN path
-    from runtime.cnn import (
-        predict_cnn,
-        tile_raster,
-        _apply_rotation_plan_to_volume,
-        _auto_orient_tile_grid,
-        _batch_to_tensor,
-        _prefetch_batches,
-        _prefetch_batches_cuda,
-        _prefetch_batches_threaded,
-        _recommended_batch_size,
-    )
-
     # Pipeline helpers
     from runtime.pipeline import (
         blur_segmentation_map,
-        execute_cnn_segmentation,
         execute_kmeans_segmentation,
         _apply_optional_blur,
     )
@@ -289,7 +261,6 @@ __all__ = [
     "_warn_distance_fallback",
     "_emit_status",
     # io
-    "_materialize_model",
     "_materialize_raster",
     # distance
     "_DISTANCE_CHUNK_ROWS",
@@ -344,19 +315,8 @@ __all__ = [
     "_smooth_and_pool_descriptors",
     "_torch_kmeans",
     "_sklearn_kmeans_fit",
-    # cnn
-    "predict_cnn",
-    "tile_raster",
-    "_apply_rotation_plan_to_volume",
-    "_auto_orient_tile_grid",
-    "_batch_to_tensor",
-    "_prefetch_batches",
-    "_prefetch_batches_cuda",
-    "_prefetch_batches_threaded",
-    "_recommended_batch_size",
     # pipeline
     "blur_segmentation_map",
-    "execute_cnn_segmentation",
     "execute_kmeans_segmentation",
     "_apply_optional_blur",
 ]

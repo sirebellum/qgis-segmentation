@@ -22,25 +22,18 @@ QGIS UI → Segmenter.predict() → QgsTask → runtime/pipeline.py → qgis_fun
 - Bands: exactly 3 (RGB)
 - Enforced in `segmenter._is_supported_raster_layer`
 
-## Model Artifacts
-- **Active**: TorchScript CNN weights in `models/` (`model_4.pth`, `model_8.pth`, `model_16.pth`)
+## Segmentation Backend
 - **K-Means**: torch-only clustering backend (no scikit-learn)
+- **Global centers**: fitted once per run for consistent labels across chunks
 
 ## Runtime Behavior
 
 ### K-Means (`execute_kmeans_segmentation`)
 1. Smooth and pool descriptors at resolution
 2. Fit global centers once via torch K-Means
-3. Stream assignment per chunk
+3. Stream assignment per chunk using global centers
 4. Upsample labels to original resolution
-
-### CNN (`execute_cnn_segmentation`)
-1. Fit global centers once using `fit_global_cnn_centers`
-2. Tile input (default 512px, slider-tuned 192–768px)
-3. Stream assignment per chunk via `predict_cnn_with_centers`
-4. Aggregate chunk scores
-5. Apply optional post-smoothing
-6. Stitch and return labels
+5. Apply optional post-smoothing (when checkbox enabled)
 
 ### Key Invariants
 - **Global centers**: fitted once per run (no per-chunk relabeling)
@@ -48,9 +41,10 @@ QGIS UI → Segmenter.predict() → QgsTask → runtime/pipeline.py → qgis_fun
 - **Cancellation**: `CancellationToken` checked throughout
 
 ### Optional Features
-- **Post-smoothing**: blur kernel/iterations on outputs
-- **Latent KNN**: soft refinement (disabled by default)
-- **Texture autoencoder**: remap (disabled by default)
+- **Post-smoothing**: opt-in via UI checkbox (default: disabled); blur kernel/iterations controlled by smoothness slider
+
+### UI Controls
+- **Smoothness slider**: 3 discrete levels (Low/Medium/High) with info icon; controls blur kernel (1/3/7px) and iterations; only applies when smoothing checkbox is checked
 
 ## Environment Variables
 | Variable | Purpose |
@@ -61,13 +55,16 @@ QGIS UI → Segmenter.predict() → QgsTask → runtime/pipeline.py → qgis_fun
 | `SEGMENTER_TORCH_SPEC` | Torch version spec (e.g., `torch>=2.3`) |
 | `SEGMENTER_TORCH_INDEX_URL` | Torch wheel index URL |
 
-## Removed / Non-Existent
-The following are NOT present in the current codebase:
-- `model/` directory (runtime_numpy.py, runtime_backend.py, runtime_torch.py)
+## Removed / Not Used by Runtime
+The following are NOT used by the runtime segmentation path:
+- `model/` directory (legacy runtime selectors)
+- `models/` directory (TorchScript CNN weights — CNN path removed)
+- `runtime/cnn.py` (CNN inference — not imported by runtime)
 - `scripts/datasets_ingest/` (ingestion scaffold)
 - scikit-learn dependency (K-Means is torch-only)
+- Model dropdown in UI (removed)
 
-## Tests (91 passing)
+## Tests (105 passing)
 ```bash
 .venv/bin/python -m pytest tests/ -q
 ```

@@ -50,7 +50,6 @@ from .resources import *  # noqa: F401,F403 - Qt resource imports
 # Import the code for the dialog
 from .segmenter_dialog import SegmenterDialog
 
-from io import BytesIO
 from datetime import datetime
 from .dependency_manager import ensure_dependencies
 
@@ -60,12 +59,11 @@ import torch  # noqa: E402 - must import after ensure_dependencies
 import numpy as np  # noqa: E402
 from .funcs import (  # noqa: E402
     execute_kmeans_segmentation,
-    execute_cnn_segmentation,
     SegmentationCanceled,
+    _apply_optional_blur,
 )
 from .qgis_funcs import render_raster  # noqa: E402
 
-TILE_SIZE = 512
 SUPPORTED_RASTER_EXTENSIONS = {".tif", ".tiff"}
 GITHUB_ISSUES_URL = "https://github.com/sirebellum/qgis-segmentation/issues/new/choose"
 PROFILE_MODEL_SIZES = {"high": 4, "medium": 8, "low": 16}
@@ -75,8 +73,21 @@ RESOLUTION_CHOICES = (
     ("medium", 8),
     ("high", 4),
 )
-DEFAULT_RESOLUTION_LABEL = "low"
+DEFAULT_RESOLUTION_LABEL = "high"
 RESOLUTION_VALUE_MAP = {label: value for label, value in RESOLUTION_CHOICES}
+
+# Discrete slider levels: 0=low, 1=medium, 2=high
+SLIDER_LEVEL_LOW = 0
+SLIDER_LEVEL_MEDIUM = 1
+SLIDER_LEVEL_HIGH = 2
+SLIDER_LEVEL_NAMES = {SLIDER_LEVEL_LOW: "low", SLIDER_LEVEL_MEDIUM: "medium", SLIDER_LEVEL_HIGH: "high"}
+# Smoothing kernel sizes: low=5px, medium=11px, high=21px (must be odd)
+SMOOTHING_KERNEL_MAP = {
+    SLIDER_LEVEL_LOW: {"kernel_size": 5, "iterations": 1},
+    SLIDER_LEVEL_MEDIUM: {"kernel_size": 11, "iterations": 1},
+    SLIDER_LEVEL_HIGH: {"kernel_size": 21, "iterations": 2},
+}
+
 PROGRESS_PERCENT_PATTERN = re.compile(r"(?P<percent>\d{1,3})\s*%")
 PROGRESS_STEP_PATTERN = re.compile(r"step\s+(?P<current>\d+)\s*/\s*(?P<total>\d+)", re.IGNORECASE)
 PROGRESS_TEXT_LIMIT = 80
@@ -233,13 +244,28 @@ class Task(QgsTask):
         QgsMessageLog.logMessage("Task finished", "Segmenter", level=Qgis.Info)
         segmenter = self.kwargs.get("segmenter")
         if result and not self.isCanceled():
+            # Apply optional post-smoothing
+            blur_config = self.kwargs.get("blur_config")
+            status_callback = self.kwargs.get("status_callback")
+            output = self.result
+            if blur_config is not None:
+                if segmenter:
+                    segmenter._update_overall_progress("smooth", 0, "Smoothing segmentation map...")
+                output = _apply_optional_blur(
+                    output,
+                    blur_config,
+                    status_callback,
+                    cancel_token=self.cancel_token,
+                )
+                if segmenter:
+                    segmenter._update_overall_progress("smooth", 100, "Smoothing complete.")
             # render raster
             if segmenter:
                 segmenter._update_overall_progress("render", 20, "Rendering output...")
             render_raster(
-                self.result,
+                output,
                 self.kwargs["layer"].extent(),
-                f"{self.kwargs['layer'].name()}_{self.kwargs['model']}_{self.kwargs['num_segments']}_{self.kwargs['resolution']}",
+                f"{self.kwargs['layer'].name()}_kmeans_{self.kwargs['num_segments']}_{self.kwargs['resolution']}",
                 self.kwargs["canvas"].layer(0).crs().postgisSrid(),
             )
             self._status("Segmentation layer rendered")
@@ -263,7 +289,7 @@ class Task(QgsTask):
             return
         try:
             callback(message)
-        except Exception:  # pragma: no cover - best effort status callback
+        except Exception:  # pragma: no cover  # nosec B110 - best effort status callback
             pass
 
 
@@ -316,7 +342,6 @@ class Segmenter:
         self._log_history = deque(maxlen=50)
         self.status_emitter = StatusEmitter()
         self.status_emitter.message.connect(self._handle_status_message)
-        self.model = "cnn"
         self._logged_missing_layers = False
         self._logo_hover = None
         self._layer_refresh_controller = None
@@ -532,87 +557,28 @@ class Segmenter:
         if button is not None:
             button.setEnabled(bool(enabled))
 
-    def _collect_heuristics(self, resolution_label: Optional[str] = None):
+    def _is_smoothing_enabled(self) -> bool:
+        """Check if the smoothing checkbox is checked. Default is False (disabled)."""
         dlg = getattr(self, "dlg", None)
-        multiplier = self._heuristic_scale(resolution_label)
-        if dlg is None:
-            base = {"smoothness": 0.25, "speed": 0.5, "accuracy": 0.65}
-            return {k: float(np.clip(v * multiplier, 0.0, 1.0)) for k, v in base.items()}
-
-        def _value(name, default=0.5):
-            slider = getattr(dlg, name, None)
-            if not slider:
-                return float(np.clip(default * multiplier, 0.0, 1.0))
-            maximum = max(1, slider.maximum())
-            raw = slider.value() / maximum
-            return float(np.clip(raw * multiplier, 0.0, 1.0))
-
-        return {
-            "smoothness": _value("sliderSmoothness", 0.25),
-            "speed": _value("sliderSpeed", 0.5),
-            "accuracy": _value("sliderAccuracy", 0.65),
-        }
-
-    def _build_heuristic_overrides(self, resolution_label: Optional[str] = None):
-        heuristics = self._collect_heuristics(resolution_label)
-        smooth = heuristics["smoothness"]
-        speed = heuristics["speed"]
-        accuracy = heuristics["accuracy"]
-        resolution_value = RESOLUTION_VALUE_MAP.get(
-            resolution_label or DEFAULT_RESOLUTION_LABEL,
-            RESOLUTION_VALUE_MAP[DEFAULT_RESOLUTION_LABEL],
-        )
-        finest_resolution = min(RESOLUTION_VALUE_MAP.values()) or 1
-        coarseness = max(1.0, float(resolution_value) / float(finest_resolution))
-
-        smoothing_scale = float(np.interp(smooth, [0.0, 1.0], [0.7, 1.9]))
-        smoothing_scale = float(np.clip(smoothing_scale * 0.1 * coarseness, 0.02, 0.45))
-        tile_factor = float(np.interp(speed, [0.0, 1.0], [0.8, 1.35]))
-        tile_size = int(np.clip(TILE_SIZE * tile_factor, 192, 768))
-
-        latent_cfg = {
-            "mix": float(np.interp(smooth, [0.0, 1.0], [0.35, 0.85])) * 0.01,
-            "temperature": float(np.interp(accuracy, [0.0, 1.0], [3.5, 0.9])),
-            "neighbors": int(np.round(np.interp(accuracy, [0.0, 1.0], [6, 28]))),
-            "iterations": int(max(1, round(np.interp(smooth, [0.0, 1.0], [1, 4])))),
-            "spatial_weight": float(np.interp(accuracy, [0.0, 1.0], [0.04, 0.16])) * 0.01,
-            "chunk_size": int(np.round(np.interp(speed, [0.0, 1.0], [20000, 65536]))),
-            "index_points": int(np.round(np.interp(speed, [0.0, 1.0], [50000, 180000]))),
-            "query_batch": int(np.round(np.interp(speed, [0.0, 1.0], [12000, 60000]))),
-            "hierarchy_factor": 1 if accuracy < 0.4 else 2,
-            "hierarchy_passes": 1 if accuracy < 0.7 else 2,
-        }
-
-        latent_cfg["mix"] = np.clip(latent_cfg["mix"] * coarseness, 0.01, 0.25)
-        latent_cfg["spatial_weight"] = float(np.clip(latent_cfg["spatial_weight"] * coarseness, 0.001, 0.03))
-
-        return {
-            "tile_size": tile_size,
-            "smoothing_scale": smoothing_scale,
-            "latent_knn": latent_cfg,
-        }
+        if not dlg:
+            return False
+        checkbox = getattr(dlg, "checkSmoothing", None)
+        if not checkbox:
+            return False
+        return bool(checkbox.isChecked())
 
     def _blur_config(self, resolution_label: Optional[str] = None) -> dict:
-        heuristics = self._collect_heuristics(resolution_label)
-        smooth = heuristics["smoothness"]
-        kernel = int(np.round(np.interp(smooth, [0.0, 1.0], [1, 7])))
-        kernel = kernel | 1  # ensure odd kernel size
-        kernel = max(1, min(kernel, 9))
-        iterations = 1 if smooth < 0.7 else 2
-        return {"kernel_size": kernel, "iterations": iterations}
-
-    def _heuristic_scale(self, resolution_label: Optional[str]) -> float:
-        if not resolution_label:
-            return 1.0
-        key = resolution_label.strip().lower()
-        size = PROFILE_MODEL_SIZES.get(key)
-        if not size:
-            return 1.0
-        numerator = float(size)
-        denominator = float(max(PROFILE_MODEL_SIZES.values()))
-        if denominator <= 0:
-            return 1.0
-        return np.clip(numerator / denominator, 0.1, 1.0)
+        """Build blur config based on smoothing slider. Returns None if smoothing is disabled."""
+        if not self._is_smoothing_enabled():
+            return None
+        dlg = getattr(self, "dlg", None)
+        if not dlg:
+            return SMOOTHING_KERNEL_MAP[SLIDER_LEVEL_MEDIUM].copy()
+        slider = getattr(dlg, "sliderSmoothness", None)
+        if not slider:
+            return SMOOTHING_KERNEL_MAP[SLIDER_LEVEL_MEDIUM].copy()
+        level = int(np.clip(slider.value(), SLIDER_LEVEL_LOW, SLIDER_LEVEL_HIGH))
+        return SMOOTHING_KERNEL_MAP.get(level, SMOOTHING_KERNEL_MAP[SLIDER_LEVEL_MEDIUM]).copy()
 
     def open_feedback_link(self):
         if not getattr(self, "dlg", None):
@@ -810,33 +776,12 @@ class Segmenter:
         resolution = RESOLUTION_VALUE_MAP.get(resolution_label, RESOLUTION_VALUE_MAP[DEFAULT_RESOLUTION_LABEL])
 
         blur_config = self._blur_config(resolution_label)
-        heuristics = self._collect_heuristics(resolution_label)
-        heuristic_overrides = self._build_heuristic_overrides(resolution_label)
-        self.log_status(
-            "Heuristic tuning — smoothness {:.2f}, speed {:.2f}, accuracy {:.2f}.".format(
-                heuristics["smoothness"], heuristics["speed"], heuristics["accuracy"]
-            )
-        )
-        self.log_status(
-            f"Post-smoothing configured: {blur_config['kernel_size']}px kernel, {blur_config['iterations']} pass(es)."
-        )
-        tile_override = heuristic_overrides.get("tile_size") if heuristic_overrides else None
-        if isinstance(tile_override, (int, float)):
-            self.log_status(f"CNN tile size override set to {int(tile_override)}px.")
-
-        effective_resolution = resolution
-        resolution_scale = float(np.interp(heuristics["speed"], [0.0, 1.0], [0.85, 1.35]))
-        scaled_resolution = int(max(1, round(resolution * resolution_scale)))
-        if scaled_resolution != resolution:
+        if blur_config:
             self.log_status(
-                f"Speed slider adjusted block resolution from {resolution} to {scaled_resolution}."
+                f"Post-smoothing configured: {blur_config['kernel_size']}px kernel, {blur_config['iterations']} pass(es)."
             )
-            effective_resolution = scaled_resolution
-
-        sample_scale = float(np.interp(heuristics["accuracy"], [0.0, 1.0], [0.65, 1.35]))
-        self.log_status(
-            f"Accuracy slider sampling scale set to {sample_scale:.2f}x base population."
-        )
+        else:
+            self.log_status("Post-smoothing disabled (checkbox unchecked).")
 
         if not hasattr(self, "device"):
             raise AttributeError("Segmenter instance must have a 'device' attribute set before calling predict().")
@@ -845,54 +790,27 @@ class Segmenter:
             "layer": layer,
             "canvas": self.canvas,
             "dlg": self.dlg,
-            "model": self.model,
             "num_segments": num_segments,
             "resolution": resolution,
             "status_callback": self.log_status,
             "segmenter": self,
+            "blur_config": blur_config,
         }
 
-        func = None
-        args = ()
-        if self.model == "kmeans":
-            func = execute_kmeans_segmentation
-            args = (
-                raster_source,
-                num_segments,
-                effective_resolution,
-                None,
-                self.worker_status,
-                None,
-                sample_scale,
-                self.device,
-            )
-        elif self.model == "cnn":
-            func = execute_cnn_segmentation
-
-            def model_provider():
-                return self.load_model(resolution)
-
-            args = (
-                model_provider,
-                raster_source,
-                num_segments,
-                None,
-                TILE_SIZE,
-                self.device,
-                self.worker_status,
-                resolution_label,
-                heuristic_overrides,
-                None,
-                blur_config,
-            )
-        else:
-            self.log_status(f"Unsupported model selection: {self.model}")
-            self._reset_progress_bar()
-            return
+        func = execute_kmeans_segmentation
+        args = (
+            raster_source,
+            num_segments,
+            resolution,
+            None,  # chunk_plan - let pipeline compute it
+            self.worker_status,
+            1.0,  # sample_scale - fixed at 1.0 (speed/accuracy sliders removed)
+            self.device,
+        )
 
         self._update_overall_progress("queue", 90, "Dispatching segmentation task...")
         self.log_status(
-            f"Queued {self.model.upper()} segmentation with {num_segments} segments at {self.dlg.inputRes.currentText()} resolution."
+            f"Queued K-Means segmentation with {num_segments} segments at {self.dlg.inputRes.currentText()} resolution."
         )
         self._update_overall_progress("queue", 100, "Task queued; starting worker...")
         self._update_overall_progress("inference", 0, "Running segmentation...")
@@ -902,34 +820,9 @@ class Segmenter:
         if self.task.waitForFinished(1):
             self.log_status("An error occurred. Please try again.")
 
-    # Load model from disk
-    def load_model(self, model_name):
-        # Load model into bytes object
-        model_path = os.path.join(self.plugin_dir, f"models/model_{model_name}.pth")
-        with open(model_path, "rb") as f:
-            model_bytes = BytesIO(f.read())
-
-        # Load torchscript model
-        model = torch.jit.load(model_bytes)
-        model.eval().to(self.device)
-
-        return model
-
     # Process user input box
     def submit(self):
         return
-
-    #  Display models in dropdown
-    def render_models(self):
-        model_list = ["K-Means", "CNN"]
-        self.dlg.inputLoadModel.clear()
-        for model in model_list:
-            self.dlg.inputLoadModel.addItem(model)
-        default_model = "CNN"
-        index = self.dlg.inputLoadModel.findText(default_model)
-        if index >= 0:
-            self.dlg.inputLoadModel.setCurrentIndex(index)
-        self.set_model()
 
     # Display layers in dropdown
     def render_layers(self):
@@ -969,14 +862,6 @@ class Segmenter:
             index = self.dlg.inputRes.findText(DEFAULT_RESOLUTION_LABEL, Qt.MatchFixedString)
         if index >= 0:
             self.dlg.inputRes.setCurrentIndex(index)
-
-    # Set model based on selected dropdown
-    def set_model(self):
-        model = self.dlg.inputLoadModel.currentText()
-        if model == "K-Means":
-            self.model = "kmeans"
-        elif model == "CNN":
-            self.model = "cnn"
 
     def _is_supported_raster_layer(self, layer):
         if not isinstance(layer, QgsRasterLayer):
@@ -1018,7 +903,6 @@ class Segmenter:
                 self.device = torch.device("cpu")
 
             # Populate drop down menus
-            self.render_models()
             self.render_layers()
             self.render_resolutions()
             if not (self.dlg.inputSegments.text() or "").strip():
@@ -1033,15 +917,13 @@ class Segmenter:
             self.dlg.inputBox.clear()
             self._flush_status_buffer()
             self.log_status(gpu_msg)
-            self.log_status("Segmentation runtime active with optional post-smoothing.")
+            self.log_status("K-Means segmentation runtime ready.")
 
             # Attach inputs
             self.dlg.inputBox.textChanged.connect(self.submit)
             self.dlg.buttonPredict.clicked.connect(self.predict)
             self.dlg.buttonFeedback.clicked.connect(self.open_feedback_link)
             self.dlg.buttonStop.clicked.connect(self.stop_current_task)
-            self.dlg.inputLoadModel.currentIndexChanged.connect(self.set_model)
-            self.dlg.inputLoadModel.highlighted.connect(self.render_layers)
             self._set_stop_enabled(False)
 
             # Render logo

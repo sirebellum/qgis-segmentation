@@ -63,7 +63,7 @@ def _runtime_float_dtype(device_hint=None) -> torch.dtype:
                 return torch.float16
             if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
                 return torch.float16
-        except Exception:
+        except Exception:  # nosec B110 - best effort device detection
             pass
     return torch.float32
 
@@ -91,5 +91,5 @@ def _emit_status(callback, message) -> None:
         return
     try:
         callback(message)
-    except Exception:
+    except Exception:  # nosec B110 - best effort status callback
         pass

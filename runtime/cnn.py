@@ -217,7 +217,7 @@ def _prefetch_batches_threaded(tiles, batch_size, device, depth=2, cancel_token=
                     leftover_future, _, _ = futures.popleft()
                     try:
                         leftover_future.result()
-                    except Exception:
+                    except Exception:  # nosec B110 - cleanup on error
                         pass
                 raise
     finally:

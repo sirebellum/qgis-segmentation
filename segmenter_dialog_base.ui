@@ -6,363 +6,146 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>420</width>
-    <height>520</height>
+    <width>305</width>
+    <height>460</height>
    </rect>
   </property>
   <property name="windowTitle">
    <string>Map Segmenter</string>
   </property>
-  <property name="toolTip">
-   <string/>
+  <property name="styleSheet">
+   <string notr="true">QComboBox { color: palette(text); }
+QComboBox QAbstractItemView { color: palette(text); }
+QCheckBox { color: palette(text); spacing: 6px; }
+QCheckBox::indicator { width: 14px; height: 14px; background-color: palette(base); border: 2px solid palette(mid); border-radius: 3px; }
+QCheckBox::indicator:checked { background-color: #9370db; border-color: #9370db; }
+QCheckBox::indicator:hover { border-color: palette(highlight); }
+QPushButton { color: palette(button-text); }
+QLabel { color: palette(text); }
+QLineEdit { color: palette(text); }
+QPlainTextEdit { color: palette(text); }</string>
   </property>
-  <property name="statusTip">
-   <string/>
-  </property>
-  <property name="whatsThis">
-   <string/>
-  </property>
-  <widget class="QPushButton" name="buttonPredict">
+
+  <widget class="QLabel" name="labelInputLayer">
    <property name="geometry">
-    <rect>
-      <x>260</x>
-      <y>280</y>
-      <width>150</width>
-      <height>36</height>
-    </rect>
+    <rect><x>20</x><y>10</y><width>130</width><height>18</height></rect>
    </property>
-   <property name="toolTip">
-    <string>Segment the map!</string>
-   </property>
-   <property name="text">
-    <string>Segment</string>
-   </property>
-  </widget>
-  <widget class="QPushButton" name="buttonStop">
-   <property name="enabled">
-    <bool>false</bool>
-   </property>
-   <property name="geometry">
-    <rect>
-      <x>260</x>
-      <y>320</y>
-      <width>150</width>
-      <height>32</height>
-    </rect>
-   </property>
-   <property name="text">
-    <string>Cancel Task</string>
-   </property>
-  </widget>
-  <widget class="QPlainTextEdit" name="inputBox">
-   <property name="geometry">
-    <rect>
-      <x>30</x>
-      <y>400</y>
-      <width>370</width>
-      <height>140</height>
-    </rect>
-   </property>
-   <property name="plainText">
-        <string/>
-   </property>
-   <property name="overwriteMode">
-    <bool>false</bool>
-   </property>
-   <property name="backgroundVisible">
-    <bool>false</bool>
-   </property>
-  </widget>
-  <widget class="QProgressBar" name="jobProgress">
-   <property name="geometry">
-    <rect>
-      <x>30</x>
-      <y>360</y>
-      <width>370</width>
-      <height>28</height>
-    </rect>
-   </property>
-   <property name="minimum">
-    <number>0</number>
-   </property>
-   <property name="maximum">
-    <number>100</number>
-   </property>
-   <property name="value">
-    <number>0</number>
-   </property>
-   <property name="format">
-    <string>Idle</string>
-   </property>
-   <property name="textVisible">
-    <bool>true</bool>
-   </property>
-  </widget>
-  <widget class="QLabel" name="imageLarge">
-   <property name="geometry">
-    <rect>
-      <x>250</x>
-      <y>80</y>
-      <width>160</width>
-      <height>140</height>
-    </rect>
-   </property>
-   <property name="styleSheet">
-    <string notr="true">background-color: rgba(44, 29, 90, 144);</string>
-   </property>
-   <property name="text">
-    <string/>
-   </property>
-  <property name="alignment">
-   <set>Qt::AlignCenter</set>
-  </property>
-  </widget>
-  <widget class="QComboBox" name="inputLoadModel">
-   <property name="geometry">
-    <rect>
-      <x>20</x>
-      <y>30</y>
-      <width>101</width>
-      <height>32</height>
-    </rect>
-   </property>
-   <property name="toolTip">
-    <string/>
-   </property>
-   <property name="currentText">
-    <string/>
-   </property>
-   <property name="placeholderText">
-    <string>K-Means</string>
-   </property>
-  </widget>
-  <widget class="QLabel" name="labelLoadModel">
-   <property name="geometry">
-    <rect>
-      <x>50</x>
-      <y>10</y>
-      <width>81</width>
-      <height>18</height>
-    </rect>
-   </property>
-   <property name="text">
-    <string comment="Number of segments to divide input into">Model</string>
-   </property>
-  </widget>
-  <widget class="QLabel" name="labelSegments">
-   <property name="geometry">
-    <rect>
-      <x>50</x>
-      <y>85</y>
-      <width>161</width>
-      <height>18</height>
-    </rect>
-   </property>
-   <property name="text">
-    <string comment="Number of segments to divide input into">Number of Segments</string>
-   </property>
+   <property name="text"><string>Input Layer</string></property>
+   <property name="alignment"><set>Qt::AlignCenter</set></property>
   </widget>
   <widget class="QComboBox" name="inputLayer">
    <property name="geometry">
-    <rect>
-      <x>140</x>
-      <y>30</y>
-      <width>101</width>
-      <height>32</height>
-    </rect>
+    <rect><x>20</x><y>30</y><width>130</width><height>32</height></rect>
    </property>
-   <property name="toolTip">
-    <string/>
-   </property>
-   <property name="currentText">
-    <string/>
-   </property>
-   <property name="placeholderText">
-    <string/>
-   </property>
+   <property name="toolTip"><string>Select a 3-band GeoTIFF raster layer for K-Means segmentation.</string></property>
   </widget>
-  <widget class="QLabel" name="labelLoadModel_2">
+
+  <widget class="QLabel" name="labelResolution">
    <property name="geometry">
-    <rect>
-      <x>160</x>
-      <y>10</y>
-      <width>81</width>
-      <height>18</height>
-    </rect>
+    <rect><x>165</x><y>10</y><width>120</width><height>18</height></rect>
    </property>
-   <property name="text">
-    <string comment="Number of segments to divide input into">Input Layer</string>
-   </property>
-  </widget>
-  <widget class="QLabel" name="labelLoadModel_3">
-   <property name="geometry">
-    <rect>
-      <x>300</x>
-      <y>10</y>
-      <width>81</width>
-      <height>18</height>
-    </rect>
-   </property>
-   <property name="accessibleDescription">
-    <string/>
-   </property>
-   <property name="text">
-    <string comment="Number of segments to divide input into">Resolution</string>
-   </property>
+   <property name="text"><string>Resolution</string></property>
+   <property name="alignment"><set>Qt::AlignCenter</set></property>
   </widget>
   <widget class="QComboBox" name="inputRes">
    <property name="geometry">
-    <rect>
-      <x>270</x>
-      <y>30</y>
-      <width>120</width>
-      <height>32</height>
-    </rect>
+    <rect><x>165</x><y>30</y><width>120</width><height>32</height></rect>
    </property>
-   <property name="toolTip">
-    <string>Higher resolution means more detailed segment map.</string>
+   <property name="toolTip"><string>Block resolution for K-Means clustering.</string></property>
+  </widget>
+
+  <widget class="QLabel" name="labelSegments">
+   <property name="geometry">
+    <rect><x>20</x><y>75</y><width>161</width><height>18</height></rect>
    </property>
-   <property name="currentText">
-    <string/>
-   </property>
-   <property name="placeholderText">
-    <string/>
-   </property>
+   <property name="text"><string>Number of Segments</string></property>
   </widget>
   <widget class="QLineEdit" name="inputSegments">
    <property name="geometry">
-    <rect>
-      <x>70</x>
-      <y>110</y>
-      <width>113</width>
-      <height>32</height>
-    </rect>
+    <rect><x>20</x><y>95</y><width>113</width><height>32</height></rect>
    </property>
-   <property name="text">
-    <string>8</string>
-   </property>
-   <property name="placeholderText">
-    <string/>
-   </property>
+   <property name="text"><string>8</string></property>
   </widget>
-  <widget class="QLabel" name="labelSmoothness">
+
+  <widget class="QCheckBox" name="checkSmoothing">
    <property name="geometry">
-    <rect>
-     <x>40</x>
-     <y>185</y>
-     <width>151</width>
-     <height>21</height>
-    </rect>
+    <rect><x>20</x><y>140</y><width>90</width><height>21</height></rect>
    </property>
-   <property name="text">
-    <string>Smoothness</string>
+   <property name="text"><string>Smoothing</string></property>
+   <property name="toolTip"><string>Enable or disable post-process smoothing.</string></property>
+   <property name="checked"><bool>false</bool></property>
+  </widget>
+  <widget class="QToolButton" name="infoSmoothing">
+   <property name="geometry">
+    <rect><x>112</x><y>140</y><width>20</width><height>20</height></rect>
    </property>
+   <property name="text"><string>?</string></property>
+   <property name="toolTip"><string>&lt;b&gt;Smoothing&lt;/b&gt;&lt;br/&gt;Controls post-process boundary smoothing.&lt;br/&gt;&lt;br/&gt;&lt;b&gt;Low:&lt;/b&gt; Light smoothing (5px kernel).&lt;br/&gt;&lt;b&gt;Medium:&lt;/b&gt; Moderate smoothing (11px kernel).&lt;br/&gt;&lt;b&gt;High:&lt;/b&gt; Strong smoothing (21px kernel, 2 passes).&lt;br/&gt;&lt;br/&gt;Only applies when the Smoothing checkbox is enabled.</string></property>
+   <property name="autoRaise"><bool>true</bool></property>
+   <property name="styleSheet"><string notr="true">color: white;</string></property>
   </widget>
   <widget class="QSlider" name="sliderSmoothness">
    <property name="geometry">
-    <rect>
-    <x>40</x>
-    <y>210</y>
-    <width>210</width>
-    <height>22</height>
-    </rect>
+    <rect><x>20</x><y>165</y><width>130</width><height>22</height></rect>
    </property>
-   <property name="minimum">
-    <number>0</number>
-   </property>
-   <property name="maximum">
-    <number>100</number>
-   </property>
-   <property name="value">
-    <number>20</number>
-   </property>
-   <property name="orientation">
-    <enum>Qt::Horizontal</enum>
-   </property>
+   <property name="minimum"><number>0</number></property>
+   <property name="maximum"><number>2</number></property>
+   <property name="value"><number>1</number></property>
+   <property name="orientation"><enum>Qt::Horizontal</enum></property>
+   <property name="tickPosition"><enum>QSlider::TicksBelow</enum></property>
+   <property name="tickInterval"><number>1</number></property>
   </widget>
-  <widget class="QLabel" name="labelSpeed">
+
+  <widget class="QPushButton" name="buttonPredict">
    <property name="geometry">
-    <rect>
-    <x>40</x>
-    <y>235</y>
-    <width>151</width>
-    <height>21</height>
-    </rect>
+    <rect><x>20</x><y>200</y><width>120</width><height>36</height></rect>
    </property>
-   <property name="text">
-    <string>Speed</string>
-   </property>
+   <property name="toolTip"><string>Segment the map!</string></property>
+   <property name="text"><string>Segment</string></property>
   </widget>
-  <widget class="QSlider" name="sliderSpeed">
+  <widget class="QPushButton" name="buttonStop">
+   <property name="enabled"><bool>false</bool></property>
    <property name="geometry">
-    <rect>
-     <x>40</x>
-     <y>260</y>
-     <width>210</width>
-     <height>22</height>
-    </rect>
+    <rect><x>20</x><y>240</y><width>120</width><height>32</height></rect>
    </property>
-   <property name="minimum">
-    <number>0</number>
-   </property>
-   <property name="maximum">
-    <number>100</number>
-   </property>
-   <property name="value">
-    <number>50</number>
-   </property>
-   <property name="orientation">
-    <enum>Qt::Horizontal</enum>
-   </property>
+   <property name="text"><string>Cancel Task</string></property>
   </widget>
-  <widget class="QLabel" name="labelAccuracy">
-   <property name="geometry">
-    <rect>
-     <x>40</x>
-     <y>285</y>
-     <width>151</width>
-     <height>21</height>
-    </rect>
-   </property>
-   <property name="text">
-    <string>Accuracy</string>
-   </property>
-  </widget>
-  <widget class="QSlider" name="sliderAccuracy">
-   <property name="geometry">
-    <rect>
-     <x>40</x>
-     <y>310</y>
-     <width>210</width>
-     <height>22</height>
-    </rect>
-   </property>
-   <property name="minimum">
-    <number>0</number>
-   </property>
-   <property name="maximum">
-    <number>100</number>
-   </property>
-   <property name="value">
-    <number>70</number>
-   </property>
-   <property name="orientation">
-    <enum>Qt::Horizontal</enum>
-   </property>
-  </widget>
+
   <widget class="QPushButton" name="buttonFeedback">
    <property name="geometry">
-    <rect>
-      <x>260</x>
-      <y>230</y>
-      <width>150</width>
-      <height>32</height>
-    </rect>
+    <rect><x>165</x><y>200</y><width>120</width><height>32</height></rect>
    </property>
-   <property name="text">
-    <string>Provide Feedback</string>
-   </property>
+   <property name="text"><string>Provide Feedback</string></property>
   </widget>
+
+  <widget class="QLabel" name="imageLarge">
+   <property name="geometry">
+    <rect><x>165</x><y>75</y><width>120</width><height>120</height></rect>
+   </property>
+   <property name="text"><string></string></property>
+   <property name="alignment"><set>Qt::AlignCenter</set></property>
+   <property name="scaledContents"><bool>true</bool></property>
+  </widget>
+
+  <widget class="QProgressBar" name="jobProgress">
+   <property name="geometry">
+    <rect><x>20</x><y>285</y><width>265</width><height>28</height></rect>
+   </property>
+   <property name="minimum"><number>0</number></property>
+   <property name="maximum"><number>100</number></property>
+   <property name="value"><number>0</number></property>
+   <property name="format"><string>Idle</string></property>
+   <property name="textVisible"><bool>true</bool></property>
+  </widget>
+
+  <widget class="QPlainTextEdit" name="inputBox">
+   <property name="geometry">
+    <rect><x>20</x><y>320</y><width>265</width><height>130</height></rect>
+   </property>
+   <property name="overwriteMode"><bool>false</bool></property>
+   <property name="backgroundVisible"><bool>false</bool></property>
+  </widget>
+
  </widget>
  <resources/>
  <connections/>

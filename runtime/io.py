@@ -47,12 +47,12 @@ def _materialize_model(model_or_loader: Any, device: Optional[Any]):
     if callable(to_fn) and device is not None:
         try:
             model = to_fn(device)
-        except Exception:  # pragma: no cover - best effort device placement
+        except Exception:  # pragma: no cover  # nosec B110 - best effort device placement
             pass
     eval_fn = getattr(model, "eval", None)
     if callable(eval_fn):
         try:
             model = eval_fn()
-        except Exception:
+        except Exception:  # nosec B110 - best effort eval mode
             pass
     return model
