@@ -81,12 +81,15 @@ SLIDER_LEVEL_LOW = 0
 SLIDER_LEVEL_MEDIUM = 1
 SLIDER_LEVEL_HIGH = 2
 SLIDER_LEVEL_NAMES = {SLIDER_LEVEL_LOW: "low", SLIDER_LEVEL_MEDIUM: "medium", SLIDER_LEVEL_HIGH: "high"}
-# Smoothing kernel sizes: low=5px, medium=11px, high=21px (must be odd)
-SMOOTHING_KERNEL_MAP = {
-    SLIDER_LEVEL_LOW: {"kernel_size": 5, "iterations": 1},
-    SLIDER_LEVEL_MEDIUM: {"kernel_size": 11, "iterations": 1},
-    SLIDER_LEVEL_HIGH: {"kernel_size": 21, "iterations": 2},
+# Base smoothing kernel sizes at resolution=4 (high). Scales proportionally with resolution.
+# At resolution 4: low=5px, medium=11px, high=21px
+# At resolution 16: low=20px, medium=44px, high=84px
+SMOOTHING_BASE_KERNELS = {
+    SLIDER_LEVEL_LOW: {"base_kernel": 5, "iterations": 1},
+    SLIDER_LEVEL_MEDIUM: {"base_kernel": 11, "iterations": 1},
+    SLIDER_LEVEL_HIGH: {"base_kernel": 21, "iterations": 2},
 }
+SMOOTHING_BASE_RESOLUTION = 4  # Reference resolution for base kernel sizes
 
 PROGRESS_PERCENT_PATTERN = re.compile(r"(?P<percent>\d{1,3})\s*%")
 PROGRESS_STEP_PATTERN = re.compile(r"step\s+(?P<current>\d+)\s*/\s*(?P<total>\d+)", re.IGNORECASE)
@@ -568,17 +571,33 @@ class Segmenter:
         return bool(checkbox.isChecked())
 
     def _blur_config(self, resolution_label: Optional[str] = None) -> dict:
-        """Build blur config based on smoothing slider. Returns None if smoothing is disabled."""
+        """Build blur config based on smoothing slider and resolution. Returns None if smoothing is disabled.
+        
+        Kernel size scales proportionally with resolution:
+        - At high resolution (4px blocks): base kernel sizes
+        - At low resolution (16px blocks): 4x larger kernels
+        """
         if not self._is_smoothing_enabled():
             return None
         dlg = getattr(self, "dlg", None)
         if not dlg:
-            return SMOOTHING_KERNEL_MAP[SLIDER_LEVEL_MEDIUM].copy()
-        slider = getattr(dlg, "sliderSmoothness", None)
-        if not slider:
-            return SMOOTHING_KERNEL_MAP[SLIDER_LEVEL_MEDIUM].copy()
-        level = int(np.clip(slider.value(), SLIDER_LEVEL_LOW, SLIDER_LEVEL_HIGH))
-        return SMOOTHING_KERNEL_MAP.get(level, SMOOTHING_KERNEL_MAP[SLIDER_LEVEL_MEDIUM]).copy()
+            level = SLIDER_LEVEL_MEDIUM
+        else:
+            slider = getattr(dlg, "sliderSmoothness", None)
+            level = int(np.clip(slider.value(), SLIDER_LEVEL_LOW, SLIDER_LEVEL_HIGH)) if slider else SLIDER_LEVEL_MEDIUM
+        
+        base = SMOOTHING_BASE_KERNELS.get(level, SMOOTHING_BASE_KERNELS[SLIDER_LEVEL_MEDIUM])
+        base_kernel = base["base_kernel"]
+        iterations = base["iterations"]
+        
+        # Scale kernel proportionally with resolution
+        resolution = RESOLUTION_VALUE_MAP.get(resolution_label, SMOOTHING_BASE_RESOLUTION) if resolution_label else SMOOTHING_BASE_RESOLUTION
+        scale = resolution / SMOOTHING_BASE_RESOLUTION
+        kernel = int(round(base_kernel * scale))
+        kernel = kernel | 1  # Ensure odd
+        kernel = max(3, kernel)  # Minimum 3px
+        
+        return {"kernel_size": kernel, "iterations": iterations}
 
     def open_feedback_link(self):
         if not getattr(self, "dlg", None):

@@ -18,24 +18,26 @@ def test_slider_level_constants_exist():
     assert "SLIDER_LEVEL_MEDIUM = 1" in content
     assert "SLIDER_LEVEL_HIGH = 2" in content
     assert "SLIDER_LEVEL_NAMES" in content
-    assert "SMOOTHING_KERNEL_MAP" in content
+    assert "SMOOTHING_BASE_KERNELS" in content
 
 
-def test_smoothing_kernel_map_has_three_levels():
-    """Verify SMOOTHING_KERNEL_MAP has three levels with kernel_size and iterations."""
+def test_smoothing_base_kernels_has_three_levels():
+    """Verify SMOOTHING_BASE_KERNELS has three levels with base_kernel and iterations."""
     spec_file = str(__import__("pathlib").Path(__file__).parents[1] / "segmenter.py")
     with open(spec_file, encoding="utf-8") as f:
         content = f.read()
 
-    # Find SMOOTHING_KERNEL_MAP block
-    assert "SMOOTHING_KERNEL_MAP" in content, "SMOOTHING_KERNEL_MAP not found"
-    # Should have kernel_size and iterations
-    assert "kernel_size" in content
+    # Find SMOOTHING_BASE_KERNELS block
+    assert "SMOOTHING_BASE_KERNELS" in content, "SMOOTHING_BASE_KERNELS not found"
+    # Should have base_kernel and iterations
+    assert "base_kernel" in content
     assert "iterations" in content
     # Verify all three levels are present
     assert "SLIDER_LEVEL_LOW" in content
     assert "SLIDER_LEVEL_MEDIUM" in content
     assert "SLIDER_LEVEL_HIGH" in content
+    # Should have base resolution reference
+    assert "SMOOTHING_BASE_RESOLUTION" in content
 
 
 def test_smoothing_checkbox_default_unchecked():
@@ -243,12 +245,15 @@ def test_apply_optional_blur_imported():
     assert "from .funcs import" in content or "from funcs import" in content
 
 
-def test_blur_config_uses_smoothing_kernel_map():
-    """Verify _blur_config uses SMOOTHING_KERNEL_MAP directly."""
+def test_blur_config_scales_with_resolution():
+    """Verify _blur_config uses SMOOTHING_BASE_KERNELS and scales with resolution."""
     spec_file = str(__import__("pathlib").Path(__file__).parents[1] / "segmenter.py")
     with open(spec_file, encoding="utf-8") as f:
         content = f.read()
 
-    # Find the _blur_config method and check it uses SMOOTHING_KERNEL_MAP
+    # Find the _blur_config method and check it uses scaled kernels
     assert "def _blur_config" in content
-    assert "SMOOTHING_KERNEL_MAP" in content
+    assert "SMOOTHING_BASE_KERNELS" in content
+    assert "SMOOTHING_BASE_RESOLUTION" in content
+    # Should scale kernel based on resolution
+    assert "scale" in content or "resolution" in content.lower()

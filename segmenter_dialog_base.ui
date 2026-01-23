@@ -80,7 +80,7 @@ QPlainTextEdit { color: palette(text); }</string>
     <rect><x>112</x><y>140</y><width>20</width><height>20</height></rect>
    </property>
    <property name="text"><string>?</string></property>
-   <property name="toolTip"><string>&lt;b&gt;Smoothing&lt;/b&gt;&lt;br/&gt;Controls post-process boundary smoothing.&lt;br/&gt;&lt;br/&gt;&lt;b&gt;Low:&lt;/b&gt; Light smoothing (5px kernel).&lt;br/&gt;&lt;b&gt;Medium:&lt;/b&gt; Moderate smoothing (11px kernel).&lt;br/&gt;&lt;b&gt;High:&lt;/b&gt; Strong smoothing (21px kernel, 2 passes).&lt;br/&gt;&lt;br/&gt;Only applies when the Smoothing checkbox is enabled.</string></property>
+   <property name="toolTip"><string>&lt;b&gt;Smoothing&lt;/b&gt;&lt;br/&gt;Controls post-process boundary smoothing.&lt;br/&gt;Kernel size scales with resolution.&lt;br/&gt;&lt;br/&gt;&lt;b&gt;Low:&lt;/b&gt; Light smoothing (5-20px).&lt;br/&gt;&lt;b&gt;Medium:&lt;/b&gt; Moderate smoothing (11-44px).&lt;br/&gt;&lt;b&gt;High:&lt;/b&gt; Strong smoothing (21-84px, 2 passes).&lt;br/&gt;&lt;br/&gt;Only applies when the checkbox is enabled.</string></property>
    <property name="autoRaise"><bool>true</bool></property>
    <property name="styleSheet"><string notr="true">color: white;</string></property>
   </widget>
