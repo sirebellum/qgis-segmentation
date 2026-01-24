@@ -90,9 +90,9 @@ Low resolution produces larger, more stable regions with fewer tiny fragments. I
 ---
 
 ### Low resolution, smoothing MIN
-Even minimal smoothing at low resolution can reduce leftover speckle while still keeping the “coarse” structure intact.
+Medium smoothing at low resolution can reduce leftover speckle while still keeping the “coarse” structure intact.
 
-![Low resolution with min smoothing](docs/images/low_smoothed_min.png)
+![Low resolution with min smoothing](docs/images/low_smoothed_med.png)
 
 ---
 
