@@ -41,6 +41,7 @@ from qgis.core import (
     QgsMessageLog,
     QgsProject,
     QgsRasterLayer,
+    QgsMapLayer,
     Qgis,
 )
 
@@ -50,7 +51,6 @@ from .resources import *  # noqa: F401,F403 - Qt resource imports
 # Import the code for the dialog
 from .segmenter_dialog import SegmenterDialog
 
-from io import BytesIO
 from datetime import datetime
 from .dependency_manager import ensure_dependencies
 
@@ -60,12 +60,19 @@ import torch  # noqa: E402 - must import after ensure_dependencies
 import numpy as np  # noqa: E402
 from .funcs import (  # noqa: E402
     execute_kmeans_segmentation,
-    execute_cnn_segmentation,
     SegmentationCanceled,
+    _apply_optional_blur,
 )
 from .qgis_funcs import render_raster  # noqa: E402
+from .map_to_raster import (  # noqa: E402
+    is_file_backed_gdal_raster,
+    is_renderable_non_file_layer,
+    build_convert_map_to_raster_params,
+    extract_layer_metadata,
+    get_canvas_extent_tuple,
+    open_convert_map_to_raster_dialog,
+)
 
-TILE_SIZE = 512
 SUPPORTED_RASTER_EXTENSIONS = {".tif", ".tiff"}
 GITHUB_ISSUES_URL = "https://github.com/sirebellum/qgis-segmentation/issues/new/choose"
 PROFILE_MODEL_SIZES = {"high": 4, "medium": 8, "low": 16}
@@ -75,8 +82,24 @@ RESOLUTION_CHOICES = (
     ("medium", 8),
     ("high", 4),
 )
-DEFAULT_RESOLUTION_LABEL = "low"
+DEFAULT_RESOLUTION_LABEL = "high"
 RESOLUTION_VALUE_MAP = {label: value for label, value in RESOLUTION_CHOICES}
+
+# Discrete slider levels: 0=low, 1=medium, 2=high
+SLIDER_LEVEL_LOW = 0
+SLIDER_LEVEL_MEDIUM = 1
+SLIDER_LEVEL_HIGH = 2
+SLIDER_LEVEL_NAMES = {SLIDER_LEVEL_LOW: "low", SLIDER_LEVEL_MEDIUM: "medium", SLIDER_LEVEL_HIGH: "high"}
+# Base smoothing kernel sizes at resolution=4 (high). Scales proportionally with resolution.
+# At resolution 4: low=5px, medium=11px, high=21px
+# At resolution 16: low=20px, medium=44px, high=84px
+SMOOTHING_BASE_KERNELS = {
+    SLIDER_LEVEL_LOW: {"base_kernel": 5, "iterations": 1},
+    SLIDER_LEVEL_MEDIUM: {"base_kernel": 11, "iterations": 1},
+    SLIDER_LEVEL_HIGH: {"base_kernel": 21, "iterations": 2},
+}
+SMOOTHING_BASE_RESOLUTION = 4  # Reference resolution for base kernel sizes
+
 PROGRESS_PERCENT_PATTERN = re.compile(r"(?P<percent>\d{1,3})\s*%")
 PROGRESS_STEP_PATTERN = re.compile(r"step\s+(?P<current>\d+)\s*/\s*(?P<total>\d+)", re.IGNORECASE)
 PROGRESS_TEXT_LIMIT = 80
@@ -233,13 +256,28 @@ class Task(QgsTask):
         QgsMessageLog.logMessage("Task finished", "Segmenter", level=Qgis.Info)
         segmenter = self.kwargs.get("segmenter")
         if result and not self.isCanceled():
+            # Apply optional post-smoothing
+            blur_config = self.kwargs.get("blur_config")
+            status_callback = self.kwargs.get("status_callback")
+            output = self.result
+            if blur_config is not None:
+                if segmenter:
+                    segmenter._update_overall_progress("smooth", 0, "Smoothing segmentation map...")
+                output = _apply_optional_blur(
+                    output,
+                    blur_config,
+                    status_callback,
+                    cancel_token=self.cancel_token,
+                )
+                if segmenter:
+                    segmenter._update_overall_progress("smooth", 100, "Smoothing complete.")
             # render raster
             if segmenter:
                 segmenter._update_overall_progress("render", 20, "Rendering output...")
             render_raster(
-                self.result,
+                output,
                 self.kwargs["layer"].extent(),
-                f"{self.kwargs['layer'].name()}_{self.kwargs['model']}_{self.kwargs['num_segments']}_{self.kwargs['resolution']}",
+                f"{self.kwargs['layer'].name()}_kmeans_{self.kwargs['num_segments']}_{self.kwargs['resolution']}",
                 self.kwargs["canvas"].layer(0).crs().postgisSrid(),
             )
             self._status("Segmentation layer rendered")
@@ -263,7 +301,7 @@ class Task(QgsTask):
             return
         try:
             callback(message)
-        except Exception:  # pragma: no cover - best effort status callback
+        except Exception:  # pragma: no cover  # nosec B110 - best effort status callback
             pass
 
 
@@ -316,13 +354,17 @@ class Segmenter:
         self._log_history = deque(maxlen=50)
         self.status_emitter = StatusEmitter()
         self.status_emitter.message.connect(self._handle_status_message)
-        self.model = "cnn"
         self._logged_missing_layers = False
         self._logo_hover = None
         self._layer_refresh_controller = None
         self._progress_last_value = 0.0
         self._progress_active = False
         self._progress_stage = "idle"
+        # Map-to-raster assist: track last triggered layer to avoid dialog spam
+        self._last_map_assist_layer_id = None
+        self._layer_selection_controller = None
+        # Flag to suppress map-to-raster assist during programmatic dropdown changes
+        self._suppress_layer_assist = False
 
     # noinspection PyMethodMayBeStatic
     def tr(self, message):
@@ -532,87 +574,44 @@ class Segmenter:
         if button is not None:
             button.setEnabled(bool(enabled))
 
-    def _collect_heuristics(self, resolution_label: Optional[str] = None):
+    def _is_smoothing_enabled(self) -> bool:
+        """Check if the smoothing checkbox is checked. Default is False (disabled)."""
         dlg = getattr(self, "dlg", None)
-        multiplier = self._heuristic_scale(resolution_label)
-        if dlg is None:
-            base = {"smoothness": 0.25, "speed": 0.5, "accuracy": 0.65}
-            return {k: float(np.clip(v * multiplier, 0.0, 1.0)) for k, v in base.items()}
-
-        def _value(name, default=0.5):
-            slider = getattr(dlg, name, None)
-            if not slider:
-                return float(np.clip(default * multiplier, 0.0, 1.0))
-            maximum = max(1, slider.maximum())
-            raw = slider.value() / maximum
-            return float(np.clip(raw * multiplier, 0.0, 1.0))
-
-        return {
-            "smoothness": _value("sliderSmoothness", 0.25),
-            "speed": _value("sliderSpeed", 0.5),
-            "accuracy": _value("sliderAccuracy", 0.65),
-        }
-
-    def _build_heuristic_overrides(self, resolution_label: Optional[str] = None):
-        heuristics = self._collect_heuristics(resolution_label)
-        smooth = heuristics["smoothness"]
-        speed = heuristics["speed"]
-        accuracy = heuristics["accuracy"]
-        resolution_value = RESOLUTION_VALUE_MAP.get(
-            resolution_label or DEFAULT_RESOLUTION_LABEL,
-            RESOLUTION_VALUE_MAP[DEFAULT_RESOLUTION_LABEL],
-        )
-        finest_resolution = min(RESOLUTION_VALUE_MAP.values()) or 1
-        coarseness = max(1.0, float(resolution_value) / float(finest_resolution))
-
-        smoothing_scale = float(np.interp(smooth, [0.0, 1.0], [0.7, 1.9]))
-        smoothing_scale = float(np.clip(smoothing_scale * 0.1 * coarseness, 0.02, 0.45))
-        tile_factor = float(np.interp(speed, [0.0, 1.0], [0.8, 1.35]))
-        tile_size = int(np.clip(TILE_SIZE * tile_factor, 192, 768))
-
-        latent_cfg = {
-            "mix": float(np.interp(smooth, [0.0, 1.0], [0.35, 0.85])) * 0.01,
-            "temperature": float(np.interp(accuracy, [0.0, 1.0], [3.5, 0.9])),
-            "neighbors": int(np.round(np.interp(accuracy, [0.0, 1.0], [6, 28]))),
-            "iterations": int(max(1, round(np.interp(smooth, [0.0, 1.0], [1, 4])))),
-            "spatial_weight": float(np.interp(accuracy, [0.0, 1.0], [0.04, 0.16])) * 0.01,
-            "chunk_size": int(np.round(np.interp(speed, [0.0, 1.0], [20000, 65536]))),
-            "index_points": int(np.round(np.interp(speed, [0.0, 1.0], [50000, 180000]))),
-            "query_batch": int(np.round(np.interp(speed, [0.0, 1.0], [12000, 60000]))),
-            "hierarchy_factor": 1 if accuracy < 0.4 else 2,
-            "hierarchy_passes": 1 if accuracy < 0.7 else 2,
-        }
-
-        latent_cfg["mix"] = np.clip(latent_cfg["mix"] * coarseness, 0.01, 0.25)
-        latent_cfg["spatial_weight"] = float(np.clip(latent_cfg["spatial_weight"] * coarseness, 0.001, 0.03))
-
-        return {
-            "tile_size": tile_size,
-            "smoothing_scale": smoothing_scale,
-            "latent_knn": latent_cfg,
-        }
+        if not dlg:
+            return False
+        checkbox = getattr(dlg, "checkSmoothing", None)
+        if not checkbox:
+            return False
+        return bool(checkbox.isChecked())
 
     def _blur_config(self, resolution_label: Optional[str] = None) -> dict:
-        heuristics = self._collect_heuristics(resolution_label)
-        smooth = heuristics["smoothness"]
-        kernel = int(np.round(np.interp(smooth, [0.0, 1.0], [1, 7])))
-        kernel = kernel | 1  # ensure odd kernel size
-        kernel = max(1, min(kernel, 9))
-        iterations = 1 if smooth < 0.7 else 2
+        """Build blur config based on smoothing slider and resolution. Returns None if smoothing is disabled.
+        
+        Kernel size scales proportionally with resolution:
+        - At high resolution (4px blocks): base kernel sizes
+        - At low resolution (16px blocks): 4x larger kernels
+        """
+        if not self._is_smoothing_enabled():
+            return None
+        dlg = getattr(self, "dlg", None)
+        if not dlg:
+            level = SLIDER_LEVEL_MEDIUM
+        else:
+            slider = getattr(dlg, "sliderSmoothness", None)
+            level = int(np.clip(slider.value(), SLIDER_LEVEL_LOW, SLIDER_LEVEL_HIGH)) if slider else SLIDER_LEVEL_MEDIUM
+        
+        base = SMOOTHING_BASE_KERNELS.get(level, SMOOTHING_BASE_KERNELS[SLIDER_LEVEL_MEDIUM])
+        base_kernel = base["base_kernel"]
+        iterations = base["iterations"]
+        
+        # Scale kernel proportionally with resolution
+        resolution = RESOLUTION_VALUE_MAP.get(resolution_label, SMOOTHING_BASE_RESOLUTION) if resolution_label else SMOOTHING_BASE_RESOLUTION
+        scale = resolution / SMOOTHING_BASE_RESOLUTION
+        kernel = int(round(base_kernel * scale))
+        kernel = kernel | 1  # Ensure odd
+        kernel = max(3, kernel)  # Minimum 3px
+        
         return {"kernel_size": kernel, "iterations": iterations}
-
-    def _heuristic_scale(self, resolution_label: Optional[str]) -> float:
-        if not resolution_label:
-            return 1.0
-        key = resolution_label.strip().lower()
-        size = PROFILE_MODEL_SIZES.get(key)
-        if not size:
-            return 1.0
-        numerator = float(size)
-        denominator = float(max(PROFILE_MODEL_SIZES.values()))
-        if denominator <= 0:
-            return 1.0
-        return np.clip(numerator / denominator, 0.1, 1.0)
 
     def open_feedback_link(self):
         if not getattr(self, "dlg", None):
@@ -774,7 +773,20 @@ class Segmenter:
             return
         layer = layers[0]
         if not self._is_supported_raster_layer(layer):
-            self.log_status("Selected layer is not a supported 3-band GeoTIFF raster.")
+            # Check if this is a renderable layer that needs conversion
+            meta = extract_layer_metadata(layer)
+            if is_renderable_non_file_layer(
+                meta["layer_type"],
+                meta["provider_name"],
+                meta["source_path"],
+            ):
+                self.log_status(
+                    "Selected layer is a map service. Please use 'Convert map to raster' first "
+                    "(dialog should have opened when you selected this layer), then select the "
+                    "generated GeoTIFF as input."
+                )
+            else:
+                self.log_status("Selected layer is not a supported 3-band GeoTIFF raster.")
             self._reset_progress_bar()
             return
         if not layer.isValid():
@@ -810,33 +822,12 @@ class Segmenter:
         resolution = RESOLUTION_VALUE_MAP.get(resolution_label, RESOLUTION_VALUE_MAP[DEFAULT_RESOLUTION_LABEL])
 
         blur_config = self._blur_config(resolution_label)
-        heuristics = self._collect_heuristics(resolution_label)
-        heuristic_overrides = self._build_heuristic_overrides(resolution_label)
-        self.log_status(
-            "Heuristic tuning — smoothness {:.2f}, speed {:.2f}, accuracy {:.2f}.".format(
-                heuristics["smoothness"], heuristics["speed"], heuristics["accuracy"]
-            )
-        )
-        self.log_status(
-            f"Post-smoothing configured: {blur_config['kernel_size']}px kernel, {blur_config['iterations']} pass(es)."
-        )
-        tile_override = heuristic_overrides.get("tile_size") if heuristic_overrides else None
-        if isinstance(tile_override, (int, float)):
-            self.log_status(f"CNN tile size override set to {int(tile_override)}px.")
-
-        effective_resolution = resolution
-        resolution_scale = float(np.interp(heuristics["speed"], [0.0, 1.0], [0.85, 1.35]))
-        scaled_resolution = int(max(1, round(resolution * resolution_scale)))
-        if scaled_resolution != resolution:
+        if blur_config:
             self.log_status(
-                f"Speed slider adjusted block resolution from {resolution} to {scaled_resolution}."
+                f"Post-smoothing configured: {blur_config['kernel_size']}px kernel, {blur_config['iterations']} pass(es)."
             )
-            effective_resolution = scaled_resolution
-
-        sample_scale = float(np.interp(heuristics["accuracy"], [0.0, 1.0], [0.65, 1.35]))
-        self.log_status(
-            f"Accuracy slider sampling scale set to {sample_scale:.2f}x base population."
-        )
+        else:
+            self.log_status("Post-smoothing disabled (checkbox unchecked).")
 
         if not hasattr(self, "device"):
             raise AttributeError("Segmenter instance must have a 'device' attribute set before calling predict().")
@@ -845,54 +836,27 @@ class Segmenter:
             "layer": layer,
             "canvas": self.canvas,
             "dlg": self.dlg,
-            "model": self.model,
             "num_segments": num_segments,
             "resolution": resolution,
             "status_callback": self.log_status,
             "segmenter": self,
+            "blur_config": blur_config,
         }
 
-        func = None
-        args = ()
-        if self.model == "kmeans":
-            func = execute_kmeans_segmentation
-            args = (
-                raster_source,
-                num_segments,
-                effective_resolution,
-                None,
-                self.worker_status,
-                None,
-                sample_scale,
-                self.device,
-            )
-        elif self.model == "cnn":
-            func = execute_cnn_segmentation
-
-            def model_provider():
-                return self.load_model(resolution)
-
-            args = (
-                model_provider,
-                raster_source,
-                num_segments,
-                None,
-                TILE_SIZE,
-                self.device,
-                self.worker_status,
-                resolution_label,
-                heuristic_overrides,
-                None,
-                blur_config,
-            )
-        else:
-            self.log_status(f"Unsupported model selection: {self.model}")
-            self._reset_progress_bar()
-            return
+        func = execute_kmeans_segmentation
+        args = (
+            raster_source,
+            num_segments,
+            resolution,
+            None,  # chunk_plan - let pipeline compute it
+            self.worker_status,
+            1.0,  # sample_scale - fixed at 1.0 (speed/accuracy sliders removed)
+            self.device,
+        )
 
         self._update_overall_progress("queue", 90, "Dispatching segmentation task...")
         self.log_status(
-            f"Queued {self.model.upper()} segmentation with {num_segments} segments at {self.dlg.inputRes.currentText()} resolution."
+            f"Queued K-Means segmentation with {num_segments} segments at {self.dlg.inputRes.currentText()} resolution."
         )
         self._update_overall_progress("queue", 100, "Task queued; starting worker...")
         self._update_overall_progress("inference", 0, "Running segmentation...")
@@ -902,61 +866,48 @@ class Segmenter:
         if self.task.waitForFinished(1):
             self.log_status("An error occurred. Please try again.")
 
-    # Load model from disk
-    def load_model(self, model_name):
-        # Load model into bytes object
-        model_path = os.path.join(self.plugin_dir, f"models/model_{model_name}.pth")
-        with open(model_path, "rb") as f:
-            model_bytes = BytesIO(f.read())
-
-        # Load torchscript model
-        model = torch.jit.load(model_bytes)
-        model.eval().to(self.device)
-
-        return model
-
     # Process user input box
     def submit(self):
         return
 
-    #  Display models in dropdown
-    def render_models(self):
-        model_list = ["K-Means", "CNN"]
-        self.dlg.inputLoadModel.clear()
-        for model in model_list:
-            self.dlg.inputLoadModel.addItem(model)
-        default_model = "CNN"
-        index = self.dlg.inputLoadModel.findText(default_model)
-        if index >= 0:
-            self.dlg.inputLoadModel.setCurrentIndex(index)
-        self.set_model()
-
     # Display layers in dropdown
     def render_layers(self):
-        project_layers = QgsProject.instance().mapLayers().values()
-        raster_layers = [
-            layer
-            for layer in project_layers
-            if isinstance(layer, QgsRasterLayer) and self._is_supported_raster_layer(layer)
-        ]
-        raster_layers.sort(key=lambda lyr: lyr.name().lower())
+        # Suppress map-to-raster assist during programmatic population
+        self._suppress_layer_assist = True
+        try:
+            project_layers = QgsProject.instance().mapLayers().values()
+            # Include all renderable layers: rasters (file-backed and web services) plus vectors
+            all_layers = []
+            for layer in project_layers:
+                if not isinstance(layer, QgsMapLayer):
+                    continue
+                # Include raster layers (GDAL-backed and WMS/XYZ/etc.)
+                if isinstance(layer, QgsRasterLayer):
+                    all_layers.append(layer)
+                # Include vector layers (can be rendered to raster)
+                elif layer.type() == QgsMapLayer.VectorLayer:
+                    all_layers.append(layer)
+            all_layers.sort(key=lambda lyr: lyr.name().lower())
 
-        current = self.dlg.inputLayer.currentText()
-        self.dlg.inputLayer.clear()
-        if not raster_layers:
-            if not self._logged_missing_layers:
-                self.log_status("No supported 3-band GeoTIFF rasters detected in the project.")
-                self._logged_missing_layers = True
-            return
+            current = self.dlg.inputLayer.currentText()
+            self.dlg.inputLayer.clear()
+            if not all_layers:
+                if not self._logged_missing_layers:
+                    self.log_status("No layers detected in the project.")
+                    self._logged_missing_layers = True
+                return
 
-        self._logged_missing_layers = False
-        for layer in raster_layers:
-            self.dlg.inputLayer.addItem(layer.name())
+            self._logged_missing_layers = False
+            for layer in all_layers:
+                # Store layer ID as item data for reliable lookup
+                self.dlg.inputLayer.addItem(layer.name(), layer.id())
 
-        if current:
-            index = self.dlg.inputLayer.findText(current)
-            if index >= 0:
-                self.dlg.inputLayer.setCurrentIndex(index)
+            if current:
+                index = self.dlg.inputLayer.findText(current)
+                if index >= 0:
+                    self.dlg.inputLayer.setCurrentIndex(index)
+        finally:
+            self._suppress_layer_assist = False
 
     # Display resolutions in dropdown
     def render_resolutions(self):
@@ -969,14 +920,6 @@ class Segmenter:
             index = self.dlg.inputRes.findText(DEFAULT_RESOLUTION_LABEL, Qt.MatchFixedString)
         if index >= 0:
             self.dlg.inputRes.setCurrentIndex(index)
-
-    # Set model based on selected dropdown
-    def set_model(self):
-        model = self.dlg.inputLoadModel.currentText()
-        if model == "K-Means":
-            self.model = "kmeans"
-        elif model == "CNN":
-            self.model = "cnn"
 
     def _is_supported_raster_layer(self, layer):
         if not isinstance(layer, QgsRasterLayer):
@@ -1018,7 +961,6 @@ class Segmenter:
                 self.device = torch.device("cpu")
 
             # Populate drop down menus
-            self.render_models()
             self.render_layers()
             self.render_resolutions()
             if not (self.dlg.inputSegments.text() or "").strip():
@@ -1033,16 +975,17 @@ class Segmenter:
             self.dlg.inputBox.clear()
             self._flush_status_buffer()
             self.log_status(gpu_msg)
-            self.log_status("Segmentation runtime active with optional post-smoothing.")
+            self.log_status("K-Means segmentation runtime ready.")
 
             # Attach inputs
             self.dlg.inputBox.textChanged.connect(self.submit)
             self.dlg.buttonPredict.clicked.connect(self.predict)
             self.dlg.buttonFeedback.clicked.connect(self.open_feedback_link)
             self.dlg.buttonStop.clicked.connect(self.stop_current_task)
-            self.dlg.inputLoadModel.currentIndexChanged.connect(self.set_model)
-            self.dlg.inputLoadModel.highlighted.connect(self.render_layers)
             self._set_stop_enabled(False)
+
+            # Wire layer selection change for map-to-raster assist
+            self.dlg.inputLayer.currentIndexChanged.connect(self._on_layer_selection_changed)
 
             # Render logo
             img_path = os.path.join(self.plugin_dir, "logo.png")
@@ -1056,6 +999,51 @@ class Segmenter:
         if not self.task:
             self._reset_progress_bar()
         self.dlg.show()
+        # Check if we should auto-trigger map-to-raster assist (no compatible rasters available)
+        self._check_auto_map_assist()
+
+    def _check_auto_map_assist(self) -> None:
+        """Auto-trigger map-to-raster assist if no compatible rasters exist but map layers do."""
+        dlg = getattr(self, "dlg", None)
+        if not dlg:
+            return
+
+        # Check if there are any layers at all
+        if dlg.inputLayer.count() == 0:
+            return
+
+        # Check if any layer is a supported raster
+        has_supported_raster = False
+        first_map_layer = None
+        first_map_layer_id = None
+
+        for i in range(dlg.inputLayer.count()):
+            layer_id = dlg.inputLayer.itemData(i)
+            if not layer_id:
+                continue
+            layer = QgsProject.instance().mapLayer(layer_id)
+            if not layer:
+                continue
+
+            if self._is_supported_raster_layer(layer):
+                has_supported_raster = True
+                break
+
+            # Track first map/web service layer
+            if first_map_layer is None:
+                meta = extract_layer_metadata(layer)
+                if is_renderable_non_file_layer(
+                    meta["layer_type"],
+                    meta["provider_name"],
+                    meta["source_path"],
+                ):
+                    first_map_layer = layer
+                    first_map_layer_id = layer_id
+
+        # If no supported rasters but we have a map layer, auto-trigger assist
+        if not has_supported_raster and first_map_layer is not None:
+            self._last_map_assist_layer_id = first_map_layer_id
+            self._open_convert_map_to_raster_assist(first_map_layer)
 
     def _init_layer_refresh(self):
         dlg = getattr(self, "dlg", None)
@@ -1067,3 +1055,87 @@ class Segmenter:
         if self._layer_refresh_controller is None:
             self._layer_refresh_controller = _ComboRefreshController(combo, self.render_layers)
             combo.installEventFilter(self._layer_refresh_controller)
+    def _on_layer_selection_changed(self, index: int) -> None:
+        """Handle layer dropdown selection change for map-to-raster assist.
+
+        Opens the Convert map to raster dialog only if:
+        1. The selection was made by the user (not programmatic), AND
+        2. The selected layer is a web service/vector (not a file-backed GDAL raster)
+        """
+        if index < 0:
+            return
+
+        # Skip if this is a programmatic change (e.g., during render_layers)
+        if getattr(self, "_suppress_layer_assist", False):
+            return
+
+        dlg = getattr(self, "dlg", None)
+        if not dlg:
+            return
+
+        # Get layer ID from item data (set in render_layers)
+        layer_id = dlg.inputLayer.itemData(index)
+        if not layer_id:
+            return
+
+        # Avoid dialog spam: don't trigger if we already triggered for this layer
+        if layer_id == self._last_map_assist_layer_id:
+            return
+
+        # Lookup layer by ID
+        layer = QgsProject.instance().mapLayer(layer_id)
+        if not layer:
+            return
+
+        # Check if this is a supported raster (no assist needed)
+        if self._is_supported_raster_layer(layer):
+            # Clear the assist state for raster layers
+            self._last_map_assist_layer_id = None
+            return
+
+        # Extract metadata for detection
+        meta = extract_layer_metadata(layer)
+
+        # Check if this is a renderable non-file layer
+        if not is_renderable_non_file_layer(
+            meta["layer_type"],
+            meta["provider_name"],
+            meta["source_path"],
+        ):
+            # Not a recognized web service or vector - may be unsupported
+            self._last_map_assist_layer_id = None
+            return
+
+        # User explicitly selected a non-file layer - trigger map-to-raster assist
+        self._last_map_assist_layer_id = layer_id
+        self._open_convert_map_to_raster_assist(layer)
+
+    def _open_convert_map_to_raster_assist(self, layer) -> None:
+        """Open the Convert map to raster dialog prefilled for the given layer."""
+        canvas = getattr(self, "canvas", None)
+        if not canvas:
+            self.log_status("Map canvas not available. Cannot determine extent.")
+            return
+
+        # Build parameters
+        extent_tuple = get_canvas_extent_tuple(canvas)
+        layer_id = layer.id() if hasattr(layer, "id") else layer.name()
+        params = build_convert_map_to_raster_params(extent_tuple, layer_id)
+
+        # Log the assist action
+        self.log_status(
+            "Selected layer is a map service. Opening Convert map to raster dialog "
+            "(prefilled: current extent, 1 map unit/pixel). Adjust settings and run "
+            "to create a GeoTIFF, then select it as input."
+        )
+
+        # Open the dialog
+        dlg = getattr(self, "dlg", None)
+        parent = dlg if dlg else None
+        opened = open_convert_map_to_raster_dialog(params, parent=parent)
+
+        if not opened:
+            self.log_status(
+                "Could not open Convert map to raster dialog. "
+                "You can find it in Processing > Toolbox > Rasterize (raster saving)."
+            )

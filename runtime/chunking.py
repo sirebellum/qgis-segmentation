@@ -4,12 +4,16 @@
 from __future__ import annotations
 
 import itertools
-from typing import Callable
+from typing import Callable, Tuple
 
 import numpy as np
 
 from .common import _emit_status, _maybe_raise_cancel
 from .smoothing import _build_weight_mask, _gaussian_blur_channels
+
+
+# Default halo size for smoothing kernels (sufficient to eliminate chunk boundary artifacts)
+DEFAULT_HALO_PIXELS = 3
 
 
 def _compute_chunk_starts(length, chunk_size, stride):
@@ -20,6 +24,61 @@ def _compute_chunk_starts(length, chunk_size, stride):
     if last_start > 0 and (not starts or starts[-1] != last_start):
         starts.append(last_start)
     return sorted(set(starts))
+
+
+def _expand_window_for_halo(
+    y0: int,
+    x0: int,
+    y1: int,
+    x1: int,
+    halo: int,
+    height: int,
+    width: int,
+) -> Tuple[int, int, int, int, int, int, int, int]:
+    """Expand a window by halo pixels, clamped to raster bounds.
+
+    Returns:
+        (halo_y0, halo_x0, halo_y1, halo_x1, top_pad, left_pad, bottom_pad, right_pad)
+        where *_pad indicates how much halo was actually applied on each edge.
+    """
+    halo_y0 = max(0, y0 - halo)
+    halo_x0 = max(0, x0 - halo)
+    halo_y1 = min(height, y1 + halo)
+    halo_x1 = min(width, x1 + halo)
+
+    top_pad = y0 - halo_y0
+    left_pad = x0 - halo_x0
+    bottom_pad = halo_y1 - y1
+    right_pad = halo_x1 - x1
+
+    return halo_y0, halo_x0, halo_y1, halo_x1, top_pad, left_pad, bottom_pad, right_pad
+
+
+def _crop_halo_from_result(
+    result: np.ndarray,
+    top_pad: int,
+    left_pad: int,
+    core_height: int,
+    core_width: int,
+) -> np.ndarray:
+    """Crop the halo region from a result array to get the core region.
+
+    Args:
+        result: Array of shape (H, W) or (C, H, W)
+        top_pad: Number of halo rows at top
+        left_pad: Number of halo columns at left
+        core_height: Height of the core (non-halo) region
+        core_width: Width of the core (non-halo) region
+
+    Returns:
+        Cropped array containing only the core region.
+    """
+    if result.ndim == 2:
+        return result[top_pad:top_pad + core_height, left_pad:left_pad + core_width]
+    elif result.ndim == 3:
+        return result[:, top_pad:top_pad + core_height, left_pad:left_pad + core_width]
+    else:
+        raise ValueError(f"Expected 2D or 3D array, got {result.ndim}D")
 
 
 def _normalize_inference_output(result):
@@ -232,7 +291,10 @@ class _ChunkAggregator:
 
 
 __all__ = [
+    "DEFAULT_HALO_PIXELS",
     "_compute_chunk_starts",
+    "_expand_window_for_halo",
+    "_crop_halo_from_result",
     "_normalize_inference_output",
     "_label_to_one_hot",
     "_process_in_chunks",

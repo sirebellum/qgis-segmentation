@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: BSD-3-Clause
 # Copyright (c) 2026 Quant Civil
+"""Tests for plugin import structure and K-Means-only runtime."""
 
-import importlib
 from pathlib import Path
 
 import pytest
@@ -23,7 +23,6 @@ def test_runtime_uses_relative_imports_only():
         root / "runtime" / "__init__.py",
         root / "runtime" / "pipeline.py",
         root / "runtime" / "kmeans.py",
-        root / "runtime" / "cnn.py",
     ]
 
     patterns = [
@@ -43,3 +42,14 @@ def test_runtime_uses_relative_imports_only():
                 offenders.append((path, pattern))
 
     assert not offenders, f"Found absolute imports that should be relative: {offenders}"
+
+
+def test_segmenter_imports_only_kmeans():
+    """Verify segmenter only imports K-Means segmentation function."""
+    root = Path(__file__).resolve().parents[1]
+    text = (root / "segmenter.py").read_text(encoding="utf-8")
+    
+    # Should import K-Means
+    assert "execute_kmeans_segmentation" in text
+    # Should NOT import CNN
+    assert "execute_cnn_segmentation" not in text

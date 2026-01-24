@@ -3,10 +3,10 @@
 # This file should be included when you package your plugin.# Mandatory items:
 
 [general]
-name=Map Segmenter
+name=Land Coverage Calculator
 qgisMinimumVersion=3.0
-description=Uses machine learning to segment a map into areas of interest.
-version=2.2.3
+description=Algorithmically divides a satellite raster into a land coverage raster.
+version=2.3.0
 author=Quant Civil
 email=joshua.herrera227@gmail.com
 

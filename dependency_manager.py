@@ -9,7 +9,7 @@ import logging
 import os
 import platform
 import shutil
-import subprocess
+import subprocess  # nosec B404 - required for pip dependency installation
 import sys
 import tempfile
 import threading
@@ -153,7 +153,7 @@ def _ensure_package(spec: Dict[str, object]) -> None:
     _log_dependency_status(f"Installing dependency: {label} ({pip_name})")
     dialog = _start_install_popup(label)
     try:
-        subprocess.check_call(command, env=pip_env)
+        subprocess.check_call(command, env=pip_env)  # nosec B603 - pip command with controlled args
         _log_dependency_status(f"Dependency installed: {label}")
     except (subprocess.CalledProcessError, OSError) as exc:
         if import_name == "torch":
@@ -165,7 +165,7 @@ def _ensure_package(spec: Dict[str, object]) -> None:
                 )
                 _log_dependency_status("PyTorch CUDA install failed; retrying with CPU wheels.")
                 try:
-                    subprocess.check_call(_build_command(cpu_args), env=pip_env)
+                    subprocess.check_call(_build_command(cpu_args), env=pip_env)  # nosec B603
                     _log_dependency_status("PyTorch CPU wheel installed successfully.")
                     _close_install_popup(dialog)
                     return
@@ -255,7 +255,7 @@ def _system_pip_invocation() -> Optional[List[str]]:
 
 def _pip_command_works(command: List[str]) -> bool:
     try:
-        subprocess.check_call(
+        subprocess.check_call(  # nosec B603 - version check with controlled command
             command + ["--version"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -277,18 +277,18 @@ def _log_dependency_status(message: str) -> None:
         try:
             QgsMessageLog.logMessage(message, "Segmenter", level=Qgis.Info)
             logged = True
-        except Exception:
+        except Exception:  # nosec B110 - best effort logging
             pass
     if not logged:
         try:
             print(f"[Segmenter] {message}")
-        except Exception:
+        except Exception:  # nosec B110 - best effort logging
             pass
 
 
 def _pip_available(python_exe: str, env: Dict[str, str]) -> bool:
     try:
-        subprocess.check_call(
+        subprocess.check_call(  # nosec B603 - pip version check
             [python_exe, "-m", "pip", "--version"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -303,7 +303,7 @@ def _run_module(python_exe: str, module: str, args: List[str], env: Dict[str, st
     command = [python_exe, "-m", module]
     command.extend(args)
     try:
-        subprocess.check_call(
+        subprocess.check_call(  # nosec B603 - module invocation with controlled args
             command,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -319,7 +319,7 @@ def _download_and_install_get_pip(python_exe: str, env: Dict[str, str]) -> bool:
         "SEGMENTER_GET_PIP_URL", "https://bootstrap.pypa.io/get-pip.py"
     )
     try:
-        with urllib.request.urlopen(url, timeout=30) as response:
+        with urllib.request.urlopen(url, timeout=30) as response:  # nosec B310 - official bootstrap URL
             script_bytes = response.read()
     except Exception:
         return False
@@ -335,7 +335,7 @@ def _download_and_install_get_pip(python_exe: str, env: Dict[str, str]) -> bool:
             str(_PIP_BOOTSTRAP_DIR),
             "--no-warn-script-location",
         ]
-        subprocess.check_call(command, env=env)
+        subprocess.check_call(command, env=env)  # nosec B603 - get-pip.py installation
         return True
     except (subprocess.CalledProcessError, OSError):
         return False

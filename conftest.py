@@ -1,4 +1,3 @@
-import os
 import urllib.request
 
 import pytest
@@ -13,7 +12,10 @@ try:  # Torch may be unavailable in some environments
 except Exception:  # pragma: no cover - torch may be absent
     torch_hub = None
 
-from training.utils.seed import set_seed
+try:  # Training module may be absent in plugin-only deployments
+    from training.utils.seed import set_seed
+except ImportError:  # pragma: no cover - training may be absent
+    set_seed = None
 
 
 _GPU_METRICS = []
@@ -54,13 +56,14 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
         else:
             delta_label = f"({throughput_delta:+.1f}% throughput, {latency_delta:+.1f}% latency)"
         terminalreporter.line(
-            f"{label} [{device}] prefetch={prefetch}: {throughput:,.0f} px/s ({mp_per_s:.2f} MP/s, {elapsed*1000:.1f} ms) {delta_label}"
+            f"{label} [{device}] prefetch={prefetch}: {throughput:,.0f} px/s ({mp_per_s:.2f} MP/s, {elapsed * 1000:.1f} ms) {delta_label}"
         )
 
 
 @pytest.fixture(autouse=True)
 def _set_deterministic_seed():
-    set_seed(1234)
+    if set_seed is not None:
+        set_seed(1234)
 
 
 @pytest.fixture(autouse=True)

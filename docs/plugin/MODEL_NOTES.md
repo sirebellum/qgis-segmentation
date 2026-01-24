@@ -11,25 +11,18 @@ Copyright (c) 2026 Quant Civil
 - Must be RGB GeoTIFF (`.tif/.tiff`), provider `gdal`, band count 3
 - Data materialized via `runtime/io._materialize_raster` (GDAL loader)
 
-### Runtime Paths
-User selects **CNN** (TorchScript) or **K-Means** in the UI:
-
-**CNN Path** (`execute_cnn_segmentation`):
-1. Load TorchScript model from `models/model_{resolution}.pth`
-2. Fit global centers once using `fit_global_cnn_centers`
-3. Tile input (default 512px, configurable 192–768px)
-4. Stream assignment per chunk via `predict_cnn_with_centers`
-5. Aggregate chunk scores, apply optional post-smoothing
-6. Stitch and return labels
+### Runtime Path
+The plugin uses K-Means segmentation exclusively:
 
 **K-Means Path** (`execute_kmeans_segmentation`):
 1. Smooth and pool descriptors at resolution
 2. Fit global centers once using torch K-Means
-3. Stream assignment per chunk
+3. Stream assignment per chunk using global centers
 4. Upsample to original resolution
-5. Return labels
+5. Apply optional post-smoothing (when checkbox enabled)
+6. Return labels
 
-Both paths use **global centers** to ensure consistent label IDs across chunks (no per-chunk relabeling).
+The K-Means path uses **global centers** to ensure consistent label IDs across chunks (no per-chunk relabeling).
 
 ### Output
 - Segmentation labels as uint8 numpy array (class IDs start at 0)
@@ -40,36 +33,33 @@ Both paths use **global centers** to ensure consistent label IDs across chunks (
 
 ### User Inputs
 - **Segment count**: number of output classes (2–16 typical)
-- **Resolution**: low/medium/high → model_16/8/4.pth
-- **Sliders**: smoothness, speed, accuracy
+- **Resolution**: low/medium/high → block sizes 16/8/4
+- **Smoothing toggle**: checkbox to enable/disable post-process smoothing (default: disabled)
+- **Sliders**: smoothness, speed, accuracy — 3 discrete levels (Low/Medium/High)
 
 ### Slider Effects
-- **Smoothness**: blur kernel size (1–9px), iterations (1–2)
-- **Speed**: CNN tile size (192–768px), sampling scale
-- **Accuracy**: sampling scale, latent KNN overrides
-
-### Latent KNN (optional)
-Configurable via heuristic overrides:
-- `mix`: soft assignment mixing weight
-- `temperature`: softmax temperature
-- `neighbors`: K for KNN
-- `iterations`: refinement passes
+- **Smoothness**: blur kernel size (Low=1px, Medium=3px, High=7px), iterations (1–2); only applies when smoothing checkbox is enabled
+- **Speed**: chunk sizes, block resolution scaling (Low=conservative/slower, High=aggressive/faster)
+- **Accuracy**: sampling density for K-Means center fitting (Low=fast/coarse, High=slow/precise)
 
 ## Dependencies
 - **torch**: required, vendor-installed via `dependency_manager.py`
 - **NumPy**: required, vendor-installed
 - **GDAL**: required for raster IO and rendering (system install)
-- **scikit-learn**: NOT required (removed; K-Means is torch-only)
+- **scikit-learn**: NOT required (K-Means is torch-only)
 
 ### Environment Overrides
 - `SEGMENTER_SKIP_AUTO_INSTALL`: skip vendor install
 - `SEGMENTER_PYTHON`: interpreter override
 - `SEGMENTER_TORCH_SPEC`, `SEGMENTER_TORCH_INDEX_URL`: torch wheel selection
 
-## Training (Isolated)
-Training produces artifacts not yet consumed by the plugin:
-- Student embeddings via distillation
-- Autoencoder reconstruction loss (training-only decoder)
-- Exports to numpy artifacts (`model.npz`, `meta.json`, `metrics.json`)
+## Deprecated / Removed
 
-See [training/README.md](../../training/README.md) for training pipeline details.
+### CNN Runtime (removed as of Phase 2)
+The CNN inference path has been removed:
+- No model dropdown in UI
+- No TorchScript model files required
+- `models/` directory and `runtime/cnn.py` are not used by the runtime
+
+### Training Pipeline (not shipped)
+Training code is isolated from the plugin runtime and is not part of the distributed plugin.

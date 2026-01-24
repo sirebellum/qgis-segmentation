@@ -1,66 +1,107 @@
 # QGIS Map Segmentation
 A [Quant Civil](https://www.quantcivil.ai) product
 
-![image](https://github.com/sirebellum/qgis-segmentation/assets/25124443/898b5b91-830f-47b1-9300-ca173fe093de)
+Turn map imagery into **unlabeled segments** (regions) in a few clicks. The plugin performs **K-Means** clustering on RGB imagery to produce a segmented raster overlay you can use for quick land-cover style workflows, delineation, and downstream analysis.
 
-Welcome!
+---
 
-Ever needed to intelligently divide your map into different sections? Have you been drawing polygons for days?
-Not anymore! Introducing the machine learning powered qgis plugin that will change your workflow.
+## What this plugin does
+Given an RGB raster, the plugin produces a labeled segmentation map with **N segments** (bins). Each pixel is assigned to one of the segment IDs, creating coherent regions.
 
-## Dependencies
+- **Fast, practical segmentation** for everyday use
+- Works on **large rasters** via chunked processing
+- **Optional smoothing** to reduce speckle (disabled by default)
 
-Segmenter now ships with a lightweight dependency bootstrapper. When the plugin loads it checks for `torch` and `numpy` and, if they are missing, installs them into `<plugin>/vendor` using the Python interpreter that ships with QGIS. This keeps the QGIS installation untouched while ensuring the models can run.
+---
 
-The default PyTorch spec is chosen automatically based on the Python runtime that QGIS embeds (Python 3.13 gets a `torch>=2.5.1,<3.0` constraint, Python 3.12 uses `torch>=2.3.1,<3.0`, and older versions stay on `torch==2.2.2`). Override this behaviour anytime with `SEGMENTER_TORCH_SPEC="torch==<version>"` if you need to pin a particular wheel.
+## Input types (two valid flows)
 
-On macOS we also set `KMP_DUPLICATE_LIB_OK=TRUE` and `OMP_NUM_THREADS=1` before loading PyTorch to avoid the `libomp` duplication crash that can occur when the plugin spins up OpenMP workloads inside the QGIS process.
+### 1) Raster input (direct)
+Select a **3-band RGB GeoTIFF raster** layer. Segmentation runs directly on that raster.
 
-On macOS the installer defaults to the CPU build of PyTorch. Windows and Linux systems default to the CUDA 12.1 build so that GPU acceleration remains available; set `SEGMENTER_TORCH_INDEX_URL` or `SEGMENTER_TORCH_SPEC` in the environment before starting QGIS to pin a different wheel. Set `SEGMENTER_SKIP_AUTO_INSTALL=1` if you prefer to manage dependencies yourself.
+### 2) Map / web service input (assisted conversion)
+If you select a **non-raster** layer (e.g., WMS/WMTS/XYZ/ArcGIS services, or other map-rendered layers), the plugin will automatically open QGIS **Convert map to raster** with:
+- **Extent:** current map canvas extent  
+- **Layer:** the selected layer  
+- **Density:** **1.0 map unit per pixel**
 
-If QGIS embeds Python in a non-standard way, set `SEGMENTER_PYTHON` to the absolute path of the interpreter that should run `pip`.
+The dialog **does not auto-run**—it simply opens prefilled so you can adjust parameters and run it manually. Once the output raster is created and added to your project, select it as the input layer and segment normally.
 
-While a model is running, the log panel in the dialog now streams live status updates (tiling progress, clustering stages, rendering) so you can monitor long operations.
+---
 
-Large rasters are processed with a YOLO-style overlapping sliding window. The plugin inspects the available VRAM on CUDA devices (using 0.9% of the free memory) or MPS (0.75%) to pick a safe chunk size, then blends the overlapping predictions back together so you get a seamless output without exhausting GPU memory. Within each chunk the CNN tiles are now batched and prefetched to the GPU using the same memory budget, so utilization stays high without increasing peak RAM use.
+## Controls
 
-On first launch, Segmenter profiles your local GPU to pick the best safety factor and prefetch depth for the batching logic. Results are cached in `perf_profile.json` inside the plugin so later runs reuse them instantly. Set `SEGMENTER_SKIP_PROFILING=1` if you prefer the default heuristics.
+### Number of segments
+Controls how many regions (bins) the output will contain.
+- Fewer segments → broader regions (simpler map)
+- More segments → more granular separation (more detail / potentially more speckle)
 
-If you need to perform a manual install (for example on an offline machine), open the QGIS Python console and run:
+### Resolution
+Controls the **analysis resolution** used for segmentation.
+- Higher resolution → captures smaller features, costs more compute
+- Lower resolution → smoother/coarser regions, faster
 
-```
-import sys
-import subprocess
-subprocess.check_call([
-	sys.executable,
-	"-m",
-	"pip",
-	"install",
-	"torch>=2.5.1,<3.0",
-	"numpy>=1.23,<2.0",
-	"--target",
-	r"/path/to/segmenter/vendor",
-])
-```
+### Smoothing (optional)
+Smoothing is **disabled by default**. When enabled, it reduces isolated “salt-and-pepper” noise in the output.
+- Lower smoothing → preserves small details, may look noisier
+- Higher smoothing → cleaner regions, can remove small features
 
-Replace the `--target` path with the Segmenter plugin directory in your profile. Contact help@quantcivil.ai if you run into issues.
+---
 
-## Instructions
-Below are the steps for a basic segmentation:
-1. Choose a raster. Make sure the raster is in RGB format with 3 channels. The tool will process everything within the raster, so if you find your device running out of RAM, try using a smaller section of the raster or reducing the resolution. If you are using a web generated map (Google satelite), please convert the map to a raster first with the "Convert map to raster" tool available in QGIS.
-2. Choose a model. CNN will provide better results but requires more processing power, see images below.
-3. Choose a resolution. Higher resolutions will result in a more detailed segmentation map. Lower resolutions will be less noisy.
-4. Choose number of segments. This will determine how many segments are generated. You should choose the number based on how "complex" the raster is. That is, if there 4 different kinds of land cover on your map (trees, roads, buildings, water, etc.), you should set the number of segments to something slightly higher than 4, between 6 and 8.
-5. Segment! A raster layer will be produced overlaying the input with the different segments.
+## Quick start
+1. Open the plugin panel.
+2. Choose an **Input Layer** (raster or map service).
+   - If you choose a map service, run **Convert map to raster** (dialog opens automatically).
+3. Choose **Resolution**.
+4. Set **Number of segments**.
+5. (Optional) Enable **Smoothing** and choose a smoothing level.
+6. Click **Segment**. A segmented raster layer is added to your project.
 
-## Example Images
-Below are some examples from the tool. First, a sample map, rendered at 0.1 map units per pixel:
-<img width="800" alt="image" src="https://github.com/user-attachments/assets/c3cdf14d-3717-4e39-ad98-71c7e457cc15">
+---
 
-Then, the K-Means segmentation map at low resolution with 6 segments:
-<img width="800" alt="image" src="https://github.com/user-attachments/assets/2bf88670-db9f-48dc-919d-4813f788a1cd">
+## Example: resolution × smoothing
 
-Finally, a CNN segmentation map at low resolution with 6 segments:
-<img width="800" alt="image" src="https://github.com/user-attachments/assets/50863c0c-64b0-4603-b2e7-85ddaba60f21">
+### Source imagery
+The following satellite image is the input used for the examples below:
 
-In general, CNN provides cleaner results while K-Means is quick and easy.
+![Satellite input](docs/images/satellite.png)
+
+---
+
+### High resolution, smoothing OFF
+High resolution retains small features, but can show more speckle/texture because the clustering is operating at finer detail.
+
+![High resolution without smoothing](docs/images/high_raw.png)
+
+---
+
+### High resolution, smoothing MAX
+Max smoothing produces cleaner regions and reduces speckle, but may remove or soften small structures.
+
+![High resolution with max smoothing](docs/images/high_smoothed_max.png)
+
+---
+
+### Low resolution, smoothing OFF
+Low resolution produces larger, more stable regions with fewer tiny fragments. It’s usually faster and can be easier to interpret, but loses small details.
+
+![Low resolution without smoothing](docs/images/low_raw.png)
+
+---
+
+### Low resolution, smoothing MIN
+Medium smoothing at low resolution can reduce leftover speckle while still keeping the “coarse” structure intact.
+
+![Low resolution with min smoothing](docs/images/low_smoothed_med.png)
+
+---
+
+## Notes & tips
+- If you care about **small features**, prefer **higher resolution** and keep **smoothing off or low**.
+- If you want **clean regions quickly**, use **lower resolution** and enable **smoothing**.
+- For map/web-service layers, the assisted conversion flow removes the manual “export raster first” step—use it to iterate rapidly on extents.
+
+---
+
+## License
+BSD-3-Clause (see repository license file).

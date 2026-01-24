@@ -86,7 +86,7 @@ def _smoothing_device():
             return torch.device("cuda")
         if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
             return torch.device("mps")
-    except Exception:
+    except Exception:  # nosec B110 - best effort device detection
         pass
     return torch.device("cpu")
 
