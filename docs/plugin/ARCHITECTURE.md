@@ -30,8 +30,8 @@ QGIS 3 plugin "Map Segmenter" for unsupervised map segmentation using K-Means cl
 
 ### Runtime Engine (runtime/)
 - [pipeline.py](../../runtime/pipeline.py): high-level `execute_kmeans_segmentation`, optional blur
-- [kmeans.py](../../runtime/kmeans.py): torch-only K-Means with global center fit + streaming assignment
-- [chunking.py](../../runtime/chunking.py): chunk aggregation, label normalization
+- [kmeans.py](../../runtime/kmeans.py): torch-only K-Means with global center fit + streaming assignment; implements seam prevention via halo overlap and globally-aligned block grid
+- [chunking.py](../../runtime/chunking.py): chunk aggregation, label normalization, halo expansion utilities
 - [adaptive.py](../../runtime/adaptive.py): chunk planning, memory budgets
 - [distance.py](../../runtime/distance.py): pairwise distance kernels, chunked argmin
 - [smoothing.py](../../runtime/smoothing.py): Gaussian blur channels
@@ -49,6 +49,7 @@ QGIS 3 plugin "Map Segmenter" for unsupervised map segmentation using K-Means cl
 - **Input validation**: 3-band GDAL GeoTIFF, enforced in `segmenter._is_supported_raster_layer`
 - **Map-to-raster assist**: if user selects a web service or vector layer, `_on_layer_selection_changed` opens the Convert map to raster dialog prefilled with canvas extent + 1 map unit/pixel
 - **K-Means**: torch-only, global center fit once, streaming assignment per chunk (no scikit-learn, no per-chunk relabeling)
+- **Seam prevention**: block-level overlap (BLOCK_OVERLAP=1) with last-write-wins stitching, pixel halo (3px) for smoothing context, globally-aligned block grid, fixed float32 scaling
 - **Device**: CUDA → MPS → CPU preference set in `segmenter.run()`
 - **Cancellation**: `CancellationToken` checked throughout loops
 

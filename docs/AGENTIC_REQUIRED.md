@@ -35,9 +35,9 @@ The following paths referenced in older docs do NOT exist in the repo:
 Tests that previously referenced these paths have been removed.
 
 ## Test Coverage (current)
-- **Plugin tests** (tests/): 125 passing, 4 skipped (QGIS/GPU gated)
+- **Plugin tests** (tests/): 149 passing, 4 skipped (QGIS/GPU gated)
 - **Training tests** (training/tests/): 82 passing
-- **Total**: 207 tests
+- **Total**: 231 tests
 
 ## Security & Linting (QGIS recommended)
 Plugin runtime is validated with bandit, detect-secrets, and flake8 per QGIS guidelines.

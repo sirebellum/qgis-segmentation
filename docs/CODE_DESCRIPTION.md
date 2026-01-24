@@ -18,10 +18,10 @@ Purpose: concise registry of modules and their responsibilities in the current c
   - `common.py`: cancellation tokens, status callbacks, device coercion, dtype helpers
   - `io.py`: raster materialization from paths or callables
   - `adaptive.py`: chunk planning, memory budgets
-  - `chunking.py`: chunk aggregation, label normalization
+  - `chunking.py`: chunk aggregation, label normalization, halo expansion utilities (`_expand_window_for_halo`, `_crop_halo_from_result`, `DEFAULT_HALO_PIXELS`)
   - `distance.py`: pairwise distance kernels, chunked argmin
   - `smoothing.py`: Gaussian blur channels
-  - `kmeans.py`: torch-only K-Means with global center fit + streaming assignment
+  - `kmeans.py`: torch-only K-Means with global center fit + streaming assignment; seam prevention via block overlap (`BLOCK_OVERLAP=1`, last-write-wins stitching), pixel halo (`DESCRIPTOR_HALO_PIXELS=3`), and globally-aligned block grid (`_compute_globally_aligned_descriptors`)
   - `pipeline.py`: high-level `execute_kmeans_segmentation`, optional post-blur
 - [qgis_funcs.py](../qgis_funcs.py): GDAL GeoTIFF rendering + layer registration.
 - [dependency_manager.py](../dependency_manager.py): on-demand install of torch/NumPy into `vendor/` with env overrides; no scikit-learn required.
@@ -68,9 +68,10 @@ Purpose: concise registry of modules and their responsibilities in the current c
 - [training/datasets/tests/](../training/datasets/tests): header/shard tests.
 
 ## Tests (repo-level)
-- [tests/](../tests): pytest suite (105 tests, 4 skipped) covering:
+- [tests/](../tests): pytest suite (146 tests, 4 skipped) covering:
   - Runtime pipeline routing, global centers, label consistency
   - K-Means backend routing, determinism, memory bounds, GPU smoke
+  - Seam prevention: halo overlap, global block alignment, scaling
   - Distance utils, alignment invariants
   - Plugin imports (skip-gated for missing packages)
   - QGIS smoke (skip-gated unless `QGIS_TESTS=1`)
@@ -78,6 +79,7 @@ Purpose: concise registry of modules and their responsibilities in the current c
 ## Key Contracts
 - **Input validation**: 3-band GDAL GeoTIFF (`.tif/.tiff`), provider `gdal`, enforced in `segmenter._is_supported_raster_layer`.
 - **K-Means**: torch-only with global center fit + streaming assignment (no per-chunk relabeling, no scikit-learn).
+- **Seam prevention**: halo overlap (1px for 3x3 smoothing), globally-aligned block grid, fixed float32 scaling.
 - **Training entrypoint**: `python -m training.train` forwards to `python -m training.train_distill` (training is isolated from plugin runtime).
 
 ## Env Overrides

@@ -159,3 +159,91 @@ Use this format for future entries:
   - Dialog only opens once per layer selection (spam prevention via `_last_map_assist_layer_id`)
   - Processing dialog does NOT auto-run; user must adjust settings and click Run
   - If `native:rasterize` algorithm is unavailable, falls back to qgis:rasterize or gdal:rasterize_over_fixed_value
+
+## Phase 4.1 — Map-to-Raster Dialog Trigger Refinement + Palette-Aware Styling (2026-01-23)
+- Intent: Only show Convert map to raster dialog when map is the only layer OR user explicitly selects it; make all UI text palette-aware for dark/light mode.
+- Summary:
+  - **Dialog trigger logic refined**: `_on_layer_selection_changed` now only opens dialog if:
+    1. The selected layer is a web service/vector (not file-backed GDAL raster), AND
+    2. Either it's the only layer in the dropdown (`count() == 1`), OR user explicitly selected it (`count() > 1`)
+  - **Palette-aware styling**: Updated `segmenter_dialog_base.ui` stylesheet to use `palette(text)` for all text elements:
+    - Added `QToolButton { color: palette(text); }` to global stylesheet
+    - Added `QProgressBar { color: palette(text); }` to global stylesheet
+    - Added `QSlider { color: palette(text); }` to global stylesheet
+    - Removed hardcoded `color: white` from `infoSmoothing` button (now inherits from QToolButton style)
+  - **Tests updated**: Modified `test_info_smoothing_exists` to check for palette-aware styling; added `test_all_text_widgets_palette_aware` and `test_no_hardcoded_white_text_color`
+- Files Touched:
+  - `segmenter.py`: refined `_on_layer_selection_changed` logic
+  - `segmenter_dialog_base.ui`: updated stylesheet, removed hardcoded white color
+  - `tests/test_ui_slider_mappings.py`: updated and added palette-aware tests
+  - `docs/AGENTIC_HISTORY.md`: this entry
+- Commands:
+  - `python -m compileall .`
+  - `python -m pytest tests/ -q` (131 passed, 4 skipped)
+- Validation: All tests pass; UI text adapts to system dark/light mode; dialog only shows when appropriate
+- Risks/Notes:
+  - Palette styling relies on Qt's system palette detection; should work on all platforms
+  - No visual change for users already in dark mode; light mode users will now see dark text
+
+## Phase 5 — Seam Prevention: Halo Overlap + Global Block Alignment (2026-01-23)
+- Intent: Eliminate visible chunk boundary seams in K-Means segmentation by implementing halo overlap for smoothing context, globally-aligned block grid, and fixed feature scaling.
+- Summary:
+  - **Root cause**: Visible seams at chunk boundaries due to: (1) edge pixels lacking neighbor context during 3x3 avg_pool2d smoothing, (2) block grid aligned to chunk-local coordinates instead of global, (3) inconsistent feature representation at boundaries.
+  - **Fix #1 - Halo overlap**: Added `_expand_window_for_halo()` and `_crop_halo_from_result()` utilities in `chunking.py`. Chunks are now read with 1 extra pixel on each edge (DESCRIPTOR_HALO_PIXELS=1) to provide context for the 3x3 smoothing kernel.
+  - **Fix #2 - Global block alignment**: Added `_compute_globally_aligned_descriptors()` in `kmeans.py` that computes block indices from absolute raster coordinates, ensuring the low-res label grid is consistent across chunks.
+  - **Fix #3 - Fixed scaling**: Verified that descriptors use float32 with no per-chunk normalization; added test to guard against per-chunk scaling.
+  - **Updated `_assign_blocks_streaming()`**: Now reads chunks with halo, computes globally-aligned descriptors, and writes output to correct global block positions.
+  - **Docstring added**: `kmeans.py` module docstring documents seam prevention strategies.
+- Files Touched:
+  - `runtime/chunking.py`: added `DEFAULT_HALO_PIXELS`, `_expand_window_for_halo()`, `_crop_halo_from_result()`, updated `__all__`
+  - `runtime/kmeans.py`: added module docstring, `DESCRIPTOR_HALO_PIXELS`, `_compute_globally_aligned_descriptors()`, `_expand_window_for_halo()` (local), updated `_assign_blocks_streaming()`, updated `__all__`
+  - `tests/test_seam_halo_alignment.py`: new test file with 15 tests covering halo expansion, cropping, global alignment, seam prevention, and scaling consistency
+  - `docs/plugin/ARCHITECTURE.md`: documented seam prevention contract
+  - `docs/plugin/RUNTIME_STATUS.md`: added Seam Prevention section, updated test count to 146
+  - `docs/CODE_DESCRIPTION.md`: documented halo utilities and seam prevention in kmeans.py, updated test count
+  - `docs/AGENTIC_HISTORY.md`: this entry
+- Commands:
+  - `python -m py_compile runtime/kmeans.py runtime/chunking.py`
+  - `python -m pytest tests/ -q` (146 passed, 4 skipped)
+- Validation:
+  - All 146 tests pass (131 existing + 15 new seam prevention tests)
+  - Single-chunk vs multi-chunk segmentation match >95% (test_single_chunk_vs_multi_chunk_consistency)
+  - No per-chunk normalization detected (test_no_per_chunk_normalization)
+  - Uniform image produces consistent labels across chunk boundaries (test_no_visible_seam_pattern)
+- Risks/Notes:
+  - Halo size is conservative (1px) and may need increase if larger smoothing kernels are added
+  - Edge chunks have reduced halo at raster boundaries (handled via clamping)
+  - Global alignment adds minimal overhead since block indices are computed from absolute coordinates
+
+## Phase 5.1 — Block-Level Overlap Stitching for Seam Elimination (2026-01-23)
+- Intent: Eliminate remaining 1px grid artifact at chunk boundaries by implementing block-level overlap with deterministic last-write-wins stitching.
+- Root Cause Analysis:
+  - Previous halo approach only provided pixel-level context (DESCRIPTOR_HALO_PIXELS)
+  - The 3x3 avg_pool2d smoothing kernel and subsequent block pooling meant edge blocks at chunk boundaries saw different neighbor context than interior blocks
+  - Even with pixel halo, the boundary block descriptors could differ between adjacent chunks because smoothing computation depended on chunk-local position
+  - The 1px grid appeared exactly at block boundaries where chunks met
+- Summary:
+  - **Block overlap**: Added BLOCK_OVERLAP=1 constant; chunks now overlap by 1 block in each direction
+  - **Stride calculation**: `_block_chunk_plan()` now computes stride as `chunk_size - overlap` instead of `chunk_size`
+  - **Last-write-wins stitching**: All blocks from each chunk are written; later chunks overwrite earlier in overlap regions (deterministic row-major order)
+  - **Pixel halo increased**: DESCRIPTOR_HALO_PIXELS raised from 1 to 3 for additional edge stability
+  - **Simplified streaming**: Removed complex interior-only crop logic; simple overwrite is cleaner and equally effective
+- Files Touched:
+  - `runtime/kmeans.py`: added `BLOCK_OVERLAP=1`, updated `_block_chunk_plan()` stride calculation, simplified `_assign_blocks_streaming()` docstring and stitching logic, updated `__all__`
+  - `runtime/chunking.py`: updated `DEFAULT_HALO_PIXELS` to 3
+  - `tests/test_seam_halo_alignment.py`: added `BLOCK_OVERLAP` import, added `TestBlockOverlap` class with 3 tests (constant exists, overlap prevents grid, stride uses overlap)
+  - `docs/plugin/RUNTIME_STATUS.md`: expanded Seam Prevention section with 5-point strategy, updated Key Invariants
+  - `docs/plugin/ARCHITECTURE.md`: updated seam prevention contract
+  - `docs/AGENTIC_HISTORY.md`: this entry
+- Commands:
+  - `python -m py_compile runtime/kmeans.py runtime/chunking.py`
+  - `python -m pytest tests/ -q` (149 passed, 4 skipped)
+- Validation:
+  - All 149 tests pass (146 existing + 3 new block overlap tests)
+  - Single-chunk vs multi-chunk match ratio ≥90% (test_overlap_prevents_1px_grid)
+  - Chunk iteration correctly uses overlapping stride (test_chunk_iteration_uses_overlap_stride)
+  - BLOCK_OVERLAP ≥ 1 enforced (test_block_overlap_constant_exists)
+- Risks/Notes:
+  - Block overlap slightly increases total computation (each edge block computed by 2 chunks)
+  - Memory overhead minimal since only block indices overlap, not full chunk data
+  - Deterministic stitching ensures reproducible results across runs

@@ -20,10 +20,14 @@ QCheckBox { color: palette(text); spacing: 6px; }
 QCheckBox::indicator { width: 14px; height: 14px; background-color: palette(base); border: 2px solid palette(mid); border-radius: 3px; }
 QCheckBox::indicator:checked { background-color: #9370db; border-color: #9370db; }
 QCheckBox::indicator:hover { border-color: palette(highlight); }
-QPushButton { color: palette(button-text); }
+QPushButton { color: palette(text); }
+QToolButton { color: palette(text); }
 QLabel { color: palette(text); }
-QLineEdit { color: palette(text); }
-QPlainTextEdit { color: palette(text); }</string>
+QLineEdit { color: palette(text); background-color: palette(base); }
+QPlainTextEdit { color: palette(text); background-color: palette(base); }
+QProgressBar { color: palette(text); }
+QSlider { color: palette(text); }
+QDialog { background-color: palette(window); }</string>
   </property>
 
   <widget class="QLabel" name="labelInputLayer">
@@ -82,7 +86,6 @@ QPlainTextEdit { color: palette(text); }</string>
    <property name="text"><string>?</string></property>
    <property name="toolTip"><string>&lt;b&gt;Smoothing&lt;/b&gt;&lt;br/&gt;Controls post-process boundary smoothing.&lt;br/&gt;Kernel size scales with resolution.&lt;br/&gt;&lt;br/&gt;&lt;b&gt;Low:&lt;/b&gt; Light smoothing (5-20px).&lt;br/&gt;&lt;b&gt;Medium:&lt;/b&gt; Moderate smoothing (11-44px).&lt;br/&gt;&lt;b&gt;High:&lt;/b&gt; Strong smoothing (21-84px, 2 passes).&lt;br/&gt;&lt;br/&gt;Only applies when the checkbox is enabled.</string></property>
    <property name="autoRaise"><bool>true</bool></property>
-   <property name="styleSheet"><string notr="true">color: white;</string></property>
   </widget>
   <widget class="QSlider" name="sliderSmoothness">
    <property name="geometry">

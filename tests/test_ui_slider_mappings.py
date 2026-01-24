@@ -103,8 +103,8 @@ def test_info_smoothing_exists():
     info_block = info_match.group(0)
     assert "toolTip" in info_block
     assert "&lt;b&gt;" in info_block, "Tooltip should have rich text"
-    # Verify white color styling
-    assert 'color: white' in info_block, "Info icon should be styled white"
+    # Verify palette-aware styling (inherited from global QToolButton style)
+    assert 'QToolButton { color: palette(text); }' in content, "QToolButton should use palette-aware styling"
 
 
 def test_blur_config_returns_none_when_smoothing_disabled():
@@ -257,3 +257,38 @@ def test_blur_config_scales_with_resolution():
     assert "SMOOTHING_BASE_RESOLUTION" in content
     # Should scale kernel based on resolution
     assert "scale" in content or "resolution" in content.lower()
+
+
+def test_all_text_widgets_palette_aware():
+    """Verify all text-bearing widgets use palette-aware styling for dark/light mode."""
+    ui_file = str(__import__("pathlib").Path(__file__).parents[1] / "segmenter_dialog_base.ui")
+    with open(ui_file, encoding="utf-8") as f:
+        content = f.read()
+
+    # All these widgets should use palette(text) for proper dark/light mode support
+    required_palette_styles = [
+        "QComboBox { color: palette(text); }",
+        "QLabel { color: palette(text); }",
+        "QLineEdit { color: palette(text);",
+        "QPlainTextEdit { color: palette(text);",
+        "QToolButton { color: palette(text); }",
+        "QProgressBar { color: palette(text); }",
+        "QPushButton { color: palette(text); }",
+        "QDialog { background-color: palette(window); }",
+    ]
+
+    for style in required_palette_styles:
+        assert style in content, f"Missing palette-aware style: {style}"
+
+
+def test_no_hardcoded_white_text_color():
+    """Verify no hardcoded 'color: white' styling in UI file."""
+    ui_file = str(__import__("pathlib").Path(__file__).parents[1] / "segmenter_dialog_base.ui")
+    with open(ui_file, encoding="utf-8") as f:
+        content = f.read()
+
+    # Should not have hardcoded white color for text
+    import re
+    # Look for color: white but not in comments or documentation
+    hardcoded_white = re.search(r'styleSheet.*?color:\s*white', content, re.IGNORECASE | re.DOTALL)
+    assert hardcoded_white is None, "UI should not have hardcoded 'color: white' - use palette(text) instead"

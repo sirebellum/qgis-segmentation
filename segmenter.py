@@ -363,6 +363,8 @@ class Segmenter:
         # Map-to-raster assist: track last triggered layer to avoid dialog spam
         self._last_map_assist_layer_id = None
         self._layer_selection_controller = None
+        # Flag to suppress map-to-raster assist during programmatic dropdown changes
+        self._suppress_layer_assist = False
 
     # noinspection PyMethodMayBeStatic
     def tr(self, message):
@@ -870,37 +872,42 @@ class Segmenter:
 
     # Display layers in dropdown
     def render_layers(self):
-        project_layers = QgsProject.instance().mapLayers().values()
-        # Include all renderable layers: rasters (file-backed and web services) plus vectors
-        all_layers = []
-        for layer in project_layers:
-            if not isinstance(layer, QgsMapLayer):
-                continue
-            # Include raster layers (GDAL-backed and WMS/XYZ/etc.)
-            if isinstance(layer, QgsRasterLayer):
-                all_layers.append(layer)
-            # Include vector layers (can be rendered to raster)
-            elif layer.type() == QgsMapLayer.VectorLayer:
-                all_layers.append(layer)
-        all_layers.sort(key=lambda lyr: lyr.name().lower())
+        # Suppress map-to-raster assist during programmatic population
+        self._suppress_layer_assist = True
+        try:
+            project_layers = QgsProject.instance().mapLayers().values()
+            # Include all renderable layers: rasters (file-backed and web services) plus vectors
+            all_layers = []
+            for layer in project_layers:
+                if not isinstance(layer, QgsMapLayer):
+                    continue
+                # Include raster layers (GDAL-backed and WMS/XYZ/etc.)
+                if isinstance(layer, QgsRasterLayer):
+                    all_layers.append(layer)
+                # Include vector layers (can be rendered to raster)
+                elif layer.type() == QgsMapLayer.VectorLayer:
+                    all_layers.append(layer)
+            all_layers.sort(key=lambda lyr: lyr.name().lower())
 
-        current = self.dlg.inputLayer.currentText()
-        self.dlg.inputLayer.clear()
-        if not all_layers:
-            if not self._logged_missing_layers:
-                self.log_status("No layers detected in the project.")
-                self._logged_missing_layers = True
-            return
+            current = self.dlg.inputLayer.currentText()
+            self.dlg.inputLayer.clear()
+            if not all_layers:
+                if not self._logged_missing_layers:
+                    self.log_status("No layers detected in the project.")
+                    self._logged_missing_layers = True
+                return
 
-        self._logged_missing_layers = False
-        for layer in all_layers:
-            # Store layer ID as item data for reliable lookup
-            self.dlg.inputLayer.addItem(layer.name(), layer.id())
+            self._logged_missing_layers = False
+            for layer in all_layers:
+                # Store layer ID as item data for reliable lookup
+                self.dlg.inputLayer.addItem(layer.name(), layer.id())
 
-        if current:
-            index = self.dlg.inputLayer.findText(current)
-            if index >= 0:
-                self.dlg.inputLayer.setCurrentIndex(index)
+            if current:
+                index = self.dlg.inputLayer.findText(current)
+                if index >= 0:
+                    self.dlg.inputLayer.setCurrentIndex(index)
+        finally:
+            self._suppress_layer_assist = False
 
     # Display resolutions in dropdown
     def render_resolutions(self):
@@ -992,6 +999,51 @@ class Segmenter:
         if not self.task:
             self._reset_progress_bar()
         self.dlg.show()
+        # Check if we should auto-trigger map-to-raster assist (no compatible rasters available)
+        self._check_auto_map_assist()
+
+    def _check_auto_map_assist(self) -> None:
+        """Auto-trigger map-to-raster assist if no compatible rasters exist but map layers do."""
+        dlg = getattr(self, "dlg", None)
+        if not dlg:
+            return
+
+        # Check if there are any layers at all
+        if dlg.inputLayer.count() == 0:
+            return
+
+        # Check if any layer is a supported raster
+        has_supported_raster = False
+        first_map_layer = None
+        first_map_layer_id = None
+
+        for i in range(dlg.inputLayer.count()):
+            layer_id = dlg.inputLayer.itemData(i)
+            if not layer_id:
+                continue
+            layer = QgsProject.instance().mapLayer(layer_id)
+            if not layer:
+                continue
+
+            if self._is_supported_raster_layer(layer):
+                has_supported_raster = True
+                break
+
+            # Track first map/web service layer
+            if first_map_layer is None:
+                meta = extract_layer_metadata(layer)
+                if is_renderable_non_file_layer(
+                    meta["layer_type"],
+                    meta["provider_name"],
+                    meta["source_path"],
+                ):
+                    first_map_layer = layer
+                    first_map_layer_id = layer_id
+
+        # If no supported rasters but we have a map layer, auto-trigger assist
+        if not has_supported_raster and first_map_layer is not None:
+            self._last_map_assist_layer_id = first_map_layer_id
+            self._open_convert_map_to_raster_assist(first_map_layer)
 
     def _init_layer_refresh(self):
         dlg = getattr(self, "dlg", None)
@@ -1006,10 +1058,15 @@ class Segmenter:
     def _on_layer_selection_changed(self, index: int) -> None:
         """Handle layer dropdown selection change for map-to-raster assist.
 
-        If the selected layer is not a file-backed GDAL raster, opens the
-        Convert map to raster processing dialog with prefilled parameters.
+        Opens the Convert map to raster dialog only if:
+        1. The selection was made by the user (not programmatic), AND
+        2. The selected layer is a web service/vector (not a file-backed GDAL raster)
         """
         if index < 0:
+            return
+
+        # Skip if this is a programmatic change (e.g., during render_layers)
+        if getattr(self, "_suppress_layer_assist", False):
             return
 
         dlg = getattr(self, "dlg", None)
@@ -1049,7 +1106,7 @@ class Segmenter:
             self._last_map_assist_layer_id = None
             return
 
-        # Trigger map-to-raster assist
+        # User explicitly selected a non-file layer - trigger map-to-raster assist
         self._last_map_assist_layer_id = layer_id
         self._open_convert_map_to_raster_assist(layer)
 
