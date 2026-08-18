@@ -153,7 +153,8 @@ def _ensure_package(spec: Dict[str, object]) -> None:
     _log_dependency_status(f"Installing dependency: {label} ({pip_name})")
     dialog = _start_install_popup(label)
     try:
-        subprocess.check_call(command, env=pip_env)  # nosec B603 - pip command with controlled args
+        # nosec B603 - pip command with controlled args
+        subprocess.check_call(command, env=pip_env)
         _log_dependency_status(f"Dependency installed: {label}")
     except (subprocess.CalledProcessError, OSError) as exc:
         if import_name == "torch":
@@ -163,10 +164,13 @@ def _ensure_package(spec: Dict[str, object]) -> None:
                     "CUDA torch install failed (%s); retrying with CPU wheels.",
                     exc,
                 )
-                _log_dependency_status("PyTorch CUDA install failed; retrying with CPU wheels.")
+                _log_dependency_status(
+                    "PyTorch CUDA install failed; retrying with CPU wheels.")
                 try:
-                    subprocess.check_call(_build_command(cpu_args), env=pip_env)  # nosec B603
-                    _log_dependency_status("PyTorch CPU wheel installed successfully.")
+                    subprocess.check_call(_build_command(
+                        cpu_args), env=pip_env)  # nosec B603
+                    _log_dependency_status(
+                        "PyTorch CPU wheel installed successfully.")
                     _close_install_popup(dialog)
                     return
                 except (subprocess.CalledProcessError, OSError) as cpu_exc:
@@ -319,7 +323,8 @@ def _download_and_install_get_pip(python_exe: str, env: Dict[str, str]) -> bool:
         "SEGMENTER_GET_PIP_URL", "https://bootstrap.pypa.io/get-pip.py"
     )
     try:
-        with urllib.request.urlopen(url, timeout=30) as response:  # nosec B310 - official bootstrap URL
+        # nosec B310 - official bootstrap URL
+        with urllib.request.urlopen(url, timeout=30) as response:
             script_bytes = response.read()
     except Exception:
         return False
@@ -335,7 +340,8 @@ def _download_and_install_get_pip(python_exe: str, env: Dict[str, str]) -> bool:
             str(_PIP_BOOTSTRAP_DIR),
             "--no-warn-script-location",
         ]
-        subprocess.check_call(command, env=env)  # nosec B603 - get-pip.py installation
+        # nosec B603 - get-pip.py installation
+        subprocess.check_call(command, env=env)
         return True
     except (subprocess.CalledProcessError, OSError):
         return False
@@ -375,7 +381,8 @@ def _python_executable() -> str:
     candidates.append(prefix_bin / "python")
 
     # macOS app bundle layout
-    candidates.append(Path("/Applications/QGIS.app/Contents/MacOS/bin/python3"))
+    candidates.append(
+        Path("/Applications/QGIS.app/Contents/MacOS/bin/python3"))
     candidates.append(Path("/Applications/QGIS.app/Contents/MacOS/bin/python"))
 
     for candidate in candidates:
@@ -404,15 +411,15 @@ def _start_install_popup(package_label: str) -> Optional[Any]:
         return None
 
     if not _is_gui_thread():
-        _LOGGER.debug("Skipping dependency popup for %s: not on GUI/main thread", package_label)
+        _LOGGER.debug(
+            "Skipping dependency popup for %s: not on GUI/main thread", package_label)
         return None
 
     box = QMessageBox()
     box.setWindowTitle("Segmenter Dependencies")
     box.setText(
-        "Installing "
-        + package_label
-        + "...\nThis may take a few minutes. QGIS will continue once this finishes."
+        f"Installing {package_label}...\n"
+        "This may take a few minutes. QGIS will continue once this finishes."
     )
     box.setStandardButtons(QMessageBox.NoButton)
     box.setIcon(QMessageBox.Information)

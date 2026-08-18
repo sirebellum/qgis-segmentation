@@ -3,14 +3,11 @@
 
 """Tests for runtime/adaptive.py - adaptive settings and chunk planning."""
 
-import numpy as np
-import pytest
 import torch
 
 from runtime.adaptive import (
     AdaptiveSettings,
     ChunkPlan,
-    DEFAULT_MEMORY_BUDGET,
     MAX_TILE_SIZE,
     MIN_TILE_SIZE,
     VRAM_RATIO_CPU,
@@ -69,15 +66,18 @@ class TestChunkPlan:
         assert plan.prefetch_depth == 2
 
     def test_stride_property(self):
-        plan = ChunkPlan(chunk_size=64, overlap=16, budget_bytes=1024, ratio=0.5, prefetch_depth=1)
+        plan = ChunkPlan(chunk_size=64, overlap=16,
+                         budget_bytes=1024, ratio=0.5, prefetch_depth=1)
         assert plan.stride == 48
 
     def test_should_chunk_large_input(self):
-        plan = ChunkPlan(chunk_size=64, overlap=0, budget_bytes=1024, ratio=0.5, prefetch_depth=1)
+        plan = ChunkPlan(chunk_size=64, overlap=0,
+                         budget_bytes=1024, ratio=0.5, prefetch_depth=1)
         assert plan.should_chunk(128, 128) is True
 
     def test_should_not_chunk_small_input(self):
-        plan = ChunkPlan(chunk_size=64, overlap=0, budget_bytes=1024, ratio=0.5, prefetch_depth=1)
+        plan = ChunkPlan(chunk_size=64, overlap=0,
+                         budget_bytes=1024, ratio=0.5, prefetch_depth=1)
         assert plan.should_chunk(32, 32) is False
 
 

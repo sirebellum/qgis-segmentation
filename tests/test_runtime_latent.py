@@ -4,8 +4,6 @@
 """Tests for runtime/latent.py - latent KNN refinement utilities."""
 
 import numpy as np
-import pytest
-import torch
 
 from runtime.latent import (
     LATENT_KNN_DEFAULTS,

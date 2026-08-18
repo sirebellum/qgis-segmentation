@@ -47,18 +47,23 @@ def blur_segmentation_map(
     )
 
     # Build one-hot encoding on GPU
-    tensor = torch.from_numpy(labels_src.astype(np.int64, copy=False)).to(device)
+    tensor = torch.from_numpy(labels_src.astype(
+        np.int64, copy=False)).to(device)
     one_hot = torch.nn.functional.one_hot(tensor, num_classes=num_segments)
-    one_hot = one_hot.permute(2, 0, 1).unsqueeze(0).to(dtype=dtype, device=device)
+    one_hot = one_hot.permute(2, 0, 1).unsqueeze(
+        0).to(dtype=dtype, device=device)
 
     # Averaging kernel for box blur
-    weight = torch.ones(num_segments, 1, kernel, kernel, dtype=dtype, device=device) / float(kernel * kernel)
+    weight = torch.ones(num_segments, 1, kernel, kernel,
+                        dtype=dtype, device=device) / float(kernel * kernel)
 
     result = one_hot
     for idx in range(iterations):
         _maybe_raise_cancel(cancel_token)
-        padded = torch.nn.functional.pad(result, (pad, pad, pad, pad), mode="replicate")
-        result = torch.nn.functional.conv2d(padded, weight, groups=result.shape[1])
+        padded = torch.nn.functional.pad(
+            result, (pad, pad, pad, pad), mode="replicate")
+        result = torch.nn.functional.conv2d(
+            padded, weight, groups=result.shape[1])
         _emit_status(
             status_callback,
             f"Post-smoothing {idx + 1}/{iterations} ({int(((idx + 1) / max(iterations, 1)) * 100)}% complete, kernel={kernel}px).",

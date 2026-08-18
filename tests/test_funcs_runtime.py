@@ -6,7 +6,6 @@ import numpy as np
 import pytest
 
 from funcs import (
-    AdaptiveSettings,
     ChunkPlan,
     _chunked_gaussian_blur,
     _compute_chunk_starts,
@@ -16,7 +15,6 @@ from funcs import (
     execute_kmeans_segmentation,
     predict_kmeans,
     recommended_chunk_plan,
-    set_adaptive_settings,
 )
 from raster_utils import ensure_channel_first
 
@@ -29,7 +27,9 @@ def _rand_array(seed, shape):
 def test_execute_kmeans_segmentation_chunking_preserves_shape():
     """Chunked K-Means segmentation preserves raster shape."""
     array = _rand_array(3, (3, 80, 120))
-    plan = ChunkPlan(chunk_size=200, overlap=50, budget_bytes=8 * 1024 * 1024, ratio=0.0075, prefetch_depth=2)
+    plan = ChunkPlan(
+        chunk_size=200, overlap=50, budget_bytes=8 * 1024 * 1024, ratio=0.0075, prefetch_depth=2
+    )
     output = execute_kmeans_segmentation(
         array,
         num_segments=4,
@@ -70,7 +70,8 @@ def test_predict_kmeans_shape_preservation(array_shape, num_segments, resolution
     """K-Means predictions preserve spatial dimensions."""
     rng = np.random.default_rng(42)
     array = rng.random(array_shape, dtype=np.float32)
-    result = predict_kmeans(array, num_segments=num_segments, resolution=resolution)
+    result = predict_kmeans(
+        array, num_segments=num_segments, resolution=resolution)
     assert result.shape == expected_shape
 
 
@@ -110,13 +111,14 @@ def test_chunk_aggregator_basic():
     """ChunkAggregator combines chunks correctly."""
     height, width, num_segments = 64, 64, 4
     chunk_size = 64
-    agg = _ChunkAggregator(height, width, num_segments, chunk_size, harmonize_labels=False)
-    
+    agg = _ChunkAggregator(height, width, num_segments,
+                           chunk_size, harmonize_labels=False)
+
     # Add a full-coverage chunk with region tuple (y0, x0, y1, x1)
     labels = np.ones((height, width), dtype=np.uint8)
     region = (0, 0, height, width)
     agg.add(labels, region)
-    
+
     result = agg.finalize()
     assert result.shape == (height, width)
 

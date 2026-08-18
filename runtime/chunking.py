@@ -95,7 +95,8 @@ def _normalize_inference_output(result):
 
 
 def _label_to_one_hot(label_map, num_segments):
-    labels = np.clip(label_map.astype(np.int64, copy=False), 0, num_segments - 1)
+    labels = np.clip(label_map.astype(
+        np.int64, copy=False), 0, num_segments - 1)
     one_hot = np.eye(num_segments, dtype=np.float32)[labels]
     return one_hot.transpose(2, 0, 1)
 
@@ -134,10 +135,12 @@ def _process_in_chunks(
         x_end = min(x + plan.chunk_size, width)
         chunk = array[:, y:y_end, x:x_end]
         if status_callback:
-            status_callback(f"Chunk {idx}/{total}: rows {y}-{y_end}, cols {x}-{x_end}")
+            status_callback(
+                f"Chunk {idx}/{total}: rows {y}-{y_end}, cols {x}-{x_end}")
         inference_result = infer_fn(chunk)
         labels, scores = _normalize_inference_output(inference_result)
-        aggregator.add(labels, (y, x, y_end, x_end), chunk_data=chunk, scores=scores)
+        aggregator.add(labels, (y, x, y_end, x_end),
+                       chunk_data=chunk, scores=scores)
 
     if status_callback:
         megapixels = (height * width) / 1_000_000
@@ -195,18 +198,23 @@ class _ChunkAggregator:
         self.weight[y0:y1, x0:x1] += mask
 
     def finalize(self):
-        sigma = max(1.0, min((self.chunk_size / 10.0) * self._smoothing_scale, 32.0))
-        _emit_status(self._status_callback, "Smoothing CNN logits with GPU gradients...")
+        sigma = max(
+            1.0, min((self.chunk_size / 10.0) * self._smoothing_scale, 32.0)
+        )
+        _emit_status(self._status_callback,
+                     "Smoothing CNN logits with GPU gradients...")
         smoothed_scores = _gaussian_blur_channels(
             self.scores,
             sigma,
-            status_callback=lambda msg: _emit_status(self._status_callback, msg),
+            status_callback=lambda msg: _emit_status(
+                self._status_callback, msg),
             stage_label="scores",
         )
         smoothed_weight = _gaussian_blur_channels(
             self.weight[np.newaxis, ...],
             sigma,
-            status_callback=lambda msg: _emit_status(self._status_callback, msg),
+            status_callback=lambda msg: _emit_status(
+                self._status_callback, msg),
             stage_label="weights",
         )[0]
         weight = np.maximum(smoothed_weight, 1e-6)
@@ -222,7 +230,8 @@ class _ChunkAggregator:
         if self._feature_dim is None:
             sample = next(iter(label_vectors.values()))
             self._feature_dim = sample.shape[0]
-            self._prototype_vectors = np.zeros((self.num_segments, self._feature_dim), dtype=np.float32)
+            self._prototype_vectors = np.zeros(
+                (self.num_segments, self._feature_dim), dtype=np.float32)
         remapped = labels.copy()
         used_targets = set()
         for label_id, vector in label_vectors.items():
@@ -239,7 +248,8 @@ class _ChunkAggregator:
         if chunk_data.ndim != 3:
             return {}
         channels = chunk_data.shape[0]
-        flat_pixels = chunk_data.reshape(channels, -1).astype(np.float32, copy=False)
+        flat_pixels = chunk_data.reshape(
+            channels, -1).astype(np.float32, copy=False)
         flat_labels = labels.reshape(-1)
         vectors = {}
         for label_id in np.unique(flat_labels):
@@ -253,11 +263,13 @@ class _ChunkAggregator:
     def _select_target_index(self, vector, used_targets):
         if self._prototype_vectors is None:
             return self._next_unused_index(used_targets)
-        active_indices = [idx for idx, count in enumerate(self._prototype_counts) if count > 0 and idx not in used_targets]
+        active_indices = [idx for idx, count in enumerate(
+            self._prototype_counts) if count > 0 and idx not in used_targets]
         candidate = None
         min_distance = None
         for idx in active_indices:
-            distance = float(np.linalg.norm(self._prototype_vectors[idx] - vector))
+            distance = float(np.linalg.norm(
+                self._prototype_vectors[idx] - vector))
             if min_distance is None or distance < min_distance:
                 min_distance = distance
                 candidate = idx
@@ -277,7 +289,8 @@ class _ChunkAggregator:
             self._prototype_vectors[idx] = vector
         else:
             total = current + 1
-            self._prototype_vectors[idx] = (self._prototype_vectors[idx] * current + vector) / total
+            self._prototype_vectors[idx] = (
+                self._prototype_vectors[idx] * current + vector) / total
         self._prototype_counts[idx] = current + 1
 
     def _next_unused_index(self, used_targets):

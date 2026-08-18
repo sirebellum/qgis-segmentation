@@ -71,18 +71,22 @@ def _smooth_and_pool_descriptors(
     cancel_token=None,
 ):
     _maybe_raise_cancel(cancel_token)
-    height_pad, width_pad = _compute_kmeans_padding(resolution, array.shape[1], array.shape[2])
+    height_pad, width_pad = _compute_kmeans_padding(
+        resolution, array.shape[1], array.shape[2])
     channel_pad = (0, 0)
-    array_padded = np.pad(array, (channel_pad, height_pad, width_pad), mode="constant")
+    array_padded = np.pad(
+        array, (channel_pad, height_pad, width_pad), mode="constant")
     _emit_status(status_callback, "Raster padded for block processing.")
 
     tensor = torch.as_tensor(array_padded, device=device, dtype=torch.float32)
     target_dtype = compute_dtype if compute_dtype == torch.float16 and device.type != "cpu" else torch.float32
     try:
-        smoothed = F.avg_pool2d(tensor.to(dtype=target_dtype).unsqueeze(0), kernel_size=3, stride=1, padding=1)
+        smoothed = F.avg_pool2d(tensor.to(dtype=target_dtype).unsqueeze(
+            0), kernel_size=3, stride=1, padding=1)
     except RuntimeError:
         _warn_distance_fallback("fp16 smoothing instability")
-        smoothed = F.avg_pool2d(tensor.to(dtype=torch.float32).unsqueeze(0), kernel_size=3, stride=1, padding=1)
+        smoothed = F.avg_pool2d(tensor.to(dtype=torch.float32).unsqueeze(
+            0), kernel_size=3, stride=1, padding=1)
     pooled = F.avg_pool2d(smoothed, kernel_size=resolution, stride=resolution)
 
     pooled = pooled.squeeze(0).permute(1, 2, 0).contiguous()
@@ -180,7 +184,8 @@ def _compute_globally_aligned_descriptors(
     pad_w = max(0, needed_w - chunk_w)
 
     if pad_h > 0 or pad_w > 0:
-        array = np.pad(array, ((0, 0), (0, pad_h), (0, pad_w)), mode="constant")
+        array = np.pad(array, ((0, 0), (0, pad_h),
+                       (0, pad_w)), mode="constant")
 
     # Convert to tensor and apply smoothing + pooling
     tensor = torch.as_tensor(array, device=device, dtype=torch.float32)
@@ -188,16 +193,20 @@ def _compute_globally_aligned_descriptors(
 
     try:
         # 3x3 smoothing with padding=1 means output size == input size
-        smoothed = F.avg_pool2d(tensor.to(dtype=target_dtype).unsqueeze(0), kernel_size=3, stride=1, padding=1)
+        smoothed = F.avg_pool2d(tensor.to(dtype=target_dtype).unsqueeze(
+            0), kernel_size=3, stride=1, padding=1)
     except RuntimeError:
-        _warn_distance_fallback("fp16 smoothing instability in globally aligned descriptors")
-        smoothed = F.avg_pool2d(tensor.to(dtype=torch.float32).unsqueeze(0), kernel_size=3, stride=1, padding=1)
+        _warn_distance_fallback(
+            "fp16 smoothing instability in globally aligned descriptors")
+        smoothed = F.avg_pool2d(tensor.to(dtype=torch.float32).unsqueeze(
+            0), kernel_size=3, stride=1, padding=1)
 
     # Pool with stride=resolution to get block descriptors
     pooled = F.avg_pool2d(smoothed, kernel_size=resolution, stride=resolution)
 
     # pooled shape: (1, C, blocks_h, blocks_w) where blocks include halo blocks
-    pooled = pooled.squeeze(0).permute(1, 2, 0).contiguous()  # (blocks_h, blocks_w, C)
+    pooled = pooled.squeeze(0).permute(
+        1, 2, 0).contiguous()  # (blocks_h, blocks_w, C)
     pooled = pooled.to(torch.float32)
 
     # Crop to core blocks (remove halo blocks)
@@ -239,7 +248,8 @@ def _sample_block_indices(block_shape, max_samples: int, rng: np.random.Generato
     if total <= max_samples:
         return np.arange(total, dtype=np.int64)
     stride = max(1, int(math.sqrt(total / max_samples)))
-    coords = [(y, x) for y in range(0, blocks_h, stride) for x in range(0, blocks_w, stride)]
+    coords = [(y, x) for y in range(0, blocks_h, stride)
+              for x in range(0, blocks_w, stride)]
     if len(coords) > max_samples:
         chosen = rng.choice(len(coords), size=max_samples, replace=False)
         coords = [coords[i] for i in chosen]
@@ -300,7 +310,8 @@ def _block_chunk_plan(height: int, width: int, resolution: int, chunk_plan, over
         where y_starts/x_starts are the starting block indices for each chunk.
         Chunks extend from start to start + block_chunk_{h,w}.
     """
-    blocks_h, blocks_w, height_pad, width_pad = _block_grid_shape(height, width, resolution)
+    blocks_h, blocks_w, height_pad, width_pad = _block_grid_shape(
+        height, width, resolution)
     if chunk_plan is None:
         block_chunk = max(1, blocks_h)
     else:
@@ -380,7 +391,8 @@ def _fit_global_centers(
             break
 
     if not sampled_chunks:
-        raise RuntimeError("Unable to sample descriptors for global K-Means centers.")
+        raise RuntimeError(
+            "Unable to sample descriptors for global K-Means centers.")
 
     sampled = np.concatenate(sampled_chunks, axis=0)
     sampled = sampled[:max_samples]
@@ -479,9 +491,11 @@ def _assign_blocks_streaming(
                 continue
 
             # Assign to global centers
-            labels_flat = _assign_blocks_chunked(descriptors, centers, device, compute_dtype)
+            labels_flat = _assign_blocks_chunked(
+                descriptors, centers, device, compute_dtype)
             labels_flat = _apply_label_mapping(labels_flat, mapping)
-            labels_chunk = labels_flat.reshape(n_blocks_h, n_blocks_w).astype(np.uint8, copy=False)
+            labels_chunk = labels_flat.reshape(
+                n_blocks_h, n_blocks_w).astype(np.uint8, copy=False)
 
             # Write ALL blocks from this chunk (later chunks overwrite in overlap regions)
             out_yb = gb_y0
@@ -492,7 +506,8 @@ def _assign_blocks_streaming(
             copy_w = out_xb_end - out_xb
 
             if copy_h > 0 and copy_w > 0:
-                labels_lowres[out_yb:out_yb_end, out_xb:out_xb_end] = labels_chunk[:copy_h, :copy_w]
+                labels_lowres[out_yb:out_yb_end,
+                              out_xb:out_xb_end] = labels_chunk[:copy_h, :copy_w]
 
     return labels_lowres, height_pad, width_pad
 
@@ -516,23 +531,28 @@ def _torch_kmeans(
         generator = torch.Generator(device=device_obj)
         generator.manual_seed(int(seed))
 
-    data_tensor = torch.as_tensor(data_np, device=device_obj, dtype=torch.float32)
+    data_tensor = torch.as_tensor(
+        data_np, device=device_obj, dtype=torch.float32)
     n_samples, feature_dim = data_tensor.shape
     if n_samples < num_clusters:
         raise ValueError("num_clusters cannot exceed the number of samples")
 
-    init_idx = torch.randperm(n_samples, generator=generator, device=device_obj)[:num_clusters]
+    init_idx = torch.randperm(n_samples, generator=generator, device=device_obj)[
+        :num_clusters]
     centers_fp32 = data_tensor[init_idx].float().clone()
     current_dtype = compute_dtype
 
     for _ in range(max_iters):
-        labels = _assign_labels_tensor(data_tensor, centers_fp32, current_dtype)
+        labels = _assign_labels_tensor(
+            data_tensor, centers_fp32, current_dtype)
         counts = torch.bincount(labels, minlength=num_clusters)
-        sums = torch.zeros((num_clusters, feature_dim), device=device_obj, dtype=torch.float32)
+        sums = torch.zeros((num_clusters, feature_dim),
+                           device=device_obj, dtype=torch.float32)
         sums.index_add_(0, labels, data_tensor)
         empty = counts == 0
         if empty.any():
-            refill = torch.randperm(n_samples, generator=generator, device=device_obj)[: int(empty.sum())]
+            refill = torch.randperm(n_samples, generator=generator, device=device_obj)[
+                : int(empty.sum())]
             sums[empty] = data_tensor[refill]
             counts[empty] = 1
         counts = counts.to(torch.float32)
@@ -610,17 +630,23 @@ def predict_kmeans(
     )
 
     _maybe_raise_cancel(cancel_token)
-    _emit_status(status_callback, f"Assigning clusters on TORCH backend over {descriptors.shape[0]} blocks...")
-    labels_flat = _assign_blocks_chunked(descriptors, centers, device, compute_dtype)
+    _emit_status(status_callback,
+                 f"Assigning clusters on TORCH backend over {descriptors.shape[0]} blocks...")
+    labels_flat = _assign_blocks_chunked(
+        descriptors, centers, device, compute_dtype)
     labels_flat = _normalize_cluster_labels(labels_flat, centers)
     _emit_status(status_callback, "Cluster assignment complete.")
 
-    labels_lowres = labels_flat.reshape(blocks_h, blocks_w).astype(np.uint8, copy=False)
+    labels_lowres = labels_flat.reshape(
+        blocks_h, blocks_w).astype(np.uint8, copy=False)
 
     _maybe_raise_cancel(cancel_token)
-    upsampled = np.repeat(np.repeat(labels_lowres, resolution, axis=0), resolution, axis=1)
-    result = upsampled[: array.shape[1], : array.shape[2]].astype(np.uint8, copy=False)
-    _emit_status(status_callback, "K-Means output upsampled to raster resolution.")
+    upsampled = np.repeat(
+        np.repeat(labels_lowres, resolution, axis=0), resolution, axis=1)
+    result = upsampled[: array.shape[1],
+                       : array.shape[2]].astype(np.uint8, copy=False)
+    _emit_status(status_callback,
+                 "K-Means output upsampled to raster resolution.")
 
     if not (return_lowres or return_centers):
         return result
@@ -667,7 +693,8 @@ def predict_kmeans_streaming(
         cancel_token=cancel_token,
     )
 
-    _emit_status(status_callback, "Assigning labels using global K-Means centers...")
+    _emit_status(status_callback,
+                 "Assigning labels using global K-Means centers...")
     labels_lowres, height_pad, width_pad = _assign_blocks_streaming(
         array,
         num_segments,
@@ -682,9 +709,12 @@ def predict_kmeans_streaming(
     )
 
     _maybe_raise_cancel(cancel_token)
-    upsampled = np.repeat(np.repeat(labels_lowres, resolution, axis=0), resolution, axis=1)
-    result = upsampled[: array.shape[1], : array.shape[2]].astype(np.uint8, copy=False)
-    _emit_status(status_callback, "K-Means streaming output upsampled to raster resolution.")
+    upsampled = np.repeat(
+        np.repeat(labels_lowres, resolution, axis=0), resolution, axis=1)
+    result = upsampled[: array.shape[1],
+                       : array.shape[2]].astype(np.uint8, copy=False)
+    _emit_status(status_callback,
+                 "K-Means streaming output upsampled to raster resolution.")
 
     if not (return_lowres or return_centers):
         return result
@@ -693,7 +723,8 @@ def predict_kmeans_streaming(
     if return_lowres:
         extras.append(labels_lowres)
     if return_centers:
-        extras.append(_reorder_centers(centers, mapping).astype(np.float32, copy=False))
+        extras.append(_reorder_centers(
+            centers, mapping).astype(np.float32, copy=False))
 
     return (result, *extras)
 

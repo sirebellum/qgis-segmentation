@@ -95,7 +95,8 @@ def _auto_orient_tile_grid(label_map: np.ndarray, tile_size: int):
                 continue
             top_edge = oriented[y0 - 1, x0:x1] if y0 > 0 else None
             left_edge = oriented[y0:y1, x0 - 1] if x0 > 0 else None
-            best_k, best_tile = _select_tile_rotation(tile, top_edge, left_edge)
+            best_k, best_tile = _select_tile_rotation(
+                tile, top_edge, left_edge)
             rotation_plan[r, c] = best_k
             if best_k != 0:
                 changed = True
@@ -117,11 +118,14 @@ def _select_tile_rotation(tile: np.ndarray, top_edge: Optional[np.ndarray], left
         if top_edge is not None and top_edge.size > 0:
             overlap = min(candidate.shape[1], top_edge.shape[-1])
             if overlap > 0:
-                score += float(np.mean(candidate[0, :overlap] == top_edge[:overlap]))
+                score += float(np.mean(candidate[0,
+                               :overlap] == top_edge[:overlap]))
         if left_edge is not None and left_edge.size > 0:
             overlap = min(candidate.shape[0], left_edge.shape[0])
             if overlap > 0:
-                score += float(np.mean(candidate[:overlap, 0] == left_edge[:overlap]))
+                score += float(
+                    np.mean(candidate[:overlap, 0] == left_edge[:overlap])
+                )
         if k == 0:
             base_score = score
         if score > best_score + 1e-6:
@@ -205,7 +209,8 @@ def _prefetch_batches_threaded(tiles, batch_size, device, depth=2, cancel_token=
                 start = index
                 end = min(start + batch_size, total)
                 batch = tiles[start:end]
-                future = executor.submit(_batch_to_tensor, batch, device, dtype)
+                future = executor.submit(
+                    _batch_to_tensor, batch, device, dtype)
                 futures.append((future, start, end))
                 index = end
             future, start, end = futures.popleft()
@@ -300,7 +305,8 @@ def predict_cnn(
     require_centers: bool = False,
 ):
     _maybe_raise_cancel(cancel_token)
-    device_obj = cast(torch.device, _quantization_device(device) or torch.device("cpu"))
+    device_obj = cast(torch.device, _quantization_device(
+        device) or torch.device("cpu"))
     compute_dtype = _runtime_float_dtype(device_obj)
     effective_budget = memory_budget or DEFAULT_MEMORY_BUDGET
     settings = get_adaptive_settings(effective_budget, tier=profile_tier)
@@ -308,7 +314,8 @@ def predict_cnn(
     memory_budget = effective_budget
 
     if require_centers and centers is None:
-        raise RuntimeError("Global centers are required for CNN chunk assignment.")
+        raise RuntimeError(
+            "Global centers are required for CNN chunk assignment.")
 
     coverage_map, height_pad, width_pad, grid_shape = _compute_latent_grid(
         cnn_model,
@@ -378,7 +385,8 @@ def predict_cnn(
     elif lowres_labels is not None:
         refined_lowres = lowres_labels.astype(np.uint8, copy=False)
     else:
-        refined_lowres = kmeans_outputs[0] if isinstance(kmeans_outputs, tuple) else kmeans_outputs
+        refined_lowres = kmeans_outputs[0] if isinstance(
+            kmeans_outputs, tuple) else kmeans_outputs
         if return_scores:
             lowres_scores = _label_to_one_hot(refined_lowres, num_segments)
 
@@ -408,7 +416,8 @@ def predict_cnn(
     score_tensor = score_tensor[0, :, : array.shape[1], : array.shape[2]]
     scores_np = score_tensor.cpu().numpy()
     if rotation_plan is not None:
-        scores_np = _apply_rotation_plan_to_volume(scores_np, tile_size, rotation_plan)
+        scores_np = _apply_rotation_plan_to_volume(
+            scores_np, tile_size, rotation_plan)
     return labels_full, scores_np
 
 
@@ -476,7 +485,8 @@ def _compute_latent_grid(
         percent = int((end / total) * 100)
         if percent // 5 > last_report:
             last_report = percent // 5
-            _emit_status(status_callback, f"CNN inference {min(percent, 100)}% complete.")
+            _emit_status(status_callback,
+                         f"CNN inference {min(percent, 100)}% complete.")
     coverage_map = np.concatenate(coverage_map, axis=0)
 
     channels = coverage_map.shape[1]
@@ -513,9 +523,12 @@ def _assign_latent_labels(
 ):
     channels, height, width = latent_grid.shape
     descriptors = latent_grid.transpose(1, 2, 0).reshape(-1, channels)
-    _emit_status(status_callback, "Assigning CNN latent grid to global centers...")
-    labels_flat = _assign_blocks_chunked(descriptors, centers, device_obj, compute_dtype)
-    labels_lowres = labels_flat.reshape(height, width).astype(np.uint8, copy=False)
+    _emit_status(status_callback,
+                 "Assigning CNN latent grid to global centers...")
+    labels_flat = _assign_blocks_chunked(
+        descriptors, centers, device_obj, compute_dtype)
+    labels_lowres = labels_flat.reshape(
+        height, width).astype(np.uint8, copy=False)
     lowres_scores = None
     if latent_knn_config is not None:
         refined_output = _latent_knn_soft_refine(
@@ -576,8 +589,10 @@ def fit_global_cnn_centers(
             cancel_token=cancel_token,
         )
         blocks_h, blocks_w = latent_grid.shape[1], latent_grid.shape[2]
-        descriptors = latent_grid.transpose(1, 2, 0).reshape(-1, latent_grid.shape[0])
-        sample_idx = _sample_block_indices((blocks_h, blocks_w), max_samples, rng)
+        descriptors = latent_grid.transpose(
+            1, 2, 0).reshape(-1, latent_grid.shape[0])
+        sample_idx = _sample_block_indices(
+            (blocks_h, blocks_w), max_samples, rng)
         sampled_chunks.append(descriptors[sample_idx])
     else:
         stride = chunk_plan.stride
@@ -609,16 +624,19 @@ def fit_global_cnn_centers(
                     cancel_token=cancel_token,
                 )
                 blocks_h, blocks_w = latent_grid.shape[1], latent_grid.shape[2]
-                descriptors = latent_grid.transpose(1, 2, 0).reshape(-1, latent_grid.shape[0])
+                descriptors = latent_grid.transpose(
+                    1, 2, 0).reshape(-1, latent_grid.shape[0])
                 sample_cap = min(remaining, per_chunk, descriptors.shape[0])
-                sample_idx = _sample_block_indices((blocks_h, blocks_w), sample_cap, rng)
+                sample_idx = _sample_block_indices(
+                    (blocks_h, blocks_w), sample_cap, rng)
                 sampled_chunks.append(descriptors[sample_idx])
                 remaining -= sample_cap
             if remaining <= 0:
                 break
 
     if not sampled_chunks:
-        raise RuntimeError("Unable to sample latent descriptors for global CNN centers.")
+        raise RuntimeError(
+            "Unable to sample latent descriptors for global CNN centers.")
     sampled = np.concatenate(sampled_chunks, axis=0)[:max_samples]
     _emit_status(
         status_callback,

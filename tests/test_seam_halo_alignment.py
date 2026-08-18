@@ -95,7 +95,8 @@ class TestCropHalo:
     def test_crop_2d_array(self):
         """Crop halo from 2D array."""
         result = np.arange(36).reshape(6, 6)
-        cropped = _crop_halo_from_result(result, top_pad=1, left_pad=1, core_height=4, core_width=4)
+        cropped = _crop_halo_from_result(
+            result, top_pad=1, left_pad=1, core_height=4, core_width=4)
 
         assert cropped.shape == (4, 4)
         expected = result[1:5, 1:5]
@@ -104,7 +105,8 @@ class TestCropHalo:
     def test_crop_3d_array(self):
         """Crop halo from 3D (channels, height, width) array."""
         result = np.arange(2 * 6 * 6).reshape(2, 6, 6)
-        cropped = _crop_halo_from_result(result, top_pad=1, left_pad=2, core_height=3, core_width=3)
+        cropped = _crop_halo_from_result(
+            result, top_pad=1, left_pad=2, core_height=3, core_width=3)
 
         assert cropped.shape == (2, 3, 3)
         expected = result[:, 1:4, 2:5]
@@ -113,7 +115,8 @@ class TestCropHalo:
     def test_crop_with_zero_padding(self):
         """Zero padding returns the full array."""
         result = np.arange(16).reshape(4, 4)
-        cropped = _crop_halo_from_result(result, top_pad=0, left_pad=0, core_height=4, core_width=4)
+        cropped = _crop_halo_from_result(
+            result, top_pad=0, left_pad=0, core_height=4, core_width=4)
 
         np.testing.assert_array_equal(cropped, result)
 
@@ -124,7 +127,8 @@ class TestGlobalBlockAlignment:
     def test_block_grid_shape_no_padding(self):
         """Block grid shape when dimensions are exact multiples of resolution."""
         height, width, resolution = 64, 128, 16
-        blocks_h, blocks_w, h_pad, w_pad = _block_grid_shape(height, width, resolution)
+        blocks_h, blocks_w, h_pad, w_pad = _block_grid_shape(
+            height, width, resolution)
 
         assert blocks_h == 4
         assert blocks_w == 8
@@ -134,7 +138,8 @@ class TestGlobalBlockAlignment:
     def test_block_grid_shape_with_padding(self):
         """Block grid shape when dimensions need padding."""
         height, width, resolution = 65, 130, 16
-        blocks_h, blocks_w, h_pad, w_pad = _block_grid_shape(height, width, resolution)
+        blocks_h, blocks_w, h_pad, w_pad = _block_grid_shape(
+            height, width, resolution)
 
         assert blocks_h == 5
         assert blocks_w == 9
@@ -197,7 +202,8 @@ class TestSeamPrevention:
             array.copy(),
             num_segments=4,
             resolution=8,
-            chunk_plan=_chunk_plan(chunk_size=128),  # Large enough to avoid chunking
+            # Large enough to avoid chunking
+            chunk_plan=_chunk_plan(chunk_size=128),
             device_hint=torch.device("cpu"),
         )
 
@@ -231,8 +237,9 @@ class TestSeamPrevention:
         size = 64
         array = np.zeros((3, size, size), dtype=np.float32)
         # Left half dark, right half bright
-        array[:, :, :size//2] = 60.0
-        array[:, :, size//2:] = 190.0
+        mid = size // 2
+        array[:, :, :mid] = 60.0
+        array[:, :, mid:] = 190.0
 
         labels = funcs.execute_kmeans_segmentation(
             array,
@@ -282,7 +289,8 @@ class TestSeamPrevention:
 
         # With uniform input and proper halo/alignment, should have only 1 label
         # (or at most 2 if there's some numerical precision issue)
-        assert len(unique_labels) <= 2, f"Too many labels for uniform image: {unique_labels}"
+        assert len(
+            unique_labels) <= 2, f"Too many labels for uniform image: {unique_labels}"
 
 
 class TestHaloPixelValue:
@@ -318,7 +326,8 @@ class TestGlobalScaling:
             })
             return result
 
-        monkeypatch.setattr(kmeans_runtime, "_smooth_and_pool_descriptors", tracking_pool)
+        monkeypatch.setattr(
+            kmeans_runtime, "_smooth_and_pool_descriptors", tracking_pool)
 
         # Run segmentation
         array = np.random.randn(3, 64, 64).astype(np.float32) * 50 + 100
@@ -335,7 +344,8 @@ class TestGlobalScaling:
         for call in normalize_calls:
             # If normalized, mean would be ~0 and std would be ~1
             # Original descriptors should have different stats
-            assert call["mean"] != pytest.approx(0.0, abs=0.5) or call["std"] != pytest.approx(1.0, abs=0.2)
+            assert call["mean"] != pytest.approx(
+                0.0, abs=0.5) or call["std"] != pytest.approx(1.0, abs=0.2)
 
 
 class TestBlockOverlap:
@@ -368,7 +378,8 @@ class TestBlockOverlap:
             array.copy(),
             num_segments=4,
             resolution=8,
-            chunk_plan=_chunk_plan(chunk_size=256),  # Large enough for single chunk
+            # Large enough for single chunk
+            chunk_plan=_chunk_plan(chunk_size=256),
             device_hint=torch.device("cpu"),
         )
 

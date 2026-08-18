@@ -33,7 +33,8 @@ class ChunkPlan:
 
     def __post_init__(self):
         if self.overlap >= self.chunk_size:
-            raise ValueError(f"overlap ({self.overlap}) must be less than chunk_size ({self.chunk_size})")
+            raise ValueError(
+                f"overlap ({self.overlap}) must be less than chunk_size ({self.chunk_size})")
 
     @property
     def stride(self) -> int:
@@ -53,14 +54,17 @@ def _copy_setting(settings: AdaptiveSettings) -> AdaptiveSettings:
     return AdaptiveSettings(safety_factor=settings.safety_factor, prefetch_depth=settings.prefetch_depth)
 
 
-_ADAPTIVE_SETTINGS_MAP: Dict[str, AdaptiveSettings] = {"default": AdaptiveSettings()}
-_ADAPTIVE_OPTIONS_MAP: Dict[str, List[Tuple[int, AdaptiveSettings]]] = {"default": []}
+_ADAPTIVE_SETTINGS_MAP: Dict[str, AdaptiveSettings] = {
+    "default": AdaptiveSettings()}
+_ADAPTIVE_OPTIONS_MAP: Dict[str,
+                            List[Tuple[int, AdaptiveSettings]]] = {"default": []}
 _ADAPTIVE_DEFAULT_TIER = "default"
 
 
 def get_adaptive_settings(memory_bytes: Optional[int] = None, tier: Optional[str] = None) -> AdaptiveSettings:
     tier_key = tier or _ADAPTIVE_DEFAULT_TIER
-    settings = _ADAPTIVE_SETTINGS_MAP.get(tier_key) or _ADAPTIVE_SETTINGS_MAP.get(_ADAPTIVE_DEFAULT_TIER)
+    settings = _ADAPTIVE_SETTINGS_MAP.get(
+        tier_key) or _ADAPTIVE_SETTINGS_MAP.get(_ADAPTIVE_DEFAULT_TIER)
     if settings is None:
         settings = AdaptiveSettings()
     options = _ADAPTIVE_OPTIONS_MAP.get(tier_key, [])
@@ -84,7 +88,8 @@ def set_adaptive_settings(
     elif not isinstance(settings, dict):  # backward compatibility
         settings = {default_tier or "default": settings}
 
-    _ADAPTIVE_SETTINGS_MAP = {tier: _copy_setting(cfg) for tier, cfg in settings.items()}
+    _ADAPTIVE_SETTINGS_MAP = {tier: _copy_setting(
+        cfg) for tier, cfg in settings.items()}
 
     if options is None:
         _ADAPTIVE_OPTIONS_MAP = {tier: [] for tier in _ADAPTIVE_SETTINGS_MAP}
@@ -113,7 +118,8 @@ def get_adaptive_options(tier: Optional[str] = None) -> List[Tuple[int, Adaptive
 
 def _free_vram_bytes(device):
     if device.type == "cuda" and torch.cuda.is_available():
-        free, _ = torch.cuda.mem_get_info(device.index or torch.cuda.current_device())
+        free, _ = torch.cuda.mem_get_info(
+            device.index or torch.cuda.current_device())
         return free
     return _system_available_memory()
 
@@ -149,7 +155,8 @@ def _derive_chunk_size(array_shape, device, profile_tier: Optional[str] = None):
 
 
 def recommended_chunk_plan(array_shape, device, profile_tier: Optional[str] = None) -> ChunkPlan:
-    chunk_size, budget, ratio, settings = _derive_chunk_size(array_shape, device, profile_tier=profile_tier)
+    chunk_size, budget, ratio, settings = _derive_chunk_size(
+        array_shape, device, profile_tier=profile_tier)
     overlap = 0
     return ChunkPlan(
         chunk_size=chunk_size,

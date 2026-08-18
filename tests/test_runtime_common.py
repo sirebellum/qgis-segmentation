@@ -3,7 +3,6 @@
 
 """Tests for runtime/common.py - shared utilities."""
 
-import threading
 
 import pytest
 import torch

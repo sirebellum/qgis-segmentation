@@ -30,7 +30,8 @@ def test_predict_kmeans_uses_pooled_descriptors(monkeypatch):
         # Return simple linearly separated centers to avoid random behavior during the test.
         feature_dim = data_np.shape[1]
         return np.stack(
-            [np.linspace(0.0, float(i + 1), feature_dim, dtype=np.float32) for i in range(num_clusters)],
+            [np.linspace(0.0, float(i + 1), feature_dim, dtype=np.float32)
+             for i in range(num_clusters)],
             axis=0,
         )
 

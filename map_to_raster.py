@@ -188,7 +188,8 @@ def get_canvas_extent_tuple(canvas: Any) -> Tuple[float, float, float, float, Op
         Tuple of (xmin, ymin, xmax, ymax, crs_authid).
     """
     extent = canvas.extent()
-    crs = canvas.mapSettings().destinationCrs() if hasattr(canvas, "mapSettings") else None
+    crs = canvas.mapSettings().destinationCrs() if hasattr(
+        canvas, "mapSettings") else None
     crs_authid = crs.authid() if crs and hasattr(crs, "authid") else None
 
     return (

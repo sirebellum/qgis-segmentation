@@ -2,15 +2,13 @@
 # Copyright (c) 2026 Quant Civil
 """QGIS-free tests for slider level mappings, smoothing toggle defaults, and UI styling."""
 
-import pytest
-import importlib
-import sys
 import re
 
 
 def test_slider_level_constants_exist():
     """Verify slider level constants are defined in segmenter module."""
-    spec_file = str(__import__("pathlib").Path(__file__).parents[1] / "segmenter.py")
+    spec_file = str(__import__("pathlib").Path(
+        __file__).parents[1] / "segmenter.py")
     with open(spec_file, encoding="utf-8") as f:
         content = f.read()
 
@@ -23,7 +21,8 @@ def test_slider_level_constants_exist():
 
 def test_smoothing_base_kernels_has_three_levels():
     """Verify SMOOTHING_BASE_KERNELS has three levels with base_kernel and iterations."""
-    spec_file = str(__import__("pathlib").Path(__file__).parents[1] / "segmenter.py")
+    spec_file = str(__import__("pathlib").Path(
+        __file__).parents[1] / "segmenter.py")
     with open(spec_file, encoding="utf-8") as f:
         content = f.read()
 
@@ -42,7 +41,8 @@ def test_smoothing_base_kernels_has_three_levels():
 
 def test_smoothing_checkbox_default_unchecked():
     """Verify the UI file has smoothing checkbox default to unchecked."""
-    ui_file = str(__import__("pathlib").Path(__file__).parents[1] / "segmenter_dialog_base.ui")
+    ui_file = str(__import__("pathlib").Path(
+        __file__).parents[1] / "segmenter_dialog_base.ui")
     with open(ui_file, encoding="utf-8") as f:
         content = f.read()
 
@@ -59,7 +59,8 @@ def test_smoothing_checkbox_default_unchecked():
 
 def test_smoothness_slider_exists():
     """Verify sliderSmoothness exists with correct range."""
-    ui_file = str(__import__("pathlib").Path(__file__).parents[1] / "segmenter_dialog_base.ui")
+    ui_file = str(__import__("pathlib").Path(
+        __file__).parents[1] / "segmenter_dialog_base.ui")
     with open(ui_file, encoding="utf-8") as f:
         content = f.read()
 
@@ -76,7 +77,8 @@ def test_smoothness_slider_exists():
 
 def test_speed_accuracy_sliders_removed():
     """Verify sliderSpeed and sliderAccuracy are removed from UI."""
-    ui_file = str(__import__("pathlib").Path(__file__).parents[1] / "segmenter_dialog_base.ui")
+    ui_file = str(__import__("pathlib").Path(
+        __file__).parents[1] / "segmenter_dialog_base.ui")
     with open(ui_file, encoding="utf-8") as f:
         content = f.read()
 
@@ -90,7 +92,8 @@ def test_speed_accuracy_sliders_removed():
 
 def test_info_smoothing_exists():
     """Verify infoSmoothing icon exists with tooltip."""
-    ui_file = str(__import__("pathlib").Path(__file__).parents[1] / "segmenter_dialog_base.ui")
+    ui_file = str(__import__("pathlib").Path(
+        __file__).parents[1] / "segmenter_dialog_base.ui")
     with open(ui_file, encoding="utf-8") as f:
         content = f.read()
 
@@ -109,7 +112,8 @@ def test_info_smoothing_exists():
 
 def test_blur_config_returns_none_when_smoothing_disabled():
     """Verify _blur_config logic returns None when smoothing is disabled."""
-    spec_file = str(__import__("pathlib").Path(__file__).parents[1] / "segmenter.py")
+    spec_file = str(__import__("pathlib").Path(
+        __file__).parents[1] / "segmenter.py")
     with open(spec_file, encoding="utf-8") as f:
         content = f.read()
 
@@ -120,7 +124,8 @@ def test_blur_config_returns_none_when_smoothing_disabled():
 
 def test_smoothing_checkbox_has_text():
     """Verify the checkbox has 'Smoothing' text (not a separate label)."""
-    ui_file = str(__import__("pathlib").Path(__file__).parents[1] / "segmenter_dialog_base.ui")
+    ui_file = str(__import__("pathlib").Path(
+        __file__).parents[1] / "segmenter_dialog_base.ui")
     with open(ui_file, encoding="utf-8") as f:
         content = f.read()
 
@@ -140,7 +145,8 @@ def test_smoothing_checkbox_has_text():
 
 def test_smoothness_slider_default_value():
     """Verify sliderSmoothness defaults to 1 (medium)."""
-    ui_file = str(__import__("pathlib").Path(__file__).parents[1] / "segmenter_dialog_base.ui")
+    ui_file = str(__import__("pathlib").Path(
+        __file__).parents[1] / "segmenter_dialog_base.ui")
     with open(ui_file, encoding="utf-8") as f:
         content = f.read()
 
@@ -151,14 +157,17 @@ def test_smoothness_slider_default_value():
     )
     assert smooth_match
     slider_block = smooth_match.group(0)
-    value_match = re.search(r'<property name="value">\s*<number>(\d+)</number>', slider_block)
+    value_match = re.search(
+        r'<property name="value">\s*<number>(\d+)</number>', slider_block)
     assert value_match, "Smoothness slider should have a value property"
-    assert value_match.group(1) == "1", "Smoothness slider should default to 1 (medium)"
+    assert value_match.group(
+        1) == "1", "Smoothness slider should default to 1 (medium)"
 
 
 def test_dropdown_text_palette_aware():
     """Verify QComboBox uses palette-aware text color for dark/light mode support."""
-    ui_file = str(__import__("pathlib").Path(__file__).parents[1] / "segmenter_dialog_base.ui")
+    ui_file = str(__import__("pathlib").Path(
+        __file__).parents[1] / "segmenter_dialog_base.ui")
     with open(ui_file, encoding="utf-8") as f:
         content = f.read()
 
@@ -168,7 +177,8 @@ def test_dropdown_text_palette_aware():
 
 def test_checkbox_indicator_palette_aware():
     """Verify checkbox indicator uses palette-aware colors for dark/light mode support."""
-    ui_file = str(__import__("pathlib").Path(__file__).parents[1] / "segmenter_dialog_base.ui")
+    ui_file = str(__import__("pathlib").Path(
+        __file__).parents[1] / "segmenter_dialog_base.ui")
     with open(ui_file, encoding="utf-8") as f:
         content = f.read()
 
@@ -178,7 +188,8 @@ def test_checkbox_indicator_palette_aware():
 
 def test_input_layer_label_centered():
     """Verify Input Layer label has centered alignment."""
-    ui_file = str(__import__("pathlib").Path(__file__).parents[1] / "segmenter_dialog_base.ui")
+    ui_file = str(__import__("pathlib").Path(
+        __file__).parents[1] / "segmenter_dialog_base.ui")
     with open(ui_file, encoding="utf-8") as f:
         content = f.read()
 
@@ -194,7 +205,8 @@ def test_input_layer_label_centered():
 
 def test_resolution_label_centered():
     """Verify Resolution label has centered alignment."""
-    ui_file = str(__import__("pathlib").Path(__file__).parents[1] / "segmenter_dialog_base.ui")
+    ui_file = str(__import__("pathlib").Path(
+        __file__).parents[1] / "segmenter_dialog_base.ui")
     with open(ui_file, encoding="utf-8") as f:
         content = f.read()
 
@@ -210,7 +222,8 @@ def test_resolution_label_centered():
 
 def test_window_height_reduced():
     """Verify dialog height is reasonable (not excessively large)."""
-    ui_file = str(__import__("pathlib").Path(__file__).parents[1] / "segmenter_dialog_base.ui")
+    ui_file = str(__import__("pathlib").Path(
+        __file__).parents[1] / "segmenter_dialog_base.ui")
     with open(ui_file, encoding="utf-8") as f:
         content = f.read()
 
@@ -227,7 +240,8 @@ def test_window_height_reduced():
 
 def test_blur_config_passed_to_task():
     """Verify blur_config is added to kwargs for the task."""
-    spec_file = str(__import__("pathlib").Path(__file__).parents[1] / "segmenter.py")
+    spec_file = str(__import__("pathlib").Path(
+        __file__).parents[1] / "segmenter.py")
     with open(spec_file, encoding="utf-8") as f:
         content = f.read()
 
@@ -237,7 +251,8 @@ def test_blur_config_passed_to_task():
 
 def test_apply_optional_blur_imported():
     """Verify _apply_optional_blur is imported in segmenter.py."""
-    spec_file = str(__import__("pathlib").Path(__file__).parents[1] / "segmenter.py")
+    spec_file = str(__import__("pathlib").Path(
+        __file__).parents[1] / "segmenter.py")
     with open(spec_file, encoding="utf-8") as f:
         content = f.read()
 
@@ -247,7 +262,8 @@ def test_apply_optional_blur_imported():
 
 def test_blur_config_scales_with_resolution():
     """Verify _blur_config uses SMOOTHING_BASE_KERNELS and scales with resolution."""
-    spec_file = str(__import__("pathlib").Path(__file__).parents[1] / "segmenter.py")
+    spec_file = str(__import__("pathlib").Path(
+        __file__).parents[1] / "segmenter.py")
     with open(spec_file, encoding="utf-8") as f:
         content = f.read()
 
@@ -261,7 +277,8 @@ def test_blur_config_scales_with_resolution():
 
 def test_all_text_widgets_palette_aware():
     """Verify all text-bearing widgets use palette-aware styling for dark/light mode."""
-    ui_file = str(__import__("pathlib").Path(__file__).parents[1] / "segmenter_dialog_base.ui")
+    ui_file = str(__import__("pathlib").Path(
+        __file__).parents[1] / "segmenter_dialog_base.ui")
     with open(ui_file, encoding="utf-8") as f:
         content = f.read()
 
@@ -283,12 +300,14 @@ def test_all_text_widgets_palette_aware():
 
 def test_no_hardcoded_white_text_color():
     """Verify no hardcoded 'color: white' styling in UI file."""
-    ui_file = str(__import__("pathlib").Path(__file__).parents[1] / "segmenter_dialog_base.ui")
+    ui_file = str(__import__("pathlib").Path(
+        __file__).parents[1] / "segmenter_dialog_base.ui")
     with open(ui_file, encoding="utf-8") as f:
         content = f.read()
 
     # Should not have hardcoded white color for text
     import re
     # Look for color: white but not in comments or documentation
-    hardcoded_white = re.search(r'styleSheet.*?color:\s*white', content, re.IGNORECASE | re.DOTALL)
+    hardcoded_white = re.search(
+        r'styleSheet.*?color:\s*white', content, re.IGNORECASE | re.DOTALL)
     assert hardcoded_white is None, "UI should not have hardcoded 'color: white' - use palette(text) instead"

@@ -6,12 +6,14 @@ import pytest
 
 
 if os.environ.get("RUN_QGIS_TESTS", "0").lower() not in {"1", "true"} and os.environ.get("QGIS_TESTS") != "1":  # pragma: no cover - optional runtime
-    pytest.skip("QGIS tests disabled; set RUN_QGIS_TESTS=1 (or QGIS_TESTS=1) to enable.", allow_module_level=True)
+    pytest.skip("QGIS tests disabled; set RUN_QGIS_TESTS=1 (or QGIS_TESTS=1) to enable.",
+                allow_module_level=True)
 
 try:
     from qgis.core import QgsApplication  # type: ignore
 except Exception:  # pragma: no cover - optional dependency
-    pytest.skip("QGIS not available in this environment.", allow_module_level=True)
+    pytest.skip("QGIS not available in this environment.",
+                allow_module_level=True)
 
 
 def test_qgis_core_imports():

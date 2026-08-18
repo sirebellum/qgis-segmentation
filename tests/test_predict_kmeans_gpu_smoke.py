@@ -26,7 +26,8 @@ def test_predict_kmeans_gpu_smoke():
     rng = np.random.default_rng(7)
     array = rng.random((3, 64, 64), dtype=np.float32)
 
-    result = funcs.predict_kmeans(array, num_segments=3, resolution=8, device_hint=device)
+    result = funcs.predict_kmeans(
+        array, num_segments=3, resolution=8, device_hint=device)
 
     assert result.shape == array.shape[1:]
     assert result.max() < 3

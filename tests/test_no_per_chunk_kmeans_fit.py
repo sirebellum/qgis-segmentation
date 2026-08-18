@@ -16,11 +16,13 @@ def test_chunked_kmeans_avoids_per_chunk_normalization(monkeypatch):
     def fake_torch_kmeans(data_np, num_clusters, device=None, compute_dtype=None, seed=None):
         feature_dim = data_np.shape[1]
         return np.stack(
-            [np.full(feature_dim, float(idx), dtype=np.float32) for idx in range(num_clusters)],
+            [np.full(feature_dim, float(idx), dtype=np.float32)
+             for idx in range(num_clusters)],
             axis=0,
         )
 
-    monkeypatch.setattr(kmeans_runtime, "_normalize_cluster_labels", fail_normalize)
+    monkeypatch.setattr(
+        kmeans_runtime, "_normalize_cluster_labels", fail_normalize)
     monkeypatch.setattr(kmeans_runtime, "_torch_kmeans", fake_torch_kmeans)
 
     array = np.zeros((3, 80, 80), dtype=np.float32)

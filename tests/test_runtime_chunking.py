@@ -4,7 +4,6 @@
 """Tests for runtime/chunking.py - chunk aggregation and processing."""
 
 import numpy as np
-import pytest
 
 from runtime.chunking import (
     _ChunkAggregator,
@@ -58,14 +57,16 @@ class TestNormalizeInferenceOutput:
     def test_dict_output(self):
         labels = np.array([[0, 1], [1, 0]], dtype=np.int32)
         scores = np.random.rand(2, 2, 2).astype(np.float32)
-        result_labels, result_scores = _normalize_inference_output({"labels": labels, "scores": scores})
+        result_labels, result_scores = _normalize_inference_output(
+            {"labels": labels, "scores": scores})
         np.testing.assert_array_equal(result_labels, labels)
         np.testing.assert_array_equal(result_scores, scores)
 
     def test_tuple_output(self):
         labels = np.array([[0, 1], [1, 0]], dtype=np.int32)
         scores = np.random.rand(2, 2, 2).astype(np.float32)
-        result_labels, result_scores = _normalize_inference_output((labels, scores))
+        result_labels, result_scores = _normalize_inference_output(
+            (labels, scores))
         np.testing.assert_array_equal(result_labels, labels)
         np.testing.assert_array_equal(result_scores, scores)
 
@@ -101,7 +102,8 @@ class TestChunkAggregator:
         for row in [0, 32]:
             for col in [0, 32]:
                 labels = np.random.randint(0, 2, size=(32, 32), dtype=np.int32)
-                agg.add(labels, region=(row, col, row + 32, col + 32), chunk_data=None, scores=None)
+                agg.add(labels, region=(row, col, row + 32, col + 32),
+                        chunk_data=None, scores=None)
 
         result = agg.finalize()
         assert result.shape == (64, 64)

@@ -34,9 +34,11 @@ def _chunked_gaussian_blur(
     radius = int(max(1, round(3 * sigma)))
     device = _smoothing_device()
     preferred_dtype = _runtime_float_dtype(device)
-    use_fp16 = preferred_dtype == torch.float16 and LATENT_KNN_DEFAULTS.get("mixed_precision_smoothing", True)
+    use_fp16 = preferred_dtype == torch.float16 and LATENT_KNN_DEFAULTS.get(
+        "mixed_precision_smoothing", True)
     dtype = torch.float16 if use_fp16 else torch.float32
-    kernel = _build_gaussian_kernel(radius, sigma, channels, device, dtype=dtype)
+    kernel = _build_gaussian_kernel(
+        radius, sigma, channels, device, dtype=dtype)
     result = np.zeros_like(array, dtype=np.float32)
     bytes_per_row = max(channels * width * 4, 1)
     chunk_rows = max(radius * 2 + 1, int(max_chunk_bytes // bytes_per_row))
@@ -52,8 +54,10 @@ def _chunked_gaussian_blur(
         slice_start = start - pad_top
         slice_end = min(height, end + pad_bottom)
         chunk = array[:, slice_start:slice_end, :]
-        tensor = torch.from_numpy(chunk).unsqueeze(0).to(device=device, dtype=dtype)
-        padded = F.pad(tensor, (radius, radius, radius, radius), mode="reflect")
+        tensor = torch.from_numpy(chunk).unsqueeze(
+            0).to(device=device, dtype=dtype)
+        padded = F.pad(
+            tensor, (radius, radius, radius, radius), mode="reflect")
         smoothed = F.conv2d(padded, kernel, groups=channels).squeeze(0)
         usable = smoothed[:, pad_top:pad_top + (end - start), :].to(dtype)
         result[:, start:end, :] = usable.detach().cpu().numpy()

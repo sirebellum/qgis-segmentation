@@ -65,7 +65,6 @@ from .funcs import (  # noqa: E402
 )
 from .qgis_funcs import render_raster  # noqa: E402
 from .map_to_raster import (  # noqa: E402
-    is_file_backed_gdal_raster,
     is_renderable_non_file_layer,
     build_convert_map_to_raster_params,
     extract_layer_metadata,
@@ -89,7 +88,8 @@ RESOLUTION_VALUE_MAP = {label: value for label, value in RESOLUTION_CHOICES}
 SLIDER_LEVEL_LOW = 0
 SLIDER_LEVEL_MEDIUM = 1
 SLIDER_LEVEL_HIGH = 2
-SLIDER_LEVEL_NAMES = {SLIDER_LEVEL_LOW: "low", SLIDER_LEVEL_MEDIUM: "medium", SLIDER_LEVEL_HIGH: "high"}
+SLIDER_LEVEL_NAMES = {SLIDER_LEVEL_LOW: "low",
+                      SLIDER_LEVEL_MEDIUM: "medium", SLIDER_LEVEL_HIGH: "high"}
 # Base smoothing kernel sizes at resolution=4 (high). Scales proportionally with resolution.
 # At resolution 4: low=5px, medium=11px, high=21px
 # At resolution 16: low=20px, medium=44px, high=84px
@@ -101,7 +101,8 @@ SMOOTHING_BASE_KERNELS = {
 SMOOTHING_BASE_RESOLUTION = 4  # Reference resolution for base kernel sizes
 
 PROGRESS_PERCENT_PATTERN = re.compile(r"(?P<percent>\d{1,3})\s*%")
-PROGRESS_STEP_PATTERN = re.compile(r"step\s+(?P<current>\d+)\s*/\s*(?P<total>\d+)", re.IGNORECASE)
+PROGRESS_STEP_PATTERN = re.compile(
+    r"step\s+(?P<current>\d+)\s*/\s*(?P<total>\d+)", re.IGNORECASE)
 PROGRESS_TEXT_LIMIT = 80
 PROGRESS_STAGE_MAP = {
     "prepare": (0.0, 20.0, "Preparing input..."),
@@ -153,7 +154,8 @@ class _LogoHoverController(QObject):
         super().__init__(label)
         self._label = label
         self._click_callback = click_callback
-        self._hover_radius = max(60.0, min(label.width(), label.height()) * 0.6)
+        self._hover_radius = max(
+            60.0, min(label.width(), label.height()) * 0.6)
         self._glow = QGraphicsDropShadowEffect(label)
         self._glow.setOffset(0, 0)
         self._glow.setBlurRadius(0)
@@ -188,7 +190,8 @@ class _LogoHoverController(QObject):
         color = QColor(255, 215, 0, min(255, max(0, alpha)))
         self._glow.setBlurRadius(blur if intensity > 0 else 0)
         self._glow.setColor(color)
-        self._label.setCursor(Qt.PointingHandCursor if intensity > 0.1 else Qt.ArrowCursor)
+        self._label.setCursor(
+            Qt.PointingHandCursor if intensity > 0.1 else Qt.ArrowCursor)
 
     def _reset_glow(self):
         self._glow.setBlurRadius(0)
@@ -222,7 +225,8 @@ class Task(QgsTask):
         self.cancel_token.bind_task(self)
         self.kwargs = kwargs
         self.result = None
-        QgsMessageLog.logMessage("Task initialized", "Segmenter", level=Qgis.Info)
+        QgsMessageLog.logMessage(
+            "Task initialized", "Segmenter", level=Qgis.Info)
         self._status("Task queued")
 
     def run(self):
@@ -232,7 +236,8 @@ class Task(QgsTask):
             self._status("Task canceled before execution")
             return False
         try:
-            self.result = self.function(*self.args, cancel_token=self.cancel_token)
+            self.result = self.function(
+                *self.args, cancel_token=self.cancel_token)
             if self.isCanceled():
                 self._status("Processing canceled")
                 return False
@@ -262,7 +267,8 @@ class Task(QgsTask):
             output = self.result
             if blur_config is not None:
                 if segmenter:
-                    segmenter._update_overall_progress("smooth", 0, "Smoothing segmentation map...")
+                    segmenter._update_overall_progress(
+                        "smooth", 0, "Smoothing segmentation map...")
                 output = _apply_optional_blur(
                     output,
                     blur_config,
@@ -270,10 +276,12 @@ class Task(QgsTask):
                     cancel_token=self.cancel_token,
                 )
                 if segmenter:
-                    segmenter._update_overall_progress("smooth", 100, "Smoothing complete.")
+                    segmenter._update_overall_progress(
+                        "smooth", 100, "Smoothing complete.")
             # render raster
             if segmenter:
-                segmenter._update_overall_progress("render", 20, "Rendering output...")
+                segmenter._update_overall_progress(
+                    "render", 20, "Rendering output...")
             render_raster(
                 output,
                 self.kwargs["layer"].extent(),
@@ -494,7 +502,8 @@ class Segmenter:
         self._progress_active = False
         bar.setRange(0, 100)
         if status == "success":
-            self._update_overall_progress("render", 100, "Segmentation complete")
+            self._update_overall_progress(
+                "render", 100, "Segmentation complete")
         elif status == "canceled":
             bar.setValue(int(round(self._progress_last_value)))
             bar.setFormat("Canceled")
@@ -586,7 +595,7 @@ class Segmenter:
 
     def _blur_config(self, resolution_label: Optional[str] = None) -> dict:
         """Build blur config based on smoothing slider and resolution. Returns None if smoothing is disabled.
-        
+
         Kernel size scales proportionally with resolution:
         - At high resolution (4px blocks): base kernel sizes
         - At low resolution (16px blocks): 4x larger kernels
@@ -598,19 +607,22 @@ class Segmenter:
             level = SLIDER_LEVEL_MEDIUM
         else:
             slider = getattr(dlg, "sliderSmoothness", None)
-            level = int(np.clip(slider.value(), SLIDER_LEVEL_LOW, SLIDER_LEVEL_HIGH)) if slider else SLIDER_LEVEL_MEDIUM
-        
-        base = SMOOTHING_BASE_KERNELS.get(level, SMOOTHING_BASE_KERNELS[SLIDER_LEVEL_MEDIUM])
+            level = int(np.clip(slider.value(), SLIDER_LEVEL_LOW,
+                        SLIDER_LEVEL_HIGH)) if slider else SLIDER_LEVEL_MEDIUM
+
+        base = SMOOTHING_BASE_KERNELS.get(
+            level, SMOOTHING_BASE_KERNELS[SLIDER_LEVEL_MEDIUM])
         base_kernel = base["base_kernel"]
         iterations = base["iterations"]
-        
+
         # Scale kernel proportionally with resolution
-        resolution = RESOLUTION_VALUE_MAP.get(resolution_label, SMOOTHING_BASE_RESOLUTION) if resolution_label else SMOOTHING_BASE_RESOLUTION
+        resolution = RESOLUTION_VALUE_MAP.get(
+            resolution_label, SMOOTHING_BASE_RESOLUTION) if resolution_label else SMOOTHING_BASE_RESOLUTION
         scale = resolution / SMOOTHING_BASE_RESOLUTION
         kernel = int(round(base_kernel * scale))
         kernel = kernel | 1  # Ensure odd
         kernel = max(3, kernel)  # Minimum 3px
-        
+
         return {"kernel_size": kernel, "iterations": iterations}
 
     def open_feedback_link(self):
@@ -655,7 +667,8 @@ class Segmenter:
         self.task.cancel()
         self._set_stop_enabled(False)
         self._set_progress_message("Cancelling task...")
-        self.log_status("Cancellation requested; attempting to stop the worker immediately.")
+        self.log_status(
+            "Cancellation requested; attempting to stop the worker immediately.")
 
     def _init_logo_interactions(self):
         logo = getattr(self.dlg, "imageLarge", None)
@@ -664,7 +677,8 @@ class Segmenter:
         logo.setAttribute(Qt.WA_Hover, True)
         logo.setMouseTracking(True)
         if self._logo_hover is None:
-            self._logo_hover = _LogoHoverController(logo, self._open_support_link)
+            self._logo_hover = _LogoHoverController(
+                logo, self._open_support_link)
             logo.installEventFilter(self._logo_hover)
 
     def add_action(
@@ -763,12 +777,14 @@ class Segmenter:
     # Predict coverage map
     def predict(self):
         self._start_progress_cycle("Preparing segmentation...")
-        self._update_overall_progress("prepare", 10, "Validating layer selection...")
+        self._update_overall_progress(
+            "prepare", 10, "Validating layer selection...")
 
         layer_name = self.dlg.inputLayer.currentText()
         layers = QgsProject.instance().mapLayersByName(layer_name)
         if not layers:
-            self.log_status("Selected layer is no longer available. Please choose another layer.")
+            self.log_status(
+                "Selected layer is no longer available. Please choose another layer.")
             self._reset_progress_bar()
             return
         layer = layers[0]
@@ -786,18 +802,22 @@ class Segmenter:
                     "generated GeoTIFF as input."
                 )
             else:
-                self.log_status("Selected layer is not a supported 3-band GeoTIFF raster.")
+                self.log_status(
+                    "Selected layer is not a supported 3-band GeoTIFF raster.")
             self._reset_progress_bar()
             return
         if not layer.isValid():
             raise ValueError(f"Invalid raster layer! \n{layer_name}")
         raster_source = layer.source().split("|")[0]
-        self._update_overall_progress("prepare", 60, "Raster scheduled for background loading.")
-        self.log_status("Raster IO deferred to the worker thread to keep QGIS responsive.")
+        self._update_overall_progress(
+            "prepare", 60, "Raster scheduled for background loading.")
+        self.log_status(
+            "Raster IO deferred to the worker thread to keep QGIS responsive.")
 
         segments_raw = (self.dlg.inputSegments.text() or "").strip()
         if not segments_raw:
-            self.log_status("Please enter the desired number of segments and try again.")
+            self.log_status(
+                "Please enter the desired number of segments and try again.")
             self.dlg.inputSegments.setFocus()
             self._reset_progress_bar()
             return
@@ -813,13 +833,15 @@ class Segmenter:
             self.dlg.inputSegments.setFocus()
             self._reset_progress_bar()
             return
-        self._update_overall_progress("prepare", 80, "Segmentation parameters verified.")
+        self._update_overall_progress(
+            "prepare", 80, "Segmentation parameters verified.")
 
         resolution_label = self.dlg.inputRes.currentData()
         if not resolution_label:
             resolution_label = self.dlg.inputRes.currentText() or DEFAULT_RESOLUTION_LABEL
         resolution_label = str(resolution_label).strip().lower()
-        resolution = RESOLUTION_VALUE_MAP.get(resolution_label, RESOLUTION_VALUE_MAP[DEFAULT_RESOLUTION_LABEL])
+        resolution = RESOLUTION_VALUE_MAP.get(
+            resolution_label, RESOLUTION_VALUE_MAP[DEFAULT_RESOLUTION_LABEL])
 
         blur_config = self._blur_config(resolution_label)
         if blur_config:
@@ -830,7 +852,8 @@ class Segmenter:
             self.log_status("Post-smoothing disabled (checkbox unchecked).")
 
         if not hasattr(self, "device"):
-            raise AttributeError("Segmenter instance must have a 'device' attribute set before calling predict().")
+            raise AttributeError(
+                "Segmenter instance must have a 'device' attribute set before calling predict().")
 
         kwargs = {
             "layer": layer,
@@ -850,16 +873,20 @@ class Segmenter:
             resolution,
             None,  # chunk_plan - let pipeline compute it
             self.worker_status,
-            1.0,  # sample_scale - fixed at 1.0 (speed/accuracy sliders removed)
+            # sample_scale - fixed at 1.0 (speed/accuracy sliders removed)
+            1.0,
             self.device,
         )
 
-        self._update_overall_progress("queue", 90, "Dispatching segmentation task...")
+        self._update_overall_progress(
+            "queue", 90, "Dispatching segmentation task...")
         self.log_status(
             f"Queued K-Means segmentation with {num_segments} segments at {self.dlg.inputRes.currentText()} resolution."
         )
-        self._update_overall_progress("queue", 100, "Task queued; starting worker...")
-        self._update_overall_progress("inference", 0, "Running segmentation...")
+        self._update_overall_progress(
+            "queue", 100, "Task queued; starting worker...")
+        self._update_overall_progress(
+            "inference", 0, "Running segmentation...")
         self.task = run_task(func, *args, **kwargs)
         self._set_stop_enabled(True)
 
@@ -917,7 +944,8 @@ class Segmenter:
             self.dlg.inputRes.addItem(display, label)
         index = self.dlg.inputRes.findData(DEFAULT_RESOLUTION_LABEL)
         if index < 0:
-            index = self.dlg.inputRes.findText(DEFAULT_RESOLUTION_LABEL, Qt.MatchFixedString)
+            index = self.dlg.inputRes.findText(
+                DEFAULT_RESOLUTION_LABEL, Qt.MatchFixedString)
         if index >= 0:
             self.dlg.inputRes.setCurrentIndex(index)
 
@@ -985,7 +1013,8 @@ class Segmenter:
             self._set_stop_enabled(False)
 
             # Wire layer selection change for map-to-raster assist
-            self.dlg.inputLayer.currentIndexChanged.connect(self._on_layer_selection_changed)
+            self.dlg.inputLayer.currentIndexChanged.connect(
+                self._on_layer_selection_changed)
 
             # Render logo
             img_path = os.path.join(self.plugin_dir, "logo.png")
@@ -1053,8 +1082,10 @@ class Segmenter:
         if not combo:
             return
         if self._layer_refresh_controller is None:
-            self._layer_refresh_controller = _ComboRefreshController(combo, self.render_layers)
+            self._layer_refresh_controller = _ComboRefreshController(
+                combo, self.render_layers)
             combo.installEventFilter(self._layer_refresh_controller)
+
     def _on_layer_selection_changed(self, index: int) -> None:
         """Handle layer dropdown selection change for map-to-raster assist.
 
@@ -1114,7 +1145,8 @@ class Segmenter:
         """Open the Convert map to raster dialog prefilled for the given layer."""
         canvas = getattr(self, "canvas", None)
         if not canvas:
-            self.log_status("Map canvas not available. Cannot determine extent.")
+            self.log_status(
+                "Map canvas not available. Cannot determine extent.")
             return
 
         # Build parameters

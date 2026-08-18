@@ -2,8 +2,6 @@
 # Copyright (c) 2026 Quant Civil
 """QGIS-free unit tests for map-to-raster layer detection and parameter mapping."""
 
-import pytest
-
 
 class TestIsFileBackedGdalRaster:
     """Tests for is_file_backed_gdal_raster detection function."""
@@ -12,39 +10,52 @@ class TestIsFileBackedGdalRaster:
         """Valid 3-band GDAL GeoTIFF should return True."""
         from map_to_raster import is_file_backed_gdal_raster
 
-        assert is_file_backed_gdal_raster("gdal", "/path/to/file.tif", 3) is True
-        assert is_file_backed_gdal_raster("gdal", "/path/to/file.tiff", 3) is True
-        assert is_file_backed_gdal_raster("GDAL", "/path/to/file.TIF", 3) is True
+        assert is_file_backed_gdal_raster(
+            "gdal", "/path/to/file.tif", 3) is True
+        assert is_file_backed_gdal_raster(
+            "gdal", "/path/to/file.tiff", 3) is True
+        assert is_file_backed_gdal_raster(
+            "GDAL", "/path/to/file.TIF", 3) is True
 
     def test_wrong_provider_returns_false(self):
         """Non-GDAL providers should return False."""
         from map_to_raster import is_file_backed_gdal_raster
 
-        assert is_file_backed_gdal_raster("wms", "/path/to/file.tif", 3) is False
-        assert is_file_backed_gdal_raster("xyz", "/path/to/file.tif", 3) is False
-        assert is_file_backed_gdal_raster("wmts", "/path/to/file.tif", 3) is False
+        assert is_file_backed_gdal_raster(
+            "wms", "/path/to/file.tif", 3) is False
+        assert is_file_backed_gdal_raster(
+            "xyz", "/path/to/file.tif", 3) is False
+        assert is_file_backed_gdal_raster(
+            "wmts", "/path/to/file.tif", 3) is False
 
     def test_wrong_band_count_returns_false(self):
         """Non-3-band rasters should return False."""
         from map_to_raster import is_file_backed_gdal_raster
 
-        assert is_file_backed_gdal_raster("gdal", "/path/to/file.tif", 1) is False
-        assert is_file_backed_gdal_raster("gdal", "/path/to/file.tif", 4) is False
-        assert is_file_backed_gdal_raster("gdal", "/path/to/file.tif", 0) is False
+        assert is_file_backed_gdal_raster(
+            "gdal", "/path/to/file.tif", 1) is False
+        assert is_file_backed_gdal_raster(
+            "gdal", "/path/to/file.tif", 4) is False
+        assert is_file_backed_gdal_raster(
+            "gdal", "/path/to/file.tif", 0) is False
 
     def test_wrong_extension_returns_false(self):
         """Non-.tif/.tiff extensions should return False."""
         from map_to_raster import is_file_backed_gdal_raster
 
-        assert is_file_backed_gdal_raster("gdal", "/path/to/file.png", 3) is False
-        assert is_file_backed_gdal_raster("gdal", "/path/to/file.jpg", 3) is False
-        assert is_file_backed_gdal_raster("gdal", "/path/to/file.ecw", 3) is False
+        assert is_file_backed_gdal_raster(
+            "gdal", "/path/to/file.png", 3) is False
+        assert is_file_backed_gdal_raster(
+            "gdal", "/path/to/file.jpg", 3) is False
+        assert is_file_backed_gdal_raster(
+            "gdal", "/path/to/file.ecw", 3) is False
 
     def test_none_values_return_false(self):
         """None provider or source should return False."""
         from map_to_raster import is_file_backed_gdal_raster
 
-        assert is_file_backed_gdal_raster(None, "/path/to/file.tif", 3) is False
+        assert is_file_backed_gdal_raster(
+            None, "/path/to/file.tif", 3) is False
         assert is_file_backed_gdal_raster("gdal", None, 3) is False
 
     def test_path_with_layer_options(self):
@@ -62,58 +73,70 @@ class TestIsRenderableNonFileLayer:
         """WMS provider should be detected as renderable."""
         from map_to_raster import is_renderable_non_file_layer
 
-        assert is_renderable_non_file_layer("RasterLayer", "wms", "http://example.com/wms") is True
+        assert is_renderable_non_file_layer(
+            "RasterLayer", "wms", "http://example.com/wms") is True
 
     def test_wmts_provider_is_renderable(self):
         """WMTS provider should be detected as renderable."""
         from map_to_raster import is_renderable_non_file_layer
 
-        assert is_renderable_non_file_layer("RasterLayer", "wmts", "http://example.com/wmts") is True
+        assert is_renderable_non_file_layer(
+            "RasterLayer", "wmts", "http://example.com/wmts") is True
 
     def test_xyz_provider_is_renderable(self):
         """XYZ tiles provider should be detected as renderable."""
         from map_to_raster import is_renderable_non_file_layer
 
-        assert is_renderable_non_file_layer("RasterLayer", "xyz", "http://example.com/xyz/{z}/{x}/{y}.png") is True
+        assert is_renderable_non_file_layer(
+            "RasterLayer", "xyz", "http://example.com/xyz/{z}/{x}/{y}.png") is True
 
     def test_arcgis_provider_is_renderable(self):
         """ArcGIS server provider should be detected as renderable."""
         from map_to_raster import is_renderable_non_file_layer
 
-        assert is_renderable_non_file_layer("RasterLayer", "arcgismapserver", "http://example.com/arcgis") is True
-        assert is_renderable_non_file_layer("RasterLayer", "arcgisfeatureserver", "http://example.com/arcgis") is True
+        assert is_renderable_non_file_layer(
+            "RasterLayer", "arcgismapserver", "http://example.com/arcgis") is True
+        assert is_renderable_non_file_layer(
+            "RasterLayer", "arcgisfeatureserver", "http://example.com/arcgis") is True
 
     def test_vector_layer_is_renderable(self):
         """Vector layers should be detected as renderable."""
         from map_to_raster import is_renderable_non_file_layer
 
-        assert is_renderable_non_file_layer("VectorLayer", "ogr", "/path/to/file.shp") is True
-        assert is_renderable_non_file_layer("VectorLayer", "postgres", "dbname=test") is True
+        assert is_renderable_non_file_layer(
+            "VectorLayer", "ogr", "/path/to/file.shp") is True
+        assert is_renderable_non_file_layer(
+            "VectorLayer", "postgres", "dbname=test") is True
 
     def test_gdal_local_file_not_renderable(self):
         """Local GDAL file should not be flagged as needing conversion."""
         from map_to_raster import is_renderable_non_file_layer
 
-        assert is_renderable_non_file_layer("RasterLayer", "gdal", "/local/file.tif") is False
+        assert is_renderable_non_file_layer(
+            "RasterLayer", "gdal", "/local/file.tif") is False
 
     def test_gdal_remote_vsicurl_is_renderable(self):
         """GDAL with /vsicurl/ remote source should be renderable."""
         from map_to_raster import is_renderable_non_file_layer
 
-        assert is_renderable_non_file_layer("RasterLayer", "gdal", "/vsicurl/http://example.com/data.tif") is True
+        assert is_renderable_non_file_layer(
+            "RasterLayer", "gdal", "/vsicurl/http://example.com/data.tif") is True
 
     def test_gdal_http_source_is_renderable(self):
         """GDAL with HTTP source should be renderable."""
         from map_to_raster import is_renderable_non_file_layer
 
-        assert is_renderable_non_file_layer("RasterLayer", "gdal", "http://example.com/data.tif") is True
-        assert is_renderable_non_file_layer("RasterLayer", "gdal", "https://example.com/data.tif") is True
+        assert is_renderable_non_file_layer(
+            "RasterLayer", "gdal", "http://example.com/data.tif") is True
+        assert is_renderable_non_file_layer(
+            "RasterLayer", "gdal", "https://example.com/data.tif") is True
 
     def test_none_provider_returns_false(self):
         """None provider should return False."""
         from map_to_raster import is_renderable_non_file_layer
 
-        assert is_renderable_non_file_layer("RasterLayer", None, "/path/to/file.tif") is False
+        assert is_renderable_non_file_layer(
+            "RasterLayer", None, "/path/to/file.tif") is False
 
 
 class TestBuildConvertMapToRasterParams:
@@ -147,7 +170,8 @@ class TestBuildConvertMapToRasterParams:
         from map_to_raster import build_convert_map_to_raster_params
 
         extent = (0.0, 0.0, 100.0, 100.0, None)
-        params = build_convert_map_to_raster_params(extent, "layer", map_units_per_pixel=2.5)
+        params = build_convert_map_to_raster_params(
+            extent, "layer", map_units_per_pixel=2.5)
 
         assert params["MAP_UNITS_PER_PIXEL"] == 2.5
 
@@ -165,7 +189,8 @@ class TestWebServiceProviders:
         """Verify all expected web providers are in the detection set."""
         from map_to_raster import WEB_SERVICE_PROVIDERS
 
-        expected = {"wms", "wmts", "wcs", "xyz", "arcgismapserver", "arcgisfeatureserver", "wfs", "vectortile", "mbtiles"}
+        expected = {"wms", "wmts", "wcs", "xyz", "arcgismapserver",
+                    "arcgisfeatureserver", "wfs", "vectortile", "mbtiles"}
         for provider in expected:
             assert provider in WEB_SERVICE_PROVIDERS, f"Missing provider: {provider}"
 

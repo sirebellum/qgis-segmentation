@@ -8,7 +8,8 @@ import pytest
 
 
 def test_package_imports_without_qgis():
-    pytest.skip("Plugin entrypoint requires QGIS; importability is covered in integration environment.")
+    pytest.skip(
+        "Plugin entrypoint requires QGIS; importability is covered in integration environment.")
 
 
 def test_runtime_uses_relative_imports_only():
@@ -48,7 +49,7 @@ def test_segmenter_imports_only_kmeans():
     """Verify segmenter only imports K-Means segmentation function."""
     root = Path(__file__).resolve().parents[1]
     text = (root / "segmenter.py").read_text(encoding="utf-8")
-    
+
     # Should import K-Means
     assert "execute_kmeans_segmentation" in text
     # Should NOT import CNN

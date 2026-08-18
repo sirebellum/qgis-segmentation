@@ -19,7 +19,8 @@ def test_kmeans_cpu_uses_torch_backend(monkeypatch):
         calls["torch"] += 1
         feature_dim = data_np.shape[1]
         return np.stack(
-            [np.linspace(0.0, 1.0 + i, feature_dim, dtype=np.float32) for i in range(num_clusters)],
+            [np.linspace(0.0, 1.0 + i, feature_dim, dtype=np.float32)
+             for i in range(num_clusters)],
             axis=0,
         )
 
@@ -30,7 +31,8 @@ def test_kmeans_cpu_uses_torch_backend(monkeypatch):
     monkeypatch.setattr(funcs, "_sklearn_kmeans_fit", fail_sklearn)
 
     array = _rand(0, (3, 32, 32))
-    result = funcs.predict_kmeans(array, num_segments=3, resolution=16, device_hint=torch.device("cpu"))
+    result = funcs.predict_kmeans(
+        array, num_segments=3, resolution=16, device_hint=torch.device("cpu"))
 
     assert result.shape == array.shape[1:]
     assert result.max() < 3
@@ -44,7 +46,8 @@ def test_kmeans_respects_torch_distance_path(monkeypatch):
         torch_calls["torch"] += 1
         feature_dim = data_np.shape[1]
         return np.stack(
-            [np.linspace(0.0, 1.0 + i, feature_dim, dtype=np.float32) for i in range(num_clusters)],
+            [np.linspace(0.0, 1.0 + i, feature_dim, dtype=np.float32)
+             for i in range(num_clusters)],
             axis=0,
         )
 
@@ -60,7 +63,8 @@ def test_kmeans_respects_torch_distance_path(monkeypatch):
     monkeypatch.setattr(funcs, "_sklearn_kmeans_fit", fail_sklearn)
 
     array = _rand(1, (3, 24, 24))
-    result = funcs.predict_kmeans(array, num_segments=2, resolution=12, device_hint=torch.device("cpu"))
+    result = funcs.predict_kmeans(
+        array, num_segments=2, resolution=12, device_hint=torch.device("cpu"))
 
     assert result.shape == array.shape[1:]
     assert result.max() < 2

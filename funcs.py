@@ -215,7 +215,8 @@ def _sklearn_kmeans_fit(data_np, num_clusters: int, seed: int | None = None) -> 
         raise ValueError("scikit-learn KMeans expects a 2D array")
     if num_clusters <= 0:
         raise ValueError("num_clusters must be positive")
-    model = KMeans(n_clusters=num_clusters, n_init=10, random_state=seed).fit(data_np)
+    model = KMeans(n_clusters=num_clusters, n_init=10,
+                   random_state=seed).fit(data_np)
     return model.cluster_centers_.astype("float32", copy=False)
 
 

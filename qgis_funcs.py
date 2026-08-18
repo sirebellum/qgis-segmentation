@@ -11,6 +11,14 @@ except ImportError:  # pragma: no cover
 
 def render_raster(array, bounding_box, layer_name, epsg):
     """Render raster from array."""
+    base_layer_name = layer_name
+    count = 2
+    while QgsProject.instance().mapLayersByName(layer_name) or os.path.exists(
+        os.path.join(gettempdir(), layer_name + ".tif")
+    ):
+        layer_name = f"{base_layer_name} ({count})"
+        count += 1
+
     driver = gdal.GetDriverByName("GTiff")
     array = ensure_channel_first(array)
     channels, height, width = array.shape

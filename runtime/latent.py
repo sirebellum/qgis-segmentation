@@ -29,13 +29,15 @@ LATENT_KNN_DEFAULTS = {
 def _resize_latent_map(latent_map, size):
     dtype = _runtime_float_dtype(None)
     tensor = torch.from_numpy(latent_map).unsqueeze(0).to(dtype=dtype)
-    resized = F.interpolate(tensor, size=size, mode="bilinear", align_corners=False)
+    resized = F.interpolate(
+        tensor, size=size, mode="bilinear", align_corners=False)
     return resized.squeeze(0).cpu().numpy()
 
 
 def _resize_label_map(label_map, size):
     dtype = _runtime_float_dtype(None)
-    tensor = torch.from_numpy(label_map.astype(np.float32, copy=False)).unsqueeze(0).unsqueeze(0).to(dtype=dtype)
+    tensor = torch.from_numpy(label_map.astype(np.float32, copy=False)).unsqueeze(
+        0).unsqueeze(0).to(dtype=dtype)
     resized = F.interpolate(tensor, size=size, mode="nearest")
     return resized.squeeze().cpu().numpy().astype(np.int32, copy=False)
 
@@ -101,8 +103,10 @@ def _latent_knn_soft_refine(
                 continue
             coarse_h = max(1, h // scale)
             coarse_w = max(1, w // scale)
-            coarse_latent = _resize_latent_map(latent_map, (coarse_h, coarse_w))
-            coarse_labels = _resize_label_map(seed_labels, (coarse_h, coarse_w))
+            coarse_latent = _resize_latent_map(
+                latent_map, (coarse_h, coarse_w))
+            coarse_labels = _resize_label_map(
+                seed_labels, (coarse_h, coarse_w))
             coarse_refined = _latent_knn_core(
                 coarse_latent,
                 coarse_labels,
@@ -144,7 +148,8 @@ def _latent_knn_core(
     channels = latent_map.shape[0]
     _maybe_raise_cancel(cancel_token)
 
-    vectors = latent_map.reshape(channels, h * w).transpose(1, 0).astype(np.float32, copy=False)
+    vectors = latent_map.reshape(
+        channels, h * w).transpose(1, 0).astype(np.float32, copy=False)
     labels_stack = np.clip(seed_labels.reshape(-1), 0, num_segments - 1)
     coords_y, coords_x = np.meshgrid(
         np.linspace(-1.0, 1.0, h, dtype=np.float32),
@@ -166,7 +171,8 @@ def _latent_knn_core(
 
     neighbors = int(cfg.get("neighbors", 8))
     index_cap = int(cfg.get("index_points", augmented.shape[0]))
-    sample_idx = _stratified_sample_indices(labels_stack.reshape(-1), index_cap)
+    sample_idx = _stratified_sample_indices(
+        labels_stack.reshape(-1), index_cap)
     index_data = augmented if sample_idx is None else augmented[sample_idx]
     knn_device = _quantization_device(None) or torch.device("cpu")
     compute_dtype = _distance_compute_dtype(knn_device)
@@ -203,7 +209,8 @@ def _latent_knn_core(
     refined_map = refined_base.reshape(h, w).astype(np.uint8)
     if return_posteriors:
         base_scores = posteriors[:base_size]
-        scores = base_scores.reshape(h, w, num_segments).transpose(2, 0, 1).astype(np.float32, copy=False)
+        scores = base_scores.reshape(h, w, num_segments).transpose(
+            2, 0, 1).astype(np.float32, copy=False)
         return refined_map, scores
     return refined_map
 

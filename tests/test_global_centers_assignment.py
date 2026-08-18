@@ -26,7 +26,8 @@ def test_global_kmeans_fit_called_once(monkeypatch):
         calls["torch"] += 1
         feature_dim = data_np.shape[1]
         return np.stack(
-            [np.full(feature_dim, float(idx), dtype=np.float32) for idx in range(num_clusters)],
+            [np.full(feature_dim, float(idx), dtype=np.float32)
+             for idx in range(num_clusters)],
             axis=0,
         )
 
@@ -70,7 +71,7 @@ def test_global_centers_keep_labels_consistent_across_chunks(monkeypatch):
     )
 
     left = labels[:, : labels.shape[1] // 2]
-    right = labels[:, labels.shape[1] // 2 :]
+    right = labels[:, labels.shape[1] // 2:]
 
     assert labels.max() < 2
     assert np.array_equal(np.unique(left), np.unique(right))
