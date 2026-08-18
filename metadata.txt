@@ -6,7 +6,7 @@
 name=Land Coverage Calculator
 qgisMinimumVersion=3.0
 description=Algorithmically divides a satellite raster into a land coverage raster.
-version=2.3.0
+version=2.3.1
 author=Quant Civil
 email=joshua.herrera227@gmail.com
 
