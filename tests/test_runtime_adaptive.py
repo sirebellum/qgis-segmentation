@@ -11,8 +11,6 @@ from runtime.adaptive import (
     MAX_TILE_SIZE,
     MIN_TILE_SIZE,
     VRAM_RATIO_CPU,
-    VRAM_RATIO_CUDA,
-    VRAM_RATIO_MPS,
     _derive_chunk_size,
     _free_vram_bytes,
     _system_available_memory,
@@ -121,8 +119,6 @@ class TestMemoryProbes:
 class TestVRAMRatios:
     def test_ratios_are_sane(self):
         assert 0 < VRAM_RATIO_CPU <= 1
-        assert 0 < VRAM_RATIO_CUDA <= 1
-        assert 0 < VRAM_RATIO_MPS <= 1
 
 
 class TestAdaptiveOptions:

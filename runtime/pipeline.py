@@ -20,7 +20,7 @@ def blur_segmentation_map(
     status_callback=None,
     cancel_token=None,
 ):
-    """GPU-accelerated label smoothing via one-hot convolution."""
+    """Accelerated label smoothing via one-hot convolution."""
     if labels is None or labels.size == 0 or labels.ndim != 2:
         return labels
     kernel = int(max(1, kernel_size))
@@ -36,41 +36,53 @@ def blur_segmentation_map(
         return labels
     _maybe_raise_cancel(cancel_token)
 
-    # Determine device for GPU acceleration
-    device = _smoothing_device()
-    use_gpu = device.type in ("cuda", "mps")
-    dtype = torch.float16 if use_gpu else torch.float32
+    # Determine device
+    device = torch.device("cpu")
+    dtype = torch.float32
 
     _emit_status(
         status_callback,
-        f"Starting GPU smoothing on {device.type.upper()} (kernel={kernel}px, iterations={iterations})...",
+        f"Starting smoothing on CPU (kernel={kernel}px, iterations={iterations})...",
     )
 
-    # Build one-hot encoding on GPU
+    # Average kernel for box blur
+    weight_single = torch.ones(
+        1, 1, kernel, kernel, dtype=dtype, device=device) / float(kernel * kernel)
+
+    # Move labels to device
     tensor = torch.from_numpy(labels_src.astype(
         np.int64, copy=False)).to(device)
-    one_hot = torch.nn.functional.one_hot(tensor, num_classes=num_segments)
-    one_hot = one_hot.permute(2, 0, 1).unsqueeze(
-        0).to(dtype=dtype, device=device)
 
-    # Averaging kernel for box blur
-    weight = torch.ones(num_segments, 1, kernel, kernel,
-                        dtype=dtype, device=device) / float(kernel * kernel)
+    # Track the best class and its smoothed probability
+    max_probs = torch.full(
+        (tensor.shape[0], tensor.shape[1]), -1.0, dtype=dtype, device=device)
+    best_labels = tensor.clone()
 
-    result = one_hot
-    for idx in range(iterations):
+    for k in range(num_segments):
         _maybe_raise_cancel(cancel_token)
-        padded = torch.nn.functional.pad(
-            result, (pad, pad, pad, pad), mode="replicate")
-        result = torch.nn.functional.conv2d(
-            padded, weight, groups=result.shape[1])
+
+        # Create binary mask for class k
+        prob_k = (tensor == k).to(dtype).unsqueeze(0).unsqueeze(0)
+
+        # Apply convolution independently for this class
+        for _ in range(iterations):
+            padded = torch.nn.functional.pad(
+                prob_k, (pad, pad, pad, pad), mode="replicate")
+            prob_k = torch.nn.functional.conv2d(padded, weight_single)
+
+        prob_k = prob_k.squeeze(0).squeeze(0)
+
+        # Update max_probs and best_labels
+        update_mask = prob_k > max_probs
+        best_labels[update_mask] = k
+        max_probs[update_mask] = prob_k[update_mask]
+
         _emit_status(
             status_callback,
-            f"Post-smoothing {idx + 1}/{iterations} ({int(((idx + 1) / max(iterations, 1)) * 100)}% complete, kernel={kernel}px).",
+            f"Post-smoothing segment {k + 1}/{num_segments} ({int(((k + 1) / max(num_segments, 1)) * 100)}% complete, kernel={kernel}px).",
         )
 
-    blurred = torch.argmax(result, dim=1).squeeze(0).to(torch.int64)
-    return blurred.cpu().numpy().astype(labels_src.dtype)
+    return best_labels.cpu().numpy().astype(labels_src.dtype)
 
 
 def _apply_optional_blur(labels, blur_config, status_callback, cancel_token=None):

@@ -13,7 +13,7 @@ QGIS UI → Segmenter.predict() → QgsTask → runtime/pipeline.py → qgis_fun
 - `dependency_manager.ensure_dependencies()` runs on import
 - Vendor-installs torch and NumPy into `vendor/` unless `SEGMENTER_SKIP_AUTO_INSTALL`
 - Torch index/spec configurable via env vars
-- Device preference: CUDA → MPS → CPU (set in `segmenter.run()`)
+- Device preference: CPU (set in `segmenter.run()`)
 
 ## Input Requirements (Hard)
 - GDAL raster layer

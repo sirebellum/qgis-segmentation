@@ -202,7 +202,7 @@ class _ChunkAggregator:
             1.0, min((self.chunk_size / 10.0) * self._smoothing_scale, 32.0)
         )
         _emit_status(self._status_callback,
-                     "Smoothing CNN logits with GPU gradients...")
+                     "Smoothing CNN logits with gradients...")
         smoothed_scores = _gaussian_blur_channels(
             self.scores,
             sigma,

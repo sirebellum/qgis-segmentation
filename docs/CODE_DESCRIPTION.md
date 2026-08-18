@@ -70,7 +70,7 @@ Purpose: concise registry of modules and their responsibilities in the current c
 ## Tests (repo-level)
 - [tests/](../tests): pytest suite (146 tests, 4 skipped) covering:
   - Runtime pipeline routing, global centers, label consistency
-  - K-Means backend routing, determinism, memory bounds, GPU smoke
+  - K-Means backend routing, determinism, memory bounds
   - Seam prevention: halo overlap, global block alignment, scaling
   - Distance utils, alignment invariants
   - Plugin imports (skip-gated for missing packages)

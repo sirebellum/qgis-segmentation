@@ -35,7 +35,7 @@ The following paths referenced in older docs do NOT exist in the repo:
 Tests that previously referenced these paths have been removed.
 
 ## Test Coverage (current)
-- **Plugin tests** (tests/): 149 passing, 4 skipped (QGIS/GPU gated)
+- **Plugin tests** (tests/): 148 passing, 3 skipped (QGIS gated)
 - **Training tests** (training/tests/): 82 passing
 - **Total**: 231 tests
 

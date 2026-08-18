@@ -34,6 +34,7 @@ from qgis.PyQt.QtWidgets import (
     QAction,
     QMessageBox,
     QGraphicsDropShadowEffect,
+    QToolTip,
 )
 from qgis.core import (
     QgsTask,
@@ -681,6 +682,11 @@ class Segmenter:
                 logo, self._open_support_link)
             logo.installEventFilter(self._logo_hover)
 
+    def _show_smoothing_hint(self):
+        btn = getattr(self.dlg, "infoSmoothing", None)
+        if btn:
+            QToolTip.showText(QCursor.pos(), btn.toolTip(), btn)
+
     def add_action(
         self,
         icon_path,
@@ -797,9 +803,8 @@ class Segmenter:
                 meta["source_path"],
             ):
                 self.log_status(
-                    "Selected layer is a map service. Please use 'Convert map to raster' first "
-                    "(dialog should have opened when you selected this layer), then select the "
-                    "generated GeoTIFF as input."
+                    "Selected layer is a map service. Please use 'Convert map to raster' first, "
+                    "then select the generated GeoTIFF as input."
                 )
             else:
                 self.log_status(
@@ -936,6 +941,9 @@ class Segmenter:
         finally:
             self._suppress_layer_assist = False
 
+        if len(all_layers) == 1:
+            self._on_layer_selection_changed(self.dlg.inputLayer.currentIndex())
+
     # Display resolutions in dropdown
     def render_resolutions(self):
         self.dlg.inputRes.clear()
@@ -980,13 +988,8 @@ class Segmenter:
             self.canvas = self.iface.mapCanvas()
             self._reset_progress_bar()
 
-            # Set device (CUDA, CPU)
-            if torch.cuda.is_available():  # Cuda
-                self.device = torch.device("cuda")
-            elif torch.backends.mps.is_available():  # Multi-Process Service
-                self.device = torch.device("mps")
-            else:  # CPU
-                self.device = torch.device("cpu")
+            # Set device to CPU
+            self.device = torch.device("cpu")
 
             # Populate drop down menus
             self.render_layers()
@@ -994,15 +997,9 @@ class Segmenter:
             if not (self.dlg.inputSegments.text() or "").strip():
                 self.dlg.inputSegments.setText("8")
 
-            # Set gpu message
-            gpu_msg = "GPU available."
-            if self.device == torch.device("cpu"):
-                gpu_msg = "GPU not available. Using CPU instead."
-
             self._log_history.clear()
             self.dlg.inputBox.clear()
             self._flush_status_buffer()
-            self.log_status(gpu_msg)
             self.log_status("K-Means segmentation runtime ready.")
 
             # Attach inputs
@@ -1010,6 +1007,7 @@ class Segmenter:
             self.dlg.buttonPredict.clicked.connect(self.predict)
             self.dlg.buttonFeedback.clicked.connect(self.open_feedback_link)
             self.dlg.buttonStop.clicked.connect(self.stop_current_task)
+            self.dlg.infoSmoothing.clicked.connect(self._show_smoothing_hint)
             self._set_stop_enabled(False)
 
             # Wire layer selection change for map-to-raster assist

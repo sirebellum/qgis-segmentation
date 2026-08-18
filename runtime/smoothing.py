@@ -66,7 +66,7 @@ def _chunked_gaussian_blur(
         if status_callback:
             percent = int((chunk_index / total_chunks) * 100)
             status_callback(
-                f"GPU smoothing [{stage_label}] chunk {chunk_index}/{total_chunks} ({percent}% complete)."
+                f"Smoothing [{stage_label}] chunk {chunk_index}/{total_chunks} ({percent}% complete)."
             )
 
     return result.astype(np.float32)
@@ -85,13 +85,6 @@ def _build_gaussian_kernel(radius, sigma, channels, device, dtype=torch.float32)
 
 
 def _smoothing_device():
-    try:
-        if torch.cuda.is_available():
-            return torch.device("cuda")
-        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-            return torch.device("mps")
-    except Exception:  # nosec B110 - best effort device detection
-        pass
     return torch.device("cpu")
 
 

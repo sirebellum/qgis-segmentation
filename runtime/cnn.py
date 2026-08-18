@@ -187,9 +187,6 @@ def _prefetch_batches(tiles, batch_size, device, depth=2, cancel_token=None, dty
     if total == 0:
         return
     target_dtype = dtype or _runtime_float_dtype(device)
-    if device.type == "cuda" and torch.cuda.is_available():
-        yield from _prefetch_batches_cuda(tiles, batch_size, device, cancel_token, dtype=target_dtype)
-        return
     yield from _prefetch_batches_threaded(tiles, batch_size, device, depth, cancel_token, dtype=target_dtype)
 
 
@@ -227,54 +224,6 @@ def _prefetch_batches_threaded(tiles, batch_size, device, depth=2, cancel_token=
                 raise
     finally:
         executor.shutdown(wait=True)
-
-
-def _prefetch_batches_cuda(tiles, batch_size, device, cancel_token=None, dtype=None):
-    total = tiles.shape[0]
-    if total == 0:
-        return
-    stream = torch.cuda.Stream(device=device)
-    next_start = 0
-    next_tensor = None
-    next_bounds = None
-
-    def _stage_copy(start, end):
-        _maybe_raise_cancel(cancel_token)
-        batch = torch.from_numpy(tiles[start:end])
-        if not batch.is_floating_point():
-            batch = batch.float().div_(255.0)
-        else:
-            batch = batch / 255.0
-        if dtype is not None and batch.dtype != dtype:
-            batch = batch.to(dtype)
-        pinned = batch.pin_memory()
-        with torch.cuda.stream(stream):
-            gpu_tensor = pinned.to(device, non_blocking=True)
-        del pinned
-        return gpu_tensor
-
-    if next_start < total:
-        staged_end = min(next_start + batch_size, total)
-        next_tensor = _stage_copy(next_start, staged_end)
-        next_bounds = (next_start, staged_end)
-        next_start = staged_end
-
-    current_stream = torch.cuda.current_stream(device)
-    while next_tensor is not None:
-        current_stream.wait_stream(stream)
-        tensor = next_tensor
-        if next_bounds is None:
-            break
-        start, end = next_bounds
-        if next_start < total:
-            staged_end = min(next_start + batch_size, total)
-            next_tensor = _stage_copy(next_start, staged_end)
-            next_bounds = (next_start, staged_end)
-            next_start = staged_end
-        else:
-            next_tensor = None
-            next_bounds = None
-        yield tensor, start, end, total
 
 
 def _batch_to_tensor(batch, device, dtype):
@@ -457,15 +406,6 @@ def _compute_latent_grid(
     last_report = -1
 
     def _autocast_ctx():
-        if compute_dtype != torch.float16:
-            return nullcontext()
-        if device_obj.type == "cuda" and torch.cuda.is_available():
-            return torch.cuda.amp.autocast(dtype=compute_dtype)
-        if device_obj.type == "mps":
-            try:
-                return torch.autocast(device_type="mps", dtype=compute_dtype)
-            except Exception:
-                return nullcontext()
         return nullcontext()
 
     for tensor_batch, start, end, total in _prefetch_batches(
@@ -695,7 +635,6 @@ __all__ = [
     "_recommended_batch_size",
     "_prefetch_batches",
     "_prefetch_batches_threaded",
-    "_prefetch_batches_cuda",
     "_batch_to_tensor",
     "_auto_orient_tile_grid",
     "_apply_rotation_plan_to_volume",

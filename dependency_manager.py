@@ -14,16 +14,19 @@ import sys
 import tempfile
 import threading
 import urllib.request
+import json
+import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 try:
     from qgis.PyQt.QtCore import QThread  # type: ignore
-    from qgis.PyQt.QtWidgets import QApplication, QMessageBox  # type: ignore
+    from qgis.PyQt.QtWidgets import QApplication, QMessageBox, QInputDialog  # type: ignore
 except Exception:  # pragma: no cover - PyQt unavailable in tests
     QApplication = None
     QMessageBox = None
     QThread = None
+    QInputDialog = None
 
 _PLUGIN_DIR = Path(__file__).resolve().parent
 _VENDOR_DIR = _PLUGIN_DIR / "vendor"
@@ -31,7 +34,7 @@ _VENDOR_DIR.mkdir(exist_ok=True)
 _vendor_str = str(_VENDOR_DIR)
 while _vendor_str in sys.path:
     sys.path.remove(_vendor_str)
-sys.path.append(_vendor_str)
+sys.path.insert(0, _vendor_str)
 
 _plugin_str = str(_PLUGIN_DIR)
 if _plugin_str not in sys.path:
@@ -63,10 +66,140 @@ def ensure_dependencies() -> None:
         _ENSURED = True
         return
 
-    for spec in _package_specs():
-        _ensure_package(spec)
+    _check_plugin_version()
+    _check_for_torch_update()
+
+    specs = _package_specs()
+    
+    to_install = []
+    for spec in specs:
+        import_name = str(spec["import"])
+        try:
+            importlib.import_module(import_name)
+            if import_name == "torch":
+                importlib.import_module("torch.nn")
+        except ImportError:
+            to_install.append(spec)
+
+    if to_install:
+        for spec in to_install:
+            _ensure_package(spec)
+        _run_post_install_test()
 
     _ENSURED = True
+
+
+def _check_plugin_version() -> None:
+    version_file = _VENDOR_DIR / ".plugin_version"
+    metadata_file = _PLUGIN_DIR / "metadata.txt"
+    current_version = "unknown"
+    if metadata_file.exists():
+        with open(metadata_file, "r", encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("version="):
+                    current_version = line.strip().split("=")[1].strip()
+                    break
+    
+    stored_version = ""
+    if version_file.exists():
+        with open(version_file, "r", encoding="utf-8") as f:
+            stored_version = f.read().strip()
+
+    if current_version != "unknown" and stored_version != current_version:
+        if _VENDOR_DIR.exists():
+            shutil.rmtree(_VENDOR_DIR, ignore_errors=True)
+        _VENDOR_DIR.mkdir(exist_ok=True)
+        _PIP_BOOTSTRAP_DIR.mkdir(exist_ok=True)
+        with open(version_file, "w", encoding="utf-8") as f:
+            f.write(current_version)
+
+
+def _check_for_torch_update() -> None:
+    if os.environ.get("SEGMENTER_TORCH_SPEC"):
+        return
+
+    last_check_file = _VENDOR_DIR / ".last_update_check"
+    now = time.time()
+    
+    if last_check_file.exists():
+        mtime = last_check_file.stat().st_mtime
+        if now - mtime < 30 * 24 * 3600:
+            return
+
+    try:
+        req = urllib.request.Request("https://pypi.org/pypi/torch/json", headers={"User-Agent": "qgis-segmentation"})
+        with urllib.request.urlopen(req, timeout=5) as response:
+            data = json.loads(response.read())
+            latest_version = data["info"]["version"]
+    except Exception:
+        return
+
+    try:
+        import importlib.metadata
+        current_version = importlib.metadata.version("torch")
+    except Exception:
+        current_version = None
+
+    if current_version and current_version != latest_version:
+        if _ask_user_for_update(latest_version):
+            _clean_torch_from_vendor()
+        else:
+            pass
+
+    _VENDOR_DIR.mkdir(exist_ok=True)
+    last_check_file.touch()
+
+
+def _ask_user_for_update(new_version: str) -> bool:
+    if not _is_gui_thread() or QMessageBox is None:
+        return False
+    try:
+        box = QMessageBox()
+        box.setWindowTitle("PyTorch Update Available")
+        box.setText(f"A new version of PyTorch ({new_version}) is available. Would you like to download and install it now? (This is a large download).")
+        box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        box.setDefaultButton(QMessageBox.No)
+        return box.exec_() == QMessageBox.Yes
+    except Exception:
+        return False
+
+
+def _clean_torch_from_vendor() -> None:
+    for item in _VENDOR_DIR.iterdir():
+        if item.is_dir() and (item.name == "torch" or item.name.startswith("torch-") or item.name == "torch_directml" or item.name.startswith("torch_directml-")):
+            shutil.rmtree(item, ignore_errors=True)
+
+
+def _get_backend_selection() -> str:
+    return "CPU"
+
+
+def _run_post_install_test() -> None:
+    try:
+        import torch
+        x = torch.tensor([1.0, 2.0])
+                
+        _show_result_popup(True, "Installation successful and PyTorch works correctly.")
+    except Exception as e:
+        _show_result_popup(False, f"Installation failed or backend not available:\n{str(e)}")
+        raise RuntimeError(f"Dependency check failed: {e}")
+
+
+def _show_result_popup(success: bool, message: str) -> None:
+    if not _is_gui_thread() or QMessageBox is None:
+        return
+    try:
+        box = QMessageBox()
+        if success:
+            box.setWindowTitle("Install Successful")
+            box.setIcon(QMessageBox.Information)
+        else:
+            box.setWindowTitle("Install Failed")
+            box.setIcon(QMessageBox.Critical)
+        box.setText(message)
+        box.exec_()
+    except Exception:
+        pass
 
 
 def _skip_requested() -> bool:
@@ -79,51 +212,31 @@ def _package_specs() -> Iterable[Dict[str, object]]:
     if not torch_spec:
         torch_spec = _default_torch_spec()
 
+    torch_index_args = ["--index-url", "https://download.pytorch.org/whl/cpu"]
+
     specs: List[Dict[str, object]] = [
-        {
-            "import": "torch",
-            "pip": torch_spec,
-            "label": "PyTorch",
-            "extra_args": _torch_index_args(),
-        },
         {
             "import": "numpy",
             "pip": "numpy>=1.23,<2.0",
             "label": "NumPy",
         },
+        {
+            "import": "torch",
+            "pip": torch_spec,
+            "label": "PyTorch",
+            "extra_args": torch_index_args,
+        },
     ]
+
     return specs
 
 
 def _default_torch_spec() -> str:
-    major = sys.version_info.major
-    minor = sys.version_info.minor
-    if (major, minor) >= (3, 13):
-        return "torch>=2.5.1,<3.0"
-    if (major, minor) >= (3, 12):
-        return "torch>=2.3.1,<3.0"
-    return "torch==2.2.2"
-
-
-def _torch_index_args() -> List[str]:
-    custom_index = os.environ.get("SEGMENTER_TORCH_INDEX_URL")
-    if custom_index:
-        return ["--index-url", custom_index]
-
-    system = platform.system().lower()
-    if system == "darwin":
-        return ["--index-url", "https://download.pytorch.org/whl/cpu"]
-    return ["--index-url", "https://download.pytorch.org/whl/cu121"]
+    return "torch>=2.2.2"
 
 
 def _ensure_package(spec: Dict[str, object]) -> None:
     import_name = spec["import"]  # type: ignore[index]
-    try:
-        importlib.import_module(import_name)  # type: ignore[arg-type]
-        return
-    except ImportError:
-        pass
-
     pip_name = spec["pip"]  # type: ignore[index]
     raw_args = spec.get("extra_args")
     if raw_args is None:
@@ -157,30 +270,17 @@ def _ensure_package(spec: Dict[str, object]) -> None:
         subprocess.check_call(command, env=pip_env)
         _log_dependency_status(f"Dependency installed: {label}")
     except (subprocess.CalledProcessError, OSError) as exc:
-        if import_name == "torch":
-            cpu_args = ["--index-url", "https://download.pytorch.org/whl/cpu"]
-            if extra_args != cpu_args:
-                _LOGGER.warning(
-                    "CUDA torch install failed (%s); retrying with CPU wheels.",
-                    exc,
-                )
-                _log_dependency_status(
-                    "PyTorch CUDA install failed; retrying with CPU wheels.")
-                try:
-                    subprocess.check_call(_build_command(
-                        cpu_args), env=pip_env)  # nosec B603
-                    _log_dependency_status(
-                        "PyTorch CPU wheel installed successfully.")
-                    _close_install_popup(dialog)
-                    return
-                except (subprocess.CalledProcessError, OSError) as cpu_exc:
-                    exc = cpu_exc
         _close_install_popup(dialog)
         raise ImportError(
             "Segmenter could not install dependency '" + str(pip_name) + "'."
             "Run QGIS Python console and install it manually."
         ) from exc
+
     _close_install_popup(dialog)
+    # Clear any partial imports so the new package in vendor is loaded cleanly
+    for k in list(sys.modules.keys()):
+        if k == import_name or k.startswith(import_name + "."):
+            sys.modules.pop(k, None)
 
 
 def _pip_command() -> Tuple[List[str], Dict[str, str]]:

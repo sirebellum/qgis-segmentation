@@ -114,7 +114,6 @@ Tests that import from these paths are skipped.
 - **Skip-gated**:
   - test_plugin_imports.py (requires QGIS context)
   - test_qgis_runtime_smoke.py (set QGIS_TESTS=1)
-  - test_predict_kmeans_gpu_smoke.py (set RUN_GPU_TESTS=1)
 
 ### training/tests/ — 82 tests passing
 - **Models**: test_model_shapes.py, test_model_forward_contract.py
@@ -131,4 +130,3 @@ Tests that import from these paths are skipped.
 - **173 total tests** (91 plugin + 82 training)
 - Plugin tests avoid QGIS/GDAL imports (offline-safe)
 - Training tests use synthetic data by default
-- GPU tests gated behind `RUN_GPU_TESTS=1`

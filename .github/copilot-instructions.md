@@ -8,8 +8,8 @@ QGIS Segmenter – Copilot Instructions
 
 ## Dependencies & env toggles
 - Auto-install: [dependency_manager.py](../dependency_manager.py) `ensure_dependencies()` vendors NumPy/Torch/sklearn into `vendor/` unless `SEGMENTER_SKIP_AUTO_INSTALL=1`; uses CPU torch on macOS by default.
-- Overrides: `SEGMENTER_PYTHON`/`SEGMENTER_PIP_EXECUTABLE` to pick the interpreter/pip; `SEGMENTER_TORCH_SPEC`/`SEGMENTER_TORCH_INDEX_URL` to pin wheels; `SEGMENTER_RUNTIME_BACKEND` (`auto`/`torch`/`numpy`) and `SEGMENTER_DEVICE` (`auto`/`cuda`/`mps`/`cpu`) steer runtime.
-- GPU policy: CUDA uses ~0.9% free VRAM, MPS ~0.75%, CPU uses system RAM; tiling/batching respects these budgets.
+- Overrides: `SEGMENTER_PYTHON`/`SEGMENTER_PIP_EXECUTABLE` to pick the interpreter/pip; `SEGMENTER_TORCH_SPEC`/`SEGMENTER_TORCH_INDEX_URL` to pin wheels; `SEGMENTER_RUNTIME_BACKEND` (`auto`/`torch`/`numpy`) steers runtime.
+- CPU policy: CPU uses system RAM; tiling/batching respects these budgets.
 
 ## Models & data contract
 - Artifacts: runtime expects channel-first RGB uint8/float32 and returns uint8 labels. Legacy TorchScript models live under [models/](../models) (`model_4/8/16.pth`).

@@ -12,7 +12,7 @@ QGIS 3 plugin "Map Segmenter" for unsupervised map segmentation using K-Means cl
 ## End-to-end Flow
 1. User opens dialog from plugin action in [segmenter.py](../../segmenter.py)
 2. UI defined by [segmenter_dialog_base.ui](../../segmenter_dialog_base.ui), loaded via [segmenter_dialog.py](../../segmenter_dialog.py)
-3. `Segmenter.run()` sets device preference (CUDA → MPS → CPU) and initializes state
+3. `Segmenter.run()` sets device preference to CPU and initializes state
 4. `Segmenter.predict()` validates selected GDAL raster:
    - Provider must be `gdal`
    - Source must be `.tif/.tiff`
@@ -50,7 +50,7 @@ QGIS 3 plugin "Map Segmenter" for unsupervised map segmentation using K-Means cl
 - **Map-to-raster assist**: if user selects a web service or vector layer, `_on_layer_selection_changed` opens the Convert map to raster dialog prefilled with canvas extent + 1 map unit/pixel
 - **K-Means**: torch-only, global center fit once, streaming assignment per chunk (no scikit-learn, no per-chunk relabeling)
 - **Seam prevention**: block-level overlap (BLOCK_OVERLAP=1) with last-write-wins stitching, pixel halo (3px) for smoothing context, globally-aligned block grid, fixed float32 scaling
-- **Device**: CUDA → MPS → CPU preference set in `segmenter.run()`
+- **Device**: CPU preference set in `segmenter.run()`
 - **Cancellation**: `CancellationToken` checked throughout loops
 
 ## Config / Extension Points

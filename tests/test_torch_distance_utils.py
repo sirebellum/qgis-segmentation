@@ -57,22 +57,3 @@ def test_distance_chunking_equivalence():
     chunked = _argmin_distances_chunked(data, torch.as_tensor(
         centers), torch.device("cpu"), torch.float32, chunk_rows=7)
     np.testing.assert_array_equal(baseline, chunked)
-
-
-@pytest.mark.gpu
-def test_distance_utils_gpu_skip_by_default():
-    if os.environ.get("RUN_GPU_TESTS") != "1":
-        pytest.skip("GPU tests disabled (set RUN_GPU_TESTS=1 to enable).")
-    device = None
-    if torch.cuda.is_available():
-        device = torch.device("cuda")
-    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-        device = torch.device("mps")
-    if device is None:
-        pytest.skip("No GPU device available.")
-    compute_dtype = _distance_compute_dtype(device)
-    data = np.array([[0.0, 0.0], [1.0, 1.0]], dtype=np.float32)
-    centers = np.array([[0.0, 0.0], [2.0, 2.0]], dtype=np.float32)
-    labels = _argmin_distances_chunked(data, torch.as_tensor(
-        centers), device, compute_dtype, chunk_rows=2)
-    np.testing.assert_array_equal(labels, np.array([0, 0], dtype=np.int64))

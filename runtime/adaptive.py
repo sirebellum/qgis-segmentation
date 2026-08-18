@@ -16,8 +16,6 @@ except ImportError:  # pragma: no cover
     psutil = None
 
 DEFAULT_MEMORY_BUDGET = 128 * 1024 * 1024
-VRAM_RATIO_CUDA = 0.009
-VRAM_RATIO_MPS = 0.0075
 VRAM_RATIO_CPU = 0.01
 MIN_TILE_SIZE = 128
 MAX_TILE_SIZE = 512
@@ -117,10 +115,6 @@ def get_adaptive_options(tier: Optional[str] = None) -> List[Tuple[int, Adaptive
 
 
 def _free_vram_bytes(device):
-    if device.type == "cuda" and torch.cuda.is_available():
-        free, _ = torch.cuda.mem_get_info(
-            device.index or torch.cuda.current_device())
-        return free
     return _system_available_memory()
 
 
@@ -138,12 +132,7 @@ def _system_available_memory():
 def _derive_chunk_size(array_shape, device, profile_tier: Optional[str] = None):
     channels = array_shape[0]
     free_bytes = _free_vram_bytes(device)
-    if device.type == "cuda":
-        ratio = VRAM_RATIO_CUDA
-    elif device.type == "mps":
-        ratio = VRAM_RATIO_MPS
-    else:
-        ratio = VRAM_RATIO_CPU
+    ratio = VRAM_RATIO_CPU
     budget = max(int(free_bytes * ratio), 64 * 1024 * 1024)
     bytes_per_pixel = channels * 4
     settings = get_adaptive_settings(free_bytes, tier=profile_tier)
@@ -172,8 +161,6 @@ __all__ = [
     "AdaptiveSettings",
     "DEFAULT_MEMORY_BUDGET",
     "VRAM_RATIO_CPU",
-    "VRAM_RATIO_CUDA",
-    "VRAM_RATIO_MPS",
     "MIN_TILE_SIZE",
     "MAX_TILE_SIZE",
     "get_adaptive_settings",
